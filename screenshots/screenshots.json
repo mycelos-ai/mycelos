@@ -1,0 +1,301 @@
+{
+  "project": "Mycelos",
+  "version": "v0.3",
+  "date": "2026-04-16",
+  "screenshots": [
+    {
+      "file": "01-knowledge-empty-editor.png",
+      "title": "Knowledge Base — Empty State",
+      "description": "Fresh Knowledge Base with Markdown editor ready for first note. Shows topic sidebar, search, and AI/Save buttons.",
+      "feature": "knowledge",
+      "tags": ["empty-state", "editor", "onboarding"],
+      "use_for": ["docs"],
+      "duplicate_of": null
+    },
+    {
+      "file": "02-knowledge-empty-editor-alt.png",
+      "title": "Knowledge Base — Empty State (alt)",
+      "description": "Same as 01, slightly different framing.",
+      "feature": "knowledge",
+      "tags": ["empty-state", "editor"],
+      "use_for": [],
+      "duplicate_of": "01-knowledge-empty-editor.png"
+    },
+    {
+      "file": "03-knowledge-import-dialog.png",
+      "title": "Knowledge Import — Dialog",
+      "description": "Import notes modal with ZIP file chooser and drag-drop area.",
+      "feature": "knowledge",
+      "tags": ["import", "dialog", "zip"],
+      "use_for": ["docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "04-knowledge-import-file-picker.png",
+      "title": "Knowledge Import — File Picker",
+      "description": "macOS file picker showing demo-content.zip selected in the docs folder.",
+      "feature": "knowledge",
+      "tags": ["import", "file-picker"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "05-knowledge-import-file-selected.png",
+      "title": "Knowledge Import — File Selected",
+      "description": "Import dialog with demo-content.zip loaded, ready to import.",
+      "feature": "knowledge",
+      "tags": ["import", "dialog"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "06-knowledge-import-success.png",
+      "title": "Knowledge Import — Success",
+      "description": "Import complete: '9 notes imported into 5 topics' confirmation message.",
+      "feature": "knowledge",
+      "tags": ["import", "success"],
+      "use_for": ["docs", "video", "readme"],
+      "duplicate_of": null
+    },
+    {
+      "file": "07-knowledge-topics-overview.png",
+      "title": "Knowledge Base — Topics Overview",
+      "description": "Knowledge Base with 13 notes organized into 4 topics: Ideas (2), Meeting Notes (2), Research (2), Tasks (2), plus Pending.",
+      "feature": "knowledge",
+      "tags": ["topics", "overview", "organized"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "08-knowledge-note-detail.png",
+      "title": "Knowledge Base — Note Detail",
+      "description": "Viewing 'Team Standup Apr 14' note with rendered Markdown. Shows topic tree expanded, note metadata (tags), and full content with attendees, updates by team member, and action items.",
+      "feature": "knowledge",
+      "tags": ["note", "detail", "markdown", "meeting-notes"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "09-chat-welcome-screen.png",
+      "title": "Chat — Welcome Screen",
+      "description": "Fresh chat session with Mycelos logo, tagline, and quick action buttons: 'What can you do?', 'Create a new agent', 'Show my workflows'. Agent Status panel on right shows idle state.",
+      "feature": "chat",
+      "tags": ["welcome", "empty-state", "quick-actions"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "10-chat-welcome-duplicate.png",
+      "title": "Chat — Welcome Screen (alt)",
+      "description": "Same as 09, identical framing.",
+      "feature": "chat",
+      "tags": ["welcome"],
+      "use_for": [],
+      "duplicate_of": "09-chat-welcome-screen.png"
+    },
+    {
+      "file": "11-chat-typing-message.png",
+      "title": "Chat — User Typing",
+      "description": "User typing 'Hello, how are you?' in the message input. Shows send button highlighted.",
+      "feature": "chat",
+      "tags": ["input", "typing"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "12-chat-thinking-indicator.png",
+      "title": "Chat — Thinking Indicator",
+      "description": "Mycelos processing a message with animated 'Mycelos is thinking...' indicator. Processing status shows 'Active' in Agent Status panel.",
+      "feature": "chat",
+      "tags": ["thinking", "processing", "animation"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "13-chat-first-response.png",
+      "title": "Chat — First Response",
+      "description": "Mycelos introduces itself: 'Your data stays local, I use cloud AI as a tool — not as storage.' Shows token count (6912), model (claude-sonnet-4-5), cost ($0.0214), 2 messages.",
+      "feature": "chat",
+      "tags": ["response", "introduction", "token-tracking", "cost"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "14-chat-user-typing-name.png",
+      "title": "Chat — User Typing Name",
+      "description": "User typing 'My name is Stefan.' in response to Mycelos asking for their name.",
+      "feature": "chat",
+      "tags": ["input", "onboarding"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "15-chat-conversation-flow.png",
+      "title": "Chat — Conversation Flow",
+      "description": "Multi-turn conversation: greeting → introduction → name exchange. Mycelos responds personally: 'Nice to meet you, Stefan!' Shows 4 messages, 7463 tokens, $0.0442 cost.",
+      "feature": "chat",
+      "tags": ["conversation", "multi-turn", "personal"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "16-chat-new-session-note-request.png",
+      "title": "Chat — Note Creation Request",
+      "description": "New session. User asks: 'Please add some notes for today's stand up from 16th of April 2026. All projects are on track, and I am going to take care of the quality assurance.'",
+      "feature": "chat",
+      "tags": ["note-creation", "tool-use", "natural-language"],
+      "use_for": ["readme", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "17-chat-thinking-note-creation.png",
+      "title": "Chat — Processing Note Creation",
+      "description": "Mycelos thinking while processing the note creation request. Shows the user message and thinking indicator.",
+      "feature": "chat",
+      "tags": ["thinking", "tool-use"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "18-chat-note-created-response.png",
+      "title": "Chat — Note Created",
+      "description": "Mycelos confirms: 'Done! I've saved your stand-up notes from today.' Then introduces itself and asks for user's name. Shows 14280 tokens, $0.0461.",
+      "feature": "chat",
+      "tags": ["tool-result", "note-creation", "confirmation"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "19-chat-knowledge-graph-request.png",
+      "title": "Chat — Knowledge Graph Request",
+      "description": "User asks: 'Can you visualize my knowledge as a diagram, please?' — demonstrating natural language diagram generation.",
+      "feature": "chat",
+      "tags": ["knowledge-graph", "visualization", "request"],
+      "use_for": ["video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "20-chat-knowledge-graph-response.png",
+      "title": "Chat — Knowledge Graph in Chat",
+      "description": "Mycelos renders an interactive knowledge graph diagram inline in chat. Shows 4 main topics with connected notes. Lists topic breakdown. 17527 tokens, $0.1030.",
+      "feature": "chat",
+      "tags": ["knowledge-graph", "visualization", "inline-diagram"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "21-knowledge-graph-fullscreen.png",
+      "title": "Knowledge Graph — Fullscreen",
+      "description": "Interactive knowledge graph in fullscreen overlay. Central 'Knowledge Base' node connected to topics (Meeting Notes, Ideas, Research, Tasks) and their individual notes. Download PNG/SVG buttons visible.",
+      "feature": "knowledge",
+      "tags": ["knowledge-graph", "fullscreen", "visualization", "interactive"],
+      "use_for": ["readme", "docs", "video", "hero"],
+      "duplicate_of": null
+    },
+    {
+      "file": "22-workflows-overview.png",
+      "title": "Workflows — Overview",
+      "description": "14 registered workflows in card layout: Brainstorming Session, Daily Briefing, Knowledge Organizer, Research & Summary, Welcome Onboarding, check-reminders. Each shows tags, capabilities, step count, and Run button.",
+      "feature": "workflows",
+      "tags": ["overview", "cards", "system-workflows"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "23-connectors-overview.png",
+      "title": "Connectors — Overview",
+      "description": "Connectors page with 3 sections: Channels (Telegram, Slack), Services (Email IMAP/SMTP, Gmail API), MCP Connectors (Browse the Web, Search, Databases, Files, Development, Project Mgmt, Memory). Active connectors: DuckDuckGo, HTTP.",
+      "feature": "connectors",
+      "tags": ["overview", "channels", "mcp", "integrations"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "24-settings-models.png",
+      "title": "Settings — LLM Models & Agent Assignments",
+      "description": "Settings page showing LLM Configuration (Haiku, Opus, Sonnet with pricing) and Agent Assignments table mapping agents to models with priority and purpose (classification/execution).",
+      "feature": "settings",
+      "tags": ["models", "llm", "pricing", "agent-config"],
+      "use_for": ["docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "25-settings-credentials-config.png",
+      "title": "Settings — Credentials, Language & Config Generations",
+      "description": "Settings page lower section: encrypted credentials (anthropic stored), language selector (English), and Config Generations history showing immutable rollback entries (#58 active, #49-#47 rollback).",
+      "feature": "settings",
+      "tags": ["credentials", "language", "config-generations", "rollback", "admin-menu"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "26-settings-add-credential.png",
+      "title": "Settings — Add Credential Form",
+      "description": "Credential creation form with fields: Service, Label, Secret (API key or token), Description. Shows existing 'anthropic' credential below.",
+      "feature": "settings",
+      "tags": ["credentials", "form", "security"],
+      "use_for": ["docs", "video"],
+      "duplicate_of": null
+    },
+    {
+      "file": "27-quick-capture-overlay.png",
+      "title": "Quick Capture — Cmd+K Overlay",
+      "description": "Quick Capture overlay (triggered by Cmd+K) floating over the chat. Input field: 'Capture a thought, task, or reminder...' with Esc to cancel, Enter to save.",
+      "feature": "quick-capture",
+      "tags": ["quick-capture", "overlay", "keyboard-shortcut", "productivity"],
+      "use_for": ["readme", "docs", "video"],
+      "duplicate_of": null
+    }
+  ],
+  "recommended_for_readme": [
+    "09-chat-welcome-screen.png",
+    "15-chat-conversation-flow.png",
+    "21-knowledge-graph-fullscreen.png",
+    "07-knowledge-topics-overview.png",
+    "22-workflows-overview.png",
+    "23-connectors-overview.png"
+  ],
+  "recommended_for_hero": [
+    "21-knowledge-graph-fullscreen.png",
+    "20-chat-knowledge-graph-response.png"
+  ],
+  "recommended_for_video_sequence": [
+    "09-chat-welcome-screen.png",
+    "11-chat-typing-message.png",
+    "12-chat-thinking-indicator.png",
+    "13-chat-first-response.png",
+    "15-chat-conversation-flow.png",
+    "16-chat-new-session-note-request.png",
+    "17-chat-thinking-note-creation.png",
+    "18-chat-note-created-response.png",
+    "19-chat-knowledge-graph-request.png",
+    "20-chat-knowledge-graph-response.png",
+    "21-knowledge-graph-fullscreen.png",
+    "27-quick-capture-overlay.png",
+    "07-knowledge-topics-overview.png",
+    "08-knowledge-note-detail.png",
+    "03-knowledge-import-dialog.png",
+    "06-knowledge-import-success.png",
+    "22-workflows-overview.png",
+    "23-connectors-overview.png",
+    "24-settings-models.png",
+    "25-settings-credentials-config.png"
+  ],
+  "duplicates": [
+    {
+      "keep": "01-knowledge-empty-editor.png",
+      "remove": "02-knowledge-empty-editor-alt.png",
+      "reason": "Nearly identical framing"
+    },
+    {
+      "keep": "09-chat-welcome-screen.png",
+      "remove": "10-chat-welcome-duplicate.png",
+      "reason": "Identical content"
+    },
+    {
+      "keep": "13-chat-first-response.png",
+      "remove": "14-chat-user-typing-name.png",
+      "reason": "14 only adds cursor in input, 13 shows the more interesting response"
+    }
+  ]
+}

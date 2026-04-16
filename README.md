@@ -4,6 +4,10 @@
 
 A self-hosted, security-first agent operating system. Your data stays local, cloud LLMs are tools — not your storage.
 
+<p align="center">
+  <img src="screenshots/21-knowledge-graph-fullscreen.png" alt="Mycelos Knowledge Graph" width="700">
+</p>
+
 ---
 
 ## What is Mycelos?
@@ -82,6 +86,30 @@ For terminal-only use:
 ```bash
 mycelos chat          # Interactive CLI session
 ```
+
+---
+
+## Screenshots
+
+| Chat | Knowledge Base |
+|:---:|:---:|
+| ![Chat](screenshots/15-chat-conversation-flow.png) | ![Knowledge](screenshots/07-knowledge-topics-overview.png) |
+| Conversational AI with real-time cost tracking | Notes auto-organized into topics |
+
+| Knowledge Graph | Note Detail |
+|:---:|:---:|
+| ![Graph](screenshots/20-chat-knowledge-graph-response.png) | ![Note](screenshots/08-knowledge-note-detail.png) |
+| Visualize your knowledge as an interactive graph | Full Markdown rendering with metadata |
+
+| Workflows | Connectors |
+|:---:|:---:|
+| ![Workflows](screenshots/22-workflows-overview.png) | ![Connectors](screenshots/23-connectors-overview.png) |
+| 14 built-in workflows with one-click execution | Telegram, Slack, Email, GitHub, and MCP connectors |
+
+| Settings | Quick Capture |
+|:---:|:---:|
+| ![Settings](screenshots/25-settings-credentials-config.png) | ![Quick Capture](screenshots/27-quick-capture-overlay.png) |
+| Encrypted credentials, config generations with rollback | Cmd+K to capture thoughts without leaving your view |
 
 ---
 
