@@ -135,11 +135,16 @@ def run_agent_code(
 
 
 def _safe_env() -> dict[str, str]:
-    """Build a safe environment for agent subprocess."""
+    """Build a safe environment for agent subprocess.
+
+    Strips anything that looks like a credential. Agent code must go through
+    the Credential Proxy (Constitution Rule 4) — it never sees raw keys in env.
+    """
     import os
     env = dict(os.environ)
-    # Remove sensitive variables
+    denylist = ("SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "MASTER_KEY", "API_KEY", "APIKEY")
     for key in list(env.keys()):
-        if any(s in key.upper() for s in ("SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "MASTER_KEY")):
+        upper = key.upper()
+        if any(s in upper for s in denylist):
             del env[key]
     return env

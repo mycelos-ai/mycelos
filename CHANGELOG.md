@@ -2,6 +2,10 @@
 
 ## Week 16 (2026)
 
+### Security — Agent Subprocess Env Hardening
+- `agent_runner._safe_env()` now strips `*_API_KEY` and `*APIKEY` variables from subprocess environments (previously only matched SECRET/TOKEN/PASSWORD/CREDENTIAL/MASTER_KEY substrings — ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY etc. leaked through)
+- Added SEC05 tests in `tests/security/test_sandbox_boundaries.py` covering the denylist
+
 ### PDF Knowledge Ingest
 - PDFs uploaded via Telegram or Web are now saved as Knowledge documents with LLM-generated summaries
 - New `document` note type with `source_file` field linking to original PDF in `knowledge/documents/`

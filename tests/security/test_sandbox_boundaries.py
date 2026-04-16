@@ -9,6 +9,7 @@ import os
 
 import pytest
 
+from mycelos.execution.agent_runner import _safe_env
 from mycelos.execution.sandbox import LocalSandbox, SandboxConfig
 
 
@@ -88,6 +89,61 @@ def test_sec05_path_is_restricted(sandbox: LocalSandbox) -> None:
     assert ".local/bin" not in path
     assert "pyenv" not in path
     sandbox.cleanup(sandbox_id)
+
+
+# ── SEC05: agent_runner._safe_env denylist ──
+
+
+def test_sec05_agent_runner_strips_anthropic_api_key() -> None:
+    """SEC05: agent_runner._safe_env must strip ANTHROPIC_API_KEY from subprocess env."""
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-leak"
+    try:
+        env = _safe_env()
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "sk-ant-test-leak" not in env.values()
+    finally:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+
+def test_sec05_agent_runner_strips_all_api_key_vars() -> None:
+    """SEC05: agent_runner._safe_env must strip every *_API_KEY variable."""
+    leak_vars = {
+        "ANTHROPIC_API_KEY": "sk-ant",
+        "OPENAI_API_KEY": "sk-oai",
+        "GEMINI_API_KEY": "gk",
+        "OPENROUTER_API_KEY": "or",
+        "GROQ_API_KEY": "gq",
+        "SOME_RANDOM_APIKEY": "x",
+    }
+    for key, value in leak_vars.items():
+        os.environ[key] = value
+    try:
+        env = _safe_env()
+        for key in leak_vars:
+            assert key not in env, f"{key} leaked into subprocess env"
+    finally:
+        for key in leak_vars:
+            os.environ.pop(key, None)
+
+
+def test_sec05_agent_runner_strips_classic_credential_vars() -> None:
+    """SEC05: agent_runner._safe_env must still strip SECRET/TOKEN/PASSWORD/CREDENTIAL/MASTER_KEY."""
+    leak_vars = {
+        "MY_SECRET": "s",
+        "GITHUB_TOKEN": "t",
+        "DB_PASSWORD": "p",
+        "SOME_CREDENTIAL": "c",
+        "MYCELOS_MASTER_KEY": "m",
+    }
+    for key, value in leak_vars.items():
+        os.environ[key] = value
+    try:
+        env = _safe_env()
+        for key in leak_vars:
+            assert key not in env, f"{key} leaked into subprocess env"
+    finally:
+        for key in leak_vars:
+            os.environ.pop(key, None)
 
 
 # ── SEC06: Network Isolation (LocalSandbox limitation) ──

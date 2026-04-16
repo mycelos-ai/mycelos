@@ -68,3 +68,8 @@ insp/
 .superpowers/
 CLAUDE.md
 AGENT.md
+
+# Local-only notes: reviews, audits, brainstorms, scratchpads.
+# Never committed — used for Claude/Stefan working notes.
+docs/local-reviews/
+docs/local-notes/
