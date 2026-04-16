@@ -1,0 +1,25 @@
+name: daily-news-schedule
+description: "User wants daily AI news via Telegram — should create schedule, not suggest slash command"
+test_user_model: "anthropic/claude-haiku-4-5"
+max_turns: 5
+max_cost: 0.30
+
+setup:
+  user_name: "Stefan"
+  language: "de"
+
+first_message: "Send me a daily summary of the latest AI news every morning at 7am via Telegram"
+
+user_persona: |
+  You are Stefan. You want daily AI news at 7am via Telegram.
+  If asked what topics, say "AI, LLMs, and agent frameworks".
+  If asked to confirm, say "yes".
+  Be brief.
+
+assertions:
+  - type: tool_was_called
+    tool: "create_schedule"
+    message: "Should call create_schedule tool, not suggest /schedule add"
+
+  - type: no_credential_leak
+    message: "No secrets in responses"

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Settings</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Settings content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="{
+        models: [],
+        assignments: [],
+        credentials: [],
+        config: {},
+        generations: [],
+        loading: true,
+        error: null,
+
+        showAddCredential: false,
+        newCred: { service: '', label: 'default', secret: '', description: '' },
+        credSaving: false,
+        credError: null,
+
+        confirmRollback: null,
+        rollbackLoading: false,
+
+        confirmDeleteCred: null,
+
+        language: 'en',
+
+        async init() {
+          // Load each section independently so one failure doesn't block all
+          const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+
+          const [modelsData, creds, configData, genData] = await Promise.all([
+            safe(() => MycelosAPI.get('/api/models')),
+            safe(() => MycelosAPI.get('/api/credentials')),
+            safe(() => MycelosAPI.get('/api/config')),
+            safe(() => MycelosAPI.get('/api/config/generations')),
+          ]);
+
+          if (modelsData) {
+            this.models = modelsData.models || [];
+            this.assignments = modelsData.assignments || [];
+          }
+          if (creds) {
+            this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+          }
+          if (configData) {
+            this.config = configData;
+          }
+          if (genData) {
+            this.generations = genData.generations || [];
+            this.activeGenerationId = genData.active_id || null;
+          }
+          this.loading = false;
+        },
+
+        async addCredential() {
+          if (!this.newCred.service || !this.newCred.secret) return;
+          this.credSaving = true;
+          this.credError = null;
+          try {
+            await MycelosAPI.post('/api/credentials', this.newCred);
+            this.showAddCredential = false;
+            this.newCred = { service: '', label: 'default', secret: '', description: '' };
+            // Refresh
+            this.credentials = await MycelosAPI.get('/api/credentials');
+          } catch (e) {
+            this.credError = e.message;
+          } finally {
+            this.credSaving = false;
+          }
+        },
+
+        async deleteCredential(service, label) {
+          try {
+            await MycelosAPI.delete('/api/credentials/' + encodeURIComponent(service) + '?label=' + encodeURIComponent(label || 'default'));
+            this.confirmDeleteCred = null;
+            this.credentials = await MycelosAPI.get('/api/credentials');
+          } catch (e) {
+            alert('Delete failed: ' + e.message);
+            this.confirmDeleteCred = null;
+          }
+        },
+
+        async rollbackTo(genId) {
+          this.rollbackLoading = true;
+          try {
+            await MycelosAPI.post('/api/config/rollback', { generation_id: genId });
+            this.confirmRollback = null;
+            // Refresh config + generations
+            const [configData, genData] = await Promise.all([
+              MycelosAPI.get('/api/config'),
+              MycelosAPI.get('/api/config/generations'),
+            ]);
+            this.config = configData || {};
+            this.generations = genData.generations || [];
+            this.activeGenerationId = genData.active_id || null;
+          } catch (e) {
+            alert('Rollback failed: ' + e.message);
+            this.confirmRollback = null;
+          } finally {
+            this.rollbackLoading = false;
+          }
+        },
+
+        formatDate(ts) {
+          if (!ts) return '';
+          const d = new Date(ts);
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+      }"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error && !loading" class="card max-w-md mx-auto mt-12 text-center">
+        <span class="material-symbols-outlined text-[var(--error)] text-3xl mb-3">error_outline</span>
+        <p class="text-sm text-[var(--on-surface-variant)]" x-text="'Connection failed: ' + error"></p>
+        <button class="btn-secondary mt-4" @click="loading = true; error = null; init()" x-text="t('common.retry')">Retry</button>
+      </div>
+
+      <!-- Settings sections -->
+      <div x-show="!loading && !error" class="animate-fade-in max-w-5xl mx-auto space-y-10">
+
+        <!-- ============================================================ -->
+        <!-- Section 1: Models -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Models</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">LLM Configuration</p>
+
+          <!-- Models Table -->
+          <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-[var(--on-surface-variant)] text-[10px] uppercase tracking-wider font-label">
+                  <th class="pb-3">Model</th>
+                  <th class="pb-3">Provider</th>
+                  <th class="pb-3">Tier</th>
+                  <th class="pb-3">Input $/1K</th>
+                  <th class="pb-3">Output $/1K</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="m in models" :key="m.id">
+                  <tr class="border-b border-[var(--outline-variant)]/10">
+                    <td class="py-2.5 font-mono text-xs" x-text="m.id"></td>
+                    <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="m.provider"></td>
+                    <td class="py-2.5">
+                      <span class="status-badge" :class="{
+                        'status-badge--active': m.tier === 'fast',
+                        'status-badge--success': m.tier === 'balanced',
+                        'status-badge--proposed': m.tier === 'quality' || m.tier === 'reasoning',
+                      }" x-text="m.tier"></span>
+                    </td>
+                    <td class="py-2.5 font-mono text-xs text-[var(--on-surface-variant)]" x-text="m.input_cost_per_1k != null ? m.input_cost_per_1k.toFixed(4) : '—'"></td>
+                    <td class="py-2.5 font-mono text-xs text-[var(--on-surface-variant)]" x-text="m.output_cost_per_1k != null ? m.output_cost_per_1k.toFixed(4) : '—'"></td>
+                  </tr>
+                </template>
+                <template x-if="models.length === 0">
+                  <tr><td colspan="5" class="py-6 text-center text-[var(--on-surface-variant)]">No models configured</td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Agent Assignments -->
+          <div x-show="assignments.length > 0" class="mt-4">
+            <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">Agent Assignments</p>
+            <div class="card overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-[var(--on-surface-variant)] text-[10px] uppercase tracking-wider font-label">
+                    <th class="pb-3">Agent</th>
+                    <th class="pb-3">Model</th>
+                    <th class="pb-3">Priority</th>
+                    <th class="pb-3">Purpose</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="a in assignments" :key="a.agent_id + '-' + a.model_id">
+                    <tr class="border-b border-[var(--outline-variant)]/10">
+                      <td class="py-2.5 font-mono text-xs" x-text="a.agent_id"></td>
+                      <td class="py-2.5 font-mono text-xs text-[var(--primary)]" x-text="a.model_id"></td>
+                      <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="a.priority"></td>
+                      <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="a.purpose || '—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 2: Credentials -->
+        <!-- ============================================================ -->
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Credentials</h2>
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Encrypted Secrets</p>
+            </div>
+            <button class="btn-secondary" @click="showAddCredential = !showAddCredential">
+              <span class="material-symbols-outlined text-sm">add</span>
+              Add Credential
+            </button>
+          </div>
+
+          <!-- Add Credential Form -->
+          <div x-show="showAddCredential" x-transition class="card mb-4 space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Service</label>
+                <input type="text" class="input-field" placeholder="e.g. openai, github" x-model="newCred.service">
+              </div>
+              <div>
+                <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Label</label>
+                <input type="text" class="input-field" placeholder="default" x-model="newCred.label">
+              </div>
+            </div>
+            <div>
+              <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Secret</label>
+              <input type="password" class="input-field" placeholder="API key or token" x-model="newCred.secret">
+            </div>
+            <div>
+              <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Description (optional)</label>
+              <input type="text" class="input-field" placeholder="What is this credential for?" x-model="newCred.description">
+            </div>
+            <div x-show="credError" class="text-xs text-[var(--error)]" x-text="credError"></div>
+            <div class="flex items-center gap-3">
+              <button class="btn-primary text-sm" @click="addCredential()" :disabled="credSaving || !newCred.service || !newCred.secret">
+                <span x-show="!credSaving" x-text="t('common.save')">Save</span>
+                <span x-show="credSaving">Saving...</span>
+              </button>
+              <button class="btn-secondary text-sm" @click="showAddCredential = false; credError = null" x-text="t('common.cancel')">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Credentials List -->
+          <div class="card">
+            <template x-if="credentials.length === 0">
+              <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center">No credentials stored</p>
+            </template>
+            <div class="space-y-0">
+              <template x-for="(c, idx) in credentials" :key="c.service + '-' + (c.label || 'default')">
+                <div :class="idx > 0 ? 'border-t border-[var(--outline-variant)]/10' : ''" class="flex items-center justify-between py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg">key</span>
+                    <div class="min-w-0">
+                      <p class="text-sm font-mono" x-text="c.service"></p>
+                      <p class="text-[10px] text-[var(--on-surface-variant)]">
+                        <span x-text="c.label || 'default'"></span>
+                        <span x-show="c.description"> · </span>
+                        <span x-text="c.description || ''"></span>
+                      </p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[10px] text-[var(--on-surface-variant)]" x-text="formatDate(c.created_at)"></span>
+
+                    <!-- Delete with confirmation -->
+                    <template x-if="confirmDeleteCred !== (c.service + ':' + (c.label || 'default'))">
+                      <button
+                        class="text-[var(--on-surface-variant)] hover:text-[var(--error)] transition-colors p-1"
+                        @click="confirmDeleteCred = c.service + ':' + (c.label || 'default')"
+                        title="Delete"
+                      >
+                        <span class="material-symbols-outlined text-sm">delete</span>
+                      </button>
+                    </template>
+                    <template x-if="confirmDeleteCred === (c.service + ':' + (c.label || 'default'))">
+                      <div class="flex items-center gap-2">
+                        <button
+                          class="text-[10px] text-[var(--error)] font-bold uppercase tracking-wider hover:underline"
+                          @click="deleteCredential(c.service, c.label)"
+                        x-text="t('common.delete')">Delete</button>
+                        <button
+                          class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-wider hover:underline"
+                          @click="confirmDeleteCred = null"
+                        x-text="t('common.cancel')">Cancel</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 3: Language -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1" x-text="t('settings.language')">Language</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Interface Language</p>
+
+          <div class="card max-w-sm">
+            <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Preferred Language</label>
+            <select
+              class="input-field"
+              x-model="language"
+              @change="
+                MycelosAPI.post('/api/chat', {
+                  message: '/memory set language=' + language,
+                  user_id: 'default',
+                }).catch(() => {})
+              "
+            >
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+            </select>
+            <p class="text-[10px] text-[var(--on-surface-variant)] mt-2">LLM responses will adapt to this language. The interface stays in English.</p>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 4: Config Generations -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Config Generations</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Immutable Configuration History</p>
+
+          <div class="card">
+            <template x-if="generations.length === 0">
+              <div class="py-4 text-center">
+                <p class="text-sm text-[var(--on-surface-variant)]">Config state loaded. Generation history available via CLI.</p>
+                <p class="text-[10px] text-[var(--on-surface-variant)] mt-1 font-mono">mycelos config list</p>
+              </div>
+            </template>
+            <div class="space-y-0">
+              <template x-for="(g, idx) in generations" :key="g.id">
+                <div :class="idx > 0 ? 'border-t border-[var(--outline-variant)]/10' : ''" class="flex items-center justify-between py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <span class="font-mono text-xs text-[var(--primary)]" x-text="'#' + g.id"></span>
+                    <div class="min-w-0">
+                      <p class="text-sm" x-text="g.description || g.trigger || 'Configuration change'"></p>
+                      <p class="text-[10px] text-[var(--on-surface-variant)]" x-text="formatDate(g.created_at)"></p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span x-show="g.is_active" class="status-badge status-badge--active">Active</span>
+
+                    <!-- Rollback with confirmation -->
+                    <template x-if="!g.is_active && confirmRollback !== g.id">
+                      <button class="btn-secondary text-[10px] py-1 px-2.5" @click="confirmRollback = g.id">
+                        Rollback
+                      </button>
+                    </template>
+                    <template x-if="!g.is_active && confirmRollback === g.id">
+                      <div class="flex items-center gap-2">
+                        <button
+                          class="text-[10px] text-[var(--error)] font-bold uppercase tracking-wider hover:underline"
+                          @click="rollbackTo(g.id)"
+                          :disabled="rollbackLoading"
+                          x-text="rollbackLoading ? 'Rolling back...' : 'Confirm'"
+                        ></button>
+                        <button
+                          class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-wider hover:underline"
+                          @click="confirmRollback = null"
+                          x-text="t('common.cancel')"
+                        >Cancel</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 5: Data Management -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Data Management</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Export & Reset</p>
+
+          <div class="space-y-4">
+            <div class="card flex items-center justify-between">
+              <div>
+                <p class="text-sm font-bold">Export Credentials</p>
+                <p class="text-[10px] text-[var(--on-surface-variant)] mt-0.5">Download encrypted credential backup</p>
+              </div>
+              <button class="btn-secondary opacity-50 cursor-not-allowed" disabled>
+                <span class="material-symbols-outlined text-sm">download</span>
+                Coming Soon
+              </button>
+            </div>
+
+            <div class="card border-[var(--error)]/20">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[var(--error)] mt-0.5">warning</span>
+                <div>
+                  <p class="text-sm font-bold text-[var(--error)]">Danger Zone</p>
+                  <p class="text-[10px] text-[var(--on-surface-variant)] mt-1 leading-relaxed">
+                    Resetting will delete all sessions, memory, and audit logs. Credentials and config are preserved.
+                    This action cannot be undone.
+                  </p>
+                  <p class="text-[10px] text-[var(--on-surface-variant)] mt-2 font-mono">mycelos db reset</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+</body>
+</html>

@@ -1,0 +1,184 @@
+<header class="fixed top-0 left-0 md:left-64 right-0 z-30 hidden md:block">
+  <div class="flex justify-between items-center px-8 h-20 w-full bg-[var(--surface)]/80 backdrop-blur-xl">
+    <div class="flex items-center gap-4 flex-1">
+      <h2 class="text-lg font-headline font-bold text-[var(--on-surface)]" x-text="document.title.replace('Mycelos - ', '').replace('Mycelos — ', '') || 'Mycelos'"></h2>
+    </div>
+    <div class="flex items-center gap-6 ml-8">
+      <!-- Inbox: aggregated reminders + waiting/failed workflows -->
+      <div class="flex items-center gap-2" x-data="inboxBell()" x-init="init()">
+        <div class="relative" @click.outside="open = false">
+          <button @click="toggle()"
+                  class="p-2 text-[var(--on-surface-variant)] hover:text-[var(--primary)] transition-colors relative"
+                  :title="total > 0 ? (total + ' item(s) need attention') : 'No new notifications'">
+            <span class="material-symbols-outlined">notifications</span>
+            <span x-show="total > 0"
+                  class="absolute top-1 right-1 min-w-[16px] h-4 px-1 bg-[var(--error)] text-white
+                         text-[10px] font-bold rounded-full flex items-center justify-center"
+                  x-text="total > 99 ? '99+' : total"></span>
+          </button>
+          <!-- Dropdown panel -->
+          <div x-show="open"
+               x-transition:enter="transition ease-out duration-150"
+               x-transition:enter-start="opacity-0 -translate-y-1"
+               x-transition:enter-end="opacity-100 translate-y-0"
+               x-cloak
+               class="absolute right-0 top-full mt-2 w-96 max-h-[70vh] overflow-y-auto
+                      rounded-xl bg-[var(--surface-container)] shadow-2xl z-50"
+               style="border: 1px solid var(--outline-variant);">
+            <!-- Header -->
+            <div class="px-4 py-3 border-b border-[var(--outline-variant)]/30 flex items-center justify-between">
+              <h3 class="font-headline text-sm font-bold">Inbox</h3>
+              <button @click="refresh()" class="text-xs text-[var(--on-surface-variant)] hover:text-[var(--primary)]">
+                <span class="material-symbols-outlined text-sm" :class="loading && 'animate-spin'">refresh</span>
+              </button>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!loading && total === 0" class="px-4 py-8 text-center">
+              <span class="material-symbols-outlined text-3xl text-[var(--on-surface-variant)]/30 block mb-2">check_circle</span>
+              <p class="text-xs text-[var(--on-surface-variant)]">Nothing needs your attention.</p>
+            </div>
+
+            <!-- Reminders -->
+            <div x-show="(data.reminders || []).length > 0">
+              <p class="px-4 pt-3 text-[10px] font-label uppercase tracking-widest text-[var(--warning)]">
+                Reminders (<span x-text="(data.reminders || []).length"></span>)
+              </p>
+              <template x-for="rem in (data.reminders || [])" :key="rem.path">
+                <a href="#"
+                   @click.prevent="dismissAndOpen(rem.path)"
+                   class="flex items-start gap-2 px-4 py-2 hover:bg-[var(--surface-container-high)] transition-colors">
+                  <span class="material-symbols-outlined text-[var(--warning)] text-base mt-0.5">notifications_active</span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm truncate" x-text="rem.title"></p>
+                    <p class="text-[11px] text-[var(--on-surface-variant)]" x-text="formatInboxDate(rem.remind_at || rem.due)"></p>
+                  </div>
+                </a>
+              </template>
+            </div>
+
+            <!-- Waiting workflows -->
+            <div x-show="(data.waiting_workflows || []).length > 0">
+              <p class="px-4 pt-3 text-[10px] font-label uppercase tracking-widest text-[var(--primary)]">
+                Waiting for you (<span x-text="(data.waiting_workflows || []).length"></span>)
+              </p>
+              <template x-for="wf in (data.waiting_workflows || [])" :key="wf.id">
+                <a :href="'/pages/chat.html?resume_run=' + wf.id"
+                   class="flex items-start gap-2 px-4 py-2 hover:bg-[var(--surface-container-high)] transition-colors">
+                  <span class="material-symbols-outlined text-[var(--primary)] text-base mt-0.5">help</span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm truncate" x-text="wf.workflow_name || wf.workflow_id"></p>
+                    <p class="text-[11px] text-[var(--on-surface-variant)] truncate"
+                       x-text="wf.clarification || 'waiting for input'"></p>
+                  </div>
+                </a>
+              </template>
+            </div>
+
+            <!-- Failed workflows -->
+            <div x-show="(data.failed_workflows || []).length > 0">
+              <p class="px-4 pt-3 text-[10px] font-label uppercase tracking-widest text-[var(--error)]">
+                Failed (24h) (<span x-text="(data.failed_workflows || []).length"></span>)
+              </p>
+              <template x-for="wf in (data.failed_workflows || [])" :key="wf.id">
+                <a :href="'/pages/workflows.html?run_id=' + wf.id"
+                   class="flex items-start gap-2 px-4 py-2 hover:bg-[var(--surface-container-high)] transition-colors">
+                  <span class="material-symbols-outlined text-[var(--error)] text-base mt-0.5">error</span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm truncate" x-text="wf.workflow_name || wf.workflow_id"></p>
+                    <p class="text-[11px] text-[var(--on-surface-variant)] truncate"
+                       x-text="wf.error ? wf.error.substring(0, 80) : 'Failed'"></p>
+                  </div>
+                </a>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3 pl-6 border-l border-[var(--outline-variant)]/20">
+        <div class="text-right">
+          <p class="text-sm font-bold text-[var(--on-surface)]" x-text="userName || 'User'"></p>
+          <p class="text-[10px] text-[var(--primary)] uppercase font-label tracking-tighter" x-text="t('header.local')">Local</p>
+        </div>
+        <div class="w-10 h-10 rounded-full border border-[var(--primary)]/20 bg-[var(--surface-container)] flex items-center justify-center">
+          <span class="material-symbols-outlined text-[var(--primary)]">person</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<script>
+  /**
+   * Inbox bell in the header: aggregates reminders, waiting workflows,
+   * and recent failed workflows from /api/admin/inbox. Polls lazily
+   * when the dropdown opens, and refreshes once per minute while the
+   * page is visible so the red badge count stays roughly current.
+   */
+  window.inboxBell = function () {
+    return {
+      open: false,
+      loading: false,
+      data: { reminders: [], waiting_workflows: [], failed_workflows: [], total: 0 },
+      _timer: null,
+
+      get total() { return (this.data && this.data.total) || 0; },
+
+      async init() {
+        await this.refresh();
+        // Poll every 60s so the badge reflects new failures/reminders even
+        // if the user never clicks the bell.
+        this._timer = setInterval(() => this.refresh(), 60000);
+      },
+
+      async refresh() {
+        this.loading = true;
+        try {
+          const d = await MycelosAPI.get('/api/admin/inbox');
+          if (d && typeof d === 'object') this.data = d;
+        } catch (e) {
+          // Silent: header must never throw a visible error
+          console.warn('inbox refresh failed:', e.message);
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      toggle() {
+        this.open = !this.open;
+        if (this.open) this.refresh();
+      },
+
+      /**
+       * Clicking a reminder entry in the bell dismisses it (server-side:
+       * stamps reminder_fired_at = now, audits reminder.dismissed) and
+       * then navigates to the note. By the next tick the entry is gone
+       * from the bell for good.
+       */
+      async dismissAndOpen(path) {
+        try {
+          await MycelosAPI.post('/api/admin/inbox/dismiss', { path });
+        } catch (e) {
+          // Navigate anyway — the worst case is the badge stays until
+          // the next auto-refresh.
+          console.warn('dismiss failed:', e.message);
+        }
+        window.location.href = '/pages/knowledge.html?note=' + encodeURIComponent(path);
+      },
+
+      formatInboxDate(iso) {
+        if (!iso) return '';
+        try {
+          const d = new Date(iso);
+          if (isNaN(d.getTime())) return String(iso);
+          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            + ' · '
+            + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        } catch {
+          return String(iso);
+        }
+      },
+    };
+  };
+</script>

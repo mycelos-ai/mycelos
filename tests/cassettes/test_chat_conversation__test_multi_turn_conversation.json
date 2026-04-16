@@ -1,0 +1,75 @@
+{
+  "entries": {
+    "0a64a34b8174aea87fe3b16d348fbf11bd92faaba0494deade5649d6049fc947": {
+      "content": "Hello TestUser! 👋 Great to meet you properly.\n\nI'm Mycelos, your personal AI assistant. I'm here to help you with a bunch of things:\n\n- **Search & research** — web searches, news, fetching articles\n- **Knowledge base** — save notes, tasks, decisions, and organize them into topics\n- **Reminders & timers** — set tasks with due dates or timed reminders (even \"remind me in 5 minutes\")\n- **Email** — read, search, and send emails\n- **Build automations** — when you're ready, I can help you create workflows or agents for recurring tasks\n- **Web & file access** — fetch pages, read/write files locally\n\nYour data stays on your machine. Cloud LLMs are just tools I use to think — nothing is stored there.\n\n**What would you like to do first?** Whether it's organizing something, looking something up, or just exploring what's possible, I'm ready to help.",
+      "cost": 0.0069299999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6046
+    },
+    "13cbf586ec3064288fd93e7dec75ec36f8ef6dcc62733efe63115e10fd95ac67": {
+      "content": "Your name is **TestUser** — that's what you just told me! 😊\n\nNow, back to my question: **Would you like to call me \"Mycelos\", or would you prefer a different name for your assistant?**",
+      "cost": 0.007777,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7561
+    },
+    "57eb11e4ba2bd34e23f1f32a4fe0c2f13406673191a328475264086bf27b0a41": {
+      "content": "Hi TestUser! I'm Mycelos, your personal AI assistant. 👋\n\nGreat to meet you! Before we get started, I have a quick question:\n\n**Would you like to keep \"Mycelos\" as my name, or would you prefer to call me something else?**",
+      "cost": 0.007349,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7089
+    },
+    "a2b7fffbdb5fd72b2ebd913f12f0f147ff7795605c86a156521929e05129c2d3": {
+      "content": "Your name is **TestUser** — that's what you just told me! 😊\n\nBut before we continue, I have a quick question for you:\n\n**Would you like to call me \"Mycelos\", or would you prefer a different name?**",
+      "cost": 0.007807,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7575
+    },
+    "b3218c995f589c4a4c786c296a44ecd5c292974533d615776166f5db5c59fe49": {
+      "content": "Your name is TestUser! 😊\n\nI know it from your profile, so you don't need to tell me again.",
+      "cost": 0.006221,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6101
+    },
+    "bc91fba72169cba31b94c9b6fd9b32e71b4a88a9f0cea73134c0b2d9817c6fe3": {
+      "content": "Your name is **TestUser** — you just told me that! 😊\n\nNow, back to my question: **Would you like to keep \"Mycelos\" as my name, or would you prefer to call me something else?**",
+      "cost": 0.007777,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7561
+    },
+    "cbe09e40dc7effbd8170fb23b5a324fbc0a1f9e6a784fa86db918a78b4b79364": {
+      "content": "Hi TestUser! I'm **Mycelos**, your personal AI assistant. 👋\n\nGreat to meet you! Before we get started, I have a quick question:\n\n**Would you like to keep my name as \"Mycelos\", or would you prefer to call me something else?**",
+      "cost": 0.007349,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7089
+    },
+    "e942cb8fc7d24221c6125a567240911f6c33b78aed375966c208c2c9e0801088": {
+      "content": "Hi TestUser! 👋 I'm **Mycelos**, your personal AI assistant.\n\nGreat to meet you! Before we get started, I'd like to personalize things a bit.\n\n**My name is Mycelos by default, but you can call me something else if you prefer.** What would you like to call me?",
+      "cost": 0.007399,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7099
+    },
+    "ea04073eb27c56332b2e4bfa0fb9b212631dc58483912b8d9b310b792d0c3e0d": {
+      "content": "Your name is **TestUser** — that's what you told me when we started! 😊\n\nNow, I'm still waiting to hear: would you like to call me Mycelos, or would you prefer a different name for me?",
+      "cost": 0.007165,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6949
+    },
+    "fc003b3179897fcd736298cf2a8e8825fa16a4697aea5f7aca0e4904ca7eb46d": {
+      "content": "Hi TestUser! 👋 I'm **Mycelos** — your personal AI assistant that grows with you. Your data stays local, and I use cloud AI as a tool — not as storage.\n\nMy default name is Mycelos, but you can give me a different name if you'd like. What should I be called?",
+      "cost": 0.006677,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6381
+    }
+  },
+  "version": 1
+}

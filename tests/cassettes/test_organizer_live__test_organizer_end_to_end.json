@@ -1,0 +1,89 @@
+{
+  "entries": {
+    "1188a7f3550c7a8afc0e370d59f657f15dc2f1643838909abd6b4366ab59bc19": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"random-ideas\"\n}\n```",
+      "cost": 0.000393,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 177
+    },
+    "31613b513d910fba849e76f36b61b99346e9f0eddbbc66a34a32e8a4e70baf42": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"shopping\"\n}\n```",
+      "cost": 0.0005200000000000001,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 312
+    },
+    "4a32466a0227c097f3d7c5beaa16014e8e954b0b6e8a52cbb0dbd87d8550a0a1": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 0.85,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000539,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 319
+    },
+    "4ad226b6703b2135f24f21ab3b061ee271c614a071324f5de47574293a5feb5e": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"topics/code-refactoring\"\n}\n```",
+      "cost": 0.00041600000000000003,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 184
+    },
+    "4ff7adcfede2e15d7bb07aaa82c482e380cdce684bd0724a378497f65d68fca5": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000549,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 329
+    },
+    "5b2de1ad69ad18417272d75a6e369db2f2d7416171afffaaa7799539b88e6c4f": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"topics/shopping\"\n}\n```",
+      "cost": 0.000393,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 177
+    },
+    "61f7fa6cdcd9e12e2ad3c644e6b7b41f94e617bd042764ac775cd43f05f853b0": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.00039900000000000005,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 179
+    },
+    "7a8ee68a861556c066f0e1c1d8ee49e21ce2e201b4042619843ca0f0fb243cfd": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.05,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"topics/development-tasks\"\n}\n```",
+      "cost": 0.0005510000000000001,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 327
+    },
+    "a786d51135289c0a32e211e1d6ef8e2c065fecf17581024cff50ed2689687748": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.00040300000000000004,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 183
+    },
+    "cecc2690cf3f47b635b21fb4abd42cf7788ce0964265448b6300d0e8d5a4292b": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 1.0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000531,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 311
+    },
+    "d674624111010ede6ec73a641ac2070d2b543ecf50b52e0d01b9648908d33bcc": {
+      "content": "```json\n{\n  \"topic_path\": \"topics/coffee-stuff\",\n  \"confidence\": 0.85,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.00039900000000000005,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 179
+    },
+    "de42fff0573bc13c339e9610f0ea9ec03980f666fa782c15777aaacd689f913c": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"topics/mycelos-features\"\n}\n```",
+      "cost": 0.000546,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 318
+    }
+  },
+  "version": 1
+}

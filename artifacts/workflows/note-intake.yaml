@@ -1,0 +1,44 @@
+name: note-intake
+version: 2
+description: "Classify, organize, and store incoming notes"
+goal: "Auto-classify new notes by topic, type, tags, and due date"
+
+inputs:
+  - name: text
+    type: string
+    required: true
+    description: "The raw text to classify and store as a note"
+
+plan: |
+  You are the Note Intake Agent. When given raw text from the user:
+  1. Analyze the text and determine:
+     - A descriptive title (format: "[Topic]: [Subject]" when topic is clear)
+     - The note type: task, note, decision, reference, fact, or journal
+     - Relevant tags (2-5 tags, lowercase)
+     - Due date if mentioned (extract from "morgen", "Freitag", etc.)
+     - Whether a reminder is needed (true for tasks with due dates)
+     - Which existing topic it belongs to, or if a new topic is needed
+  2. Call note_write with all extracted metadata
+  3. Confirm to the user what was stored, in their language
+
+  Be smart about context. "Milch kaufen" is a task, not a note.
+  "Meeting mit Stefan war gut" is a journal entry.
+  "Entscheidung: Wir nutzen Python" is a decision.
+model: haiku
+allowed_tools:
+  - note_write
+  - note_list
+  - note_search
+scope:
+  - knowledge.write
+  - knowledge.read
+requires:
+  connectors: []
+  tools: [note_write]
+
+steps: []
+
+tags:
+  - system
+  - knowledge
+  - intake

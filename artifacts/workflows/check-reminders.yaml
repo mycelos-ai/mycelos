@@ -1,0 +1,34 @@
+name: check-reminders
+version: 2
+description: "Check for due/overdue notes with reminders and send notifications"
+goal: "Find all notes that are due or overdue with reminder=true, notify the user"
+
+inputs: []
+
+plan: |
+  You are the Reminder Agent. Your job:
+  1. Call note_list with status='open' and due='overdue' to find overdue tasks
+  2. Call note_list with due='today' to find tasks due today
+  3. If there are any results, summarize them clearly:
+     - List overdue tasks first (urgent)
+     - Then today's tasks
+     - Include title, due date, and path for each
+  4. If no tasks are due, respond with "No reminders today."
+
+  Keep it short and actionable. No fluff.
+model: haiku
+allowed_tools:
+  - note_list
+  - note_search
+scope:
+  - knowledge.read
+requires:
+  connectors: []
+  tools: [note_list]
+
+steps: []
+
+tags:
+  - system
+  - reminders
+  - scheduled

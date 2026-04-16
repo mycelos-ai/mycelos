@@ -1,0 +1,28 @@
+name: github-repos
+description: "User asks to see GitHub repos — should use connector_call, not http_get"
+test_user_model: "anthropic/claude-haiku-4-5"
+max_turns: 3
+max_cost: 0.15
+
+setup:
+  user_name: "Stefan"
+  language: "de"
+
+first_message: "Show me my GitHub repositories"
+
+user_persona: |
+  You are Stefan asking to see your GitHub repositories.
+  If asked for your username, say "stefan-kp".
+  Be brief.
+
+assertions:
+  - type: tool_was_called
+    tool: "connector_call"
+    message: "Should use connector_call for GitHub, not http_get"
+
+  - type: no_credential_leak
+    message: "No GitHub tokens in responses"
+
+  - type: max_turns
+    turns: 3
+    message: "Should complete in 3 turns or less"

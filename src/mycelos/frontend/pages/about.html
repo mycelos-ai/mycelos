@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - About</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* About page editorial styles */
+    .about-prose p {
+      color: var(--on-surface-variant);
+      line-height: 1.9;
+      margin-bottom: 1.25rem;
+      font-size: 1rem;
+    }
+    .about-prose strong {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .about-prose a {
+      color: var(--secondary);
+      text-decoration: underline;
+      text-decoration-color: rgba(35, 188, 254, 0.3);
+    }
+    .about-prose a:hover {
+      text-decoration-color: var(--secondary);
+    }
+
+    /* Constitution principle cards */
+    .principle-card {
+      background: var(--surface-container);
+      border: 1px solid rgba(70, 72, 77, 0.15);
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      transition: border-color 300ms ease, transform 300ms ease;
+    }
+    .principle-card:hover {
+      border-color: rgba(106, 214, 255, 0.25);
+      transform: translateY(-2px);
+    }
+    .principle-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* Hero section glow */
+    .hero-glow {
+      position: absolute;
+      width: 300px;
+      height: 300px;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.15;
+      pointer-events: none;
+    }
+
+    /* Tech stack badges */
+    .tech-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 1rem;
+      background: var(--surface-container);
+      border: 1px solid rgba(70, 72, 77, 0.2);
+      border-radius: 9999px;
+      font-size: 0.8125rem;
+      color: var(--on-surface-variant);
+      transition: border-color 200ms ease, color 200ms ease;
+    }
+    .tech-badge:hover {
+      border-color: rgba(106, 214, 255, 0.3);
+      color: var(--primary);
+    }
+  </style>
+</head>
+
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content area -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- About content -->
+    <section class="flex-1 overflow-y-auto pt-20 pb-16 px-4 md:px-8">
+      <div class="max-w-3xl mx-auto about-prose">
+
+        <!-- ============================================================ -->
+        <!-- Hero: What is Mycelos? -->
+        <!-- ============================================================ -->
+        <div class="text-center mb-16 relative">
+          <!-- Decorative glows -->
+          <div class="hero-glow bg-[var(--primary)] top-0 left-1/2 -translate-x-1/2 -translate-y-1/2" style="position: absolute;"></div>
+          <div class="hero-glow bg-[var(--tertiary)] top-12 left-1/3" style="position: absolute;"></div>
+
+          <!-- Logo -->
+          <div class="relative z-10">
+            <div class="w-24 h-24 rounded-2xl bg-gradient-to-tr from-primary/20 to-secondary/10 p-[1px] mx-auto mb-6">
+              <div class="w-full h-full rounded-2xl bg-[var(--surface-container-low)] flex items-center justify-center relative overflow-hidden">
+                <img alt="Mycelos" class="w-16 h-16 object-contain opacity-90" src="/assets/logo-transparent.svg">
+                <div class="absolute inset-0 bg-primary/5 animate-pulse"></div>
+              </div>
+            </div>
+
+            <h1 class="font-headline text-4xl md:text-5xl font-bold tracking-tight glow-text mb-4">Mycelos</h1>
+            <p class="text-[var(--on-surface-variant)] text-lg max-w-lg mx-auto leading-relaxed">
+              A security-first agent operating system that grows with you.
+            </p>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 1: What is Mycelos? -->
+        <!-- ============================================================ -->
+        <div class="mb-16">
+          <h2 class="font-headline text-2xl font-bold text-[var(--on-surface)] mb-6">What is Mycelos?</h2>
+
+          <p>
+            Mycelos is your personal AI assistant that runs entirely on <strong>your machine</strong>, with <strong>your data</strong>, using <strong>your API keys</strong>. It is not a SaaS product. There is no cloud service between you and your agents.
+          </p>
+          <p>
+            At its core, Mycelos is an agent operating system. It manages agents the way an OS manages processes — with scheduling, resource control, security boundaries, and inter-process communication. Agents can be LLM-powered conversationalists, deterministic data processors, or anything in between.
+          </p>
+          <p>
+            Mycelos starts small — a single chat agent that knows you — and grows organically. As you use it, you can create new agents, connect external tools, build reusable workflows, and accumulate a knowledge base. The system learns your preferences and adapts, but never without your awareness.
+          </p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 2: Core Principles (Constitution) -->
+        <!-- ============================================================ -->
+        <div class="mb-16">
+          <h2 class="font-headline text-2xl font-bold text-[var(--on-surface)] mb-2">Core Principles</h2>
+          <p class="text-sm text-[var(--on-surface-variant)] opacity-70 mb-8">The Mycelos Constitution — non-negotiable rules that every component follows.</p>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <!-- Audit Everything -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(106,214,255,0.1)]">
+                  <span class="material-symbols-outlined text-[var(--primary)]">visibility</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">Audit Everything</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    Every state-changing operation is logged. If it changes data, it gets audited. No exceptions, no silent mutations.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Security Fail-Closed -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(255,113,108,0.1)]">
+                  <span class="material-symbols-outlined text-[var(--error)]">shield</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">Security Fail-Closed</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    When a security check fails or encounters an error, the action is denied. Never allow on uncertainty.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Credentials Never Visible -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(135,157,255,0.1)]">
+                  <span class="material-symbols-outlined text-[var(--tertiary)]">lock</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">Credentials Never Visible</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    No credential appears in logs, LLM prompts, error messages, or tracebacks. Encrypted at rest, decrypted only at the point of use.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- MCP for External Services -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(35,188,254,0.1)]">
+                  <span class="material-symbols-outlined text-[var(--secondary)]">hub</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">MCP for External Services</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    All external integrations use the Model Context Protocol. Standard protocol, open ecosystem, no vendor lock-in.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cost-Optimized -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(72,199,142,0.1)]">
+                  <span class="material-symbols-outlined text-[#48c78e]">savings</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">Cost-Optimized</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    Always use the cheapest execution method first. Deterministic logic before Haiku, Haiku before Sonnet, Sonnet before Opus.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Open Source -->
+            <div class="principle-card">
+              <div class="flex items-start gap-4">
+                <div class="principle-icon bg-[rgba(106,214,255,0.1)]">
+                  <span class="material-symbols-outlined text-[var(--primary)]">code</span>
+                </div>
+                <div>
+                  <h3 class="font-headline font-bold text-[var(--on-surface)] mb-1">Open Source</h3>
+                  <p class="text-sm text-[var(--on-surface-variant)] mb-0 leading-relaxed">
+                    MIT licensed, community-driven. You can read, audit, and modify every line of code that runs on your machine.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 3: Why Open Source? -->
+        <!-- ============================================================ -->
+        <div class="mb-16">
+          <h2 class="font-headline text-2xl font-bold text-[var(--on-surface)] mb-6">Why Open Source?</h2>
+
+          <div class="space-y-6">
+            <div class="flex items-start gap-4">
+              <span class="material-symbols-outlined text-[var(--primary)] mt-1 flex-shrink-0">verified</span>
+              <div>
+                <h3 class="font-headline font-semibold text-[var(--on-surface)] mb-1">Trust</h3>
+                <p class="mb-0">You can verify exactly what the code does. Every security claim is auditable. No black boxes, no hidden telemetry.</p>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+              <span class="material-symbols-outlined text-[var(--primary)] mt-1 flex-shrink-0">home</span>
+              <div>
+                <h3 class="font-headline font-semibold text-[var(--on-surface)] mb-1">Privacy</h3>
+                <p class="mb-0">Your data stays on your machine. Conversations, credentials, and knowledge never leave your control. The only external calls are to the LLM providers you choose.</p>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+              <span class="material-symbols-outlined text-[var(--primary)] mt-1 flex-shrink-0">extension</span>
+              <div>
+                <h3 class="font-headline font-semibold text-[var(--on-surface)] mb-1">Extensibility</h3>
+                <p class="mb-0">Build your own agents, connectors, and workflows. Every component follows a Protocol interface that you can implement and swap.</p>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-4">
+              <span class="material-symbols-outlined text-[var(--primary)] mt-1 flex-shrink-0">group</span>
+              <div>
+                <h3 class="font-headline font-semibold text-[var(--on-surface)] mb-1">Community</h3>
+                <p class="mb-0">Contributions are welcome. Whether it is a new MCP connector, a bug fix, or a documentation improvement — the project grows through collaboration.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 4: Technology -->
+        <!-- ============================================================ -->
+        <div class="mb-16">
+          <h2 class="font-headline text-2xl font-bold text-[var(--on-surface)] mb-6">Technology</h2>
+
+          <p>Mycelos is built on proven, stable foundations with minimal dependencies.</p>
+
+          <div class="flex flex-wrap gap-3 my-6">
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">code</span>
+              Python 3.12+
+            </span>
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">storage</span>
+              SQLite (WAL mode)
+            </span>
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">auto_awesome</span>
+              LiteLLM
+            </span>
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">hub</span>
+              MCP Protocol
+            </span>
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">lock</span>
+              AES-256-GCM
+            </span>
+            <span class="tech-badge">
+              <span class="material-symbols-outlined text-sm">history</span>
+              NixOS-style Config
+            </span>
+          </div>
+
+          <ul>
+            <li><strong>SQLite with WAL mode</strong> — fast, single-file database with concurrent read access. No database server to manage.</li>
+            <li><strong>LiteLLM</strong> — unified interface to multiple LLM providers. Switch between Anthropic, OpenAI, Google Gemini, and Ollama (local models) without code changes.</li>
+            <li><strong>NixOS-style config generations</strong> — every configuration change creates an immutable snapshot. Roll back to any previous state with a single command.</li>
+            <li><strong>MCP (Model Context Protocol)</strong> — the emerging standard for connecting AI agents to external tools. Built for interoperability.</li>
+          </ul>
+
+          <h3 class="font-headline text-lg font-bold text-[var(--on-surface)] mt-8 mb-4">Supported LLM Providers</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="p-4 rounded-lg bg-[var(--surface-container)]" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+              <p class="font-headline font-bold text-[var(--on-surface)] text-sm mb-1">Anthropic</p>
+              <p class="text-xs text-[var(--on-surface-variant)] mb-0">Claude Opus, Sonnet, Haiku</p>
+            </div>
+            <div class="p-4 rounded-lg bg-[var(--surface-container)]" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+              <p class="font-headline font-bold text-[var(--on-surface)] text-sm mb-1">OpenAI</p>
+              <p class="text-xs text-[var(--on-surface-variant)] mb-0">GPT-4o, GPT-4o-mini, o1, o3</p>
+            </div>
+            <div class="p-4 rounded-lg bg-[var(--surface-container)]" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+              <p class="font-headline font-bold text-[var(--on-surface)] text-sm mb-1">Google</p>
+              <p class="text-xs text-[var(--on-surface-variant)] mb-0">Gemini 2.5 Pro, Flash</p>
+            </div>
+            <div class="p-4 rounded-lg bg-[var(--surface-container)]" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+              <p class="font-headline font-bold text-[var(--on-surface)] text-sm mb-1">Ollama (Local)</p>
+              <p class="text-xs text-[var(--on-surface-variant)] mb-0">Llama, Mistral, Qwen, and more</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 5: Getting Involved -->
+        <!-- ============================================================ -->
+        <div class="mb-16">
+          <h2 class="font-headline text-2xl font-bold text-[var(--on-surface)] mb-6">Getting Involved</h2>
+
+          <p>Mycelos is built in the open. Whether you want to use it, extend it, or contribute back — you are welcome.</p>
+
+          <div class="grid gap-4 md:grid-cols-2 mt-6">
+            <a href="https://github.com/your-org/mycelos" target="_blank" rel="noopener"
+               class="principle-card flex items-center gap-4 no-underline hover:no-underline">
+              <div class="principle-icon bg-[rgba(106,214,255,0.1)]">
+                <span class="material-symbols-outlined text-[var(--primary)]">code</span>
+              </div>
+              <div>
+                <h3 class="font-headline font-bold text-[var(--on-surface)] text-sm mb-0.5">GitHub Repository</h3>
+                <p class="text-xs text-[var(--on-surface-variant)] mb-0">Source code, issues, and releases</p>
+              </div>
+            </a>
+
+            <div class="principle-card flex items-center gap-4">
+              <div class="principle-icon bg-[rgba(72,199,142,0.1)]">
+                <span class="material-symbols-outlined text-[#48c78e]">license</span>
+              </div>
+              <div>
+                <h3 class="font-headline font-bold text-[var(--on-surface)] text-sm mb-0.5">MIT License</h3>
+                <p class="text-xs text-[var(--on-surface-variant)] mb-0">Free to use, modify, and distribute</p>
+              </div>
+            </div>
+
+            <div class="principle-card flex items-center gap-4">
+              <div class="principle-icon bg-[rgba(35,188,254,0.1)]">
+                <span class="material-symbols-outlined text-[var(--secondary)]">merge</span>
+              </div>
+              <div>
+                <h3 class="font-headline font-bold text-[var(--on-surface)] text-sm mb-0.5">Contributing</h3>
+                <p class="text-xs text-[var(--on-surface-variant)] mb-0">Pull requests welcome — all skill levels</p>
+              </div>
+            </div>
+
+            <div class="principle-card flex items-center gap-4">
+              <div class="principle-icon bg-[rgba(135,157,255,0.1)]">
+                <span class="material-symbols-outlined text-[var(--tertiary)]">forum</span>
+              </div>
+              <div>
+                <h3 class="font-headline font-bold text-[var(--on-surface)] text-sm mb-0.5">Community</h3>
+                <p class="text-xs text-[var(--on-surface-variant)] mb-0">Coming soon — Discord and forum</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Footer tagline -->
+        <!-- ============================================================ -->
+        <div class="text-center py-12" style="border-top: 1px solid rgba(70, 72, 77, 0.15);">
+          <p class="text-sm text-[var(--on-surface-variant)] opacity-50 mb-2 font-label uppercase tracking-widest">Neural Mycelium</p>
+          <p class="text-[var(--on-surface-variant)] opacity-70 text-sm max-w-md mx-auto mb-0">
+            Like mycelium connecting a forest, Mycelos connects your tools, knowledge, and workflows into a living network that grows with you.
+          </p>
+        </div>
+
+        <!-- Bottom spacer -->
+        <div class="h-8"></div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+</body>
+</html>

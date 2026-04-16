@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Workflows</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* Workflow card hover glow */
+    .workflow-card {
+      transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+    }
+    .workflow-card:hover {
+      border-color: rgba(106, 214, 255, 0.25);
+      box-shadow: 0 0 24px -8px rgba(106, 214, 255, 0.1);
+    }
+
+    /* Expandable steps panel */
+    .steps-wrapper {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows var(--transition-normal);
+    }
+    .steps-wrapper.open {
+      grid-template-rows: 1fr;
+    }
+    .steps-wrapper > div {
+      overflow: hidden;
+    }
+
+    /* Creator badge colors */
+    .creator-badge--system {
+      background: rgba(72, 199, 142, 0.12);
+      color: #48c78e;
+    }
+    .creator-badge--planner {
+      background: rgba(135, 157, 255, 0.12);
+      color: var(--tertiary);
+    }
+    .creator-badge--user {
+      background: rgba(106, 214, 255, 0.12);
+      color: var(--primary);
+    }
+
+    /* Schedule table row hover */
+    .schedule-row {
+      transition: background-color var(--transition-fast);
+    }
+    .schedule-row:hover {
+      background: rgba(106, 214, 255, 0.03);
+    }
+
+    /* Run row hover */
+    .run-row {
+      transition: background-color var(--transition-fast);
+    }
+    .run-row:hover {
+      background: rgba(106, 214, 255, 0.03);
+    }
+
+    /* Running status pulse */
+    @keyframes status-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .status-pulse {
+      animation: status-pulse 2s ease-in-out infinite;
+    }
+
+    /* Run detail panel */
+    .run-detail-cell {
+      padding: 0 !important;
+    }
+    .run-detail-inner {
+      overflow: hidden;
+      transition: max-height 0.3s ease, opacity 0.3s ease;
+    }
+    .run-row.expanded {
+      background: rgba(106, 214, 255, 0.03);
+    }
+    .run-row.expanded td:first-child {
+      border-left: 2px solid var(--primary);
+    }
+
+    /* Markdown prose in detail panel */
+    .detail-prose p { margin-bottom: 0.5em; }
+    .detail-prose ul, .detail-prose ol { padding-left: 1.25em; margin-bottom: 0.5em; }
+    .detail-prose li { margin-bottom: 0.15em; }
+    .detail-prose code {
+      background: rgba(106, 214, 255, 0.08);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+    .detail-prose pre {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 0.75em;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-bottom: 0.5em;
+    }
+    .detail-prose pre code {
+      background: none;
+      padding: 0;
+    }
+  </style>
+</head>
+
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Workflows content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="workflowsPage()"
+      x-init="init()"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Main content once loaded -->
+      <div x-show="!loading" class="animate-fade-in max-w-5xl mx-auto space-y-6">
+
+        <!-- ================================================================
+             WORKFLOWS SECTION
+             ================================================================ -->
+
+        <!-- Page header -->
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="font-headline text-2xl font-bold tracking-tight" x-text="t('workflows.title')">Workflows</h1>
+            <p class="text-sm text-[var(--on-surface-variant)] mt-1">
+              <span x-text="workflows.length"></span> workflows registered
+            </p>
+          </div>
+          <a :href="'/pages/chat.html?prefill=' + encodeURIComponent(t('workflows.prefill_plan'))" class="btn-primary text-sm">
+            <span class="material-symbols-outlined text-lg">add_circle</span>
+            Plan New Workflow
+          </a>
+        </div>
+
+        <!-- Separator -->
+        <div class="mycelium-line"></div>
+
+        <!-- Empty state: no workflows -->
+        <div x-show="workflows.length === 0 && !loading" class="card text-center py-16">
+          <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-5xl mb-4 block opacity-30">account_tree</span>
+          <h3 class="font-headline text-lg font-bold mb-2" x-text="t('workflows.no_workflows')">No workflows yet</h3>
+          <p class="text-sm text-[var(--on-surface-variant)] mb-6 max-w-sm mx-auto">
+            No workflows yet. Ask Mycelos to plan a workflow for you.
+          </p>
+          <a :href="'/pages/chat.html?prefill=' + encodeURIComponent(t('workflows.prefill_create'))" class="btn-primary">
+            <span class="material-symbols-outlined text-lg">forum</span>
+            Plan a Workflow
+          </a>
+        </div>
+
+        <!-- Workflow card grid -->
+        <div
+          x-show="workflows.length > 0"
+          class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+        >
+          <template x-for="wf in workflows" :key="wf.id">
+            <div
+              class="workflow-card card cursor-pointer group relative overflow-hidden"
+              x-data="{ expanded: false }"
+            >
+              <!-- Decorative hover glow -->
+              <div class="absolute -top-16 -right-16 w-32 h-32 bg-[var(--primary)]/5 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+
+              <!-- Header: name + status -->
+              <div class="flex items-start justify-between mb-3 relative" @click="expanded = !expanded">
+                <div class="min-w-0 flex-1">
+                  <h3 class="font-headline font-bold text-base truncate group-hover:text-[var(--primary)] transition-colors"
+                      x-text="wf.name"></h3>
+                  <!-- Creator badge -->
+                  <span
+                    class="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider"
+                    :class="creatorBadgeClass(wf.created_by)"
+                  >
+                    <span class="material-symbols-outlined text-xs" x-text="creatorIcon(wf.created_by)"></span>
+                    <span x-text="wf.created_by || 'unknown'"></span>
+                  </span>
+                </div>
+                <span :class="statusClass(wf.status)" x-text="wf.status || 'inactive'"></span>
+              </div>
+
+              <!-- Description -->
+              <p
+                x-show="wf.description"
+                class="text-xs text-[var(--on-surface-variant)] leading-relaxed mb-3 line-clamp-2"
+                x-text="wf.description"
+                @click="expanded = !expanded"
+              ></p>
+
+              <!-- Steps count + tags row -->
+              <div class="flex items-center gap-3 mb-3" @click="expanded = !expanded">
+                <span class="text-[10px] font-label text-[var(--on-surface-variant)] flex items-center gap-1">
+                  <span class="material-symbols-outlined text-xs">layers</span>
+                  <span x-text="(wf.steps || []).length > 0 ? (wf.steps.length + ' steps') : (wf.plan ? 'plan-based' : '0 steps')"></span>
+                </span>
+              </div>
+
+              <!-- Tags chips -->
+              <div class="flex flex-wrap gap-1.5 mb-3" x-show="wf.tags && wf.tags.length > 0" @click="expanded = !expanded">
+                <template x-for="tag in (wf.tags || []).slice(0, 4)" :key="tag">
+                  <span
+                    class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-variant)] text-[var(--on-surface-variant)] truncate max-w-[120px]"
+                    x-text="tag"
+                  ></span>
+                </template>
+                <span
+                  x-show="(wf.tags || []).length > 4"
+                  class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-variant)] text-[var(--on-surface-variant)]"
+                  x-text="'+' + ((wf.tags || []).length - 4)"
+                ></span>
+              </div>
+
+              <!-- Scope / permission chips -->
+              <div class="flex flex-wrap gap-1.5" x-show="wf.scope && wf.scope.length > 0" @click="expanded = !expanded">
+                <template x-for="cap in (wf.scope || []).slice(0, 4)" :key="cap">
+                  <span
+                    class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)] truncate max-w-[120px]"
+                  >
+                    <span class="inline-block w-1 h-1 rounded-full bg-[var(--primary)] mr-1 align-middle"></span>
+                    <span x-text="cap"></span>
+                  </span>
+                </template>
+                <span
+                  x-show="(wf.scope || []).length > 4"
+                  class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)]"
+                  x-text="'+' + ((wf.scope || []).length - 4)"
+                ></span>
+              </div>
+
+              <!-- Action row: expand toggle + run button -->
+              <div class="mt-3 pt-3 flex items-center justify-between"
+                   style="border-top: 1px solid rgba(70, 72, 77, 0.1);">
+                <button
+                  @click="expanded = !expanded"
+                  class="flex items-center gap-2 text-left"
+                >
+                  <span class="material-symbols-outlined text-sm text-[var(--on-surface-variant)] transition-transform"
+                        :class="expanded && 'rotate-180'">expand_more</span>
+                  <span class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]"
+                        x-text="expanded ? 'Hide Steps' : 'Show Steps'"></span>
+                </button>
+                <button @click.stop="openRunDialog(wf)"
+                   class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-label font-semibold uppercase tracking-wider
+                          text-[var(--primary)] bg-[var(--primary)]/10 hover:bg-[var(--primary)]/20 transition-colors">
+                  <span class="material-symbols-outlined text-sm">play_arrow</span>
+                  Run
+                </button>
+              </div>
+
+              <!-- Expandable steps list -->
+              <div class="steps-wrapper" :class="expanded && 'open'">
+                <div>
+                  <div class="mt-3 space-y-2">
+                    <!-- Goal -->
+                    <div x-show="wf.goal" class="card-low mb-3">
+                      <h5 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1">Goal</h5>
+                      <p class="text-xs text-[var(--on-surface)] leading-relaxed" x-text="wf.goal"></p>
+                    </div>
+
+                    <!-- Plan (LLM instructions for plan-based workflows) -->
+                    <div x-show="wf.plan && (wf.steps || []).length === 0" class="card-low mb-3">
+                      <h5 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1">Plan</h5>
+                      <pre class="text-xs text-[var(--on-surface)] leading-relaxed whitespace-pre-wrap font-sans" x-text="wf.plan"></pre>
+                    </div>
+
+                    <!-- Allowed tools -->
+                    <div x-show="wf.allowed_tools && wf.allowed_tools.length > 0" class="card-low mb-3">
+                      <h5 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1">Tools</h5>
+                      <div class="flex flex-wrap gap-1.5">
+                        <template x-for="tool in (wf.allowed_tools || [])" :key="tool">
+                          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--surface-container)] text-[var(--on-surface-variant)]" x-text="tool"></span>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- Steps (legacy step-based workflows) -->
+                    <template x-for="(step, idx) in (wf.steps || [])" :key="step.id || idx">
+                      <div class="card-low flex items-start gap-3">
+                        <!-- Step number -->
+                        <div class="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--surface-container)] flex items-center justify-center">
+                          <span class="text-[10px] font-label font-bold text-[var(--primary)]" x-text="idx + 1"></span>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-2 mb-0.5">
+                            <span class="text-xs font-headline font-bold text-[var(--on-surface)]"
+                                  x-text="step.action || step.tool || 'Step ' + (idx + 1)"></span>
+                            <span x-show="step.id"
+                                  class="text-[9px] font-label text-[var(--on-surface-variant)]/50"
+                                  x-text="step.id"></span>
+                          </div>
+                          <p x-show="step.description"
+                             class="text-[11px] text-[var(--on-surface-variant)] leading-relaxed"
+                             x-text="step.description"></p>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </template>
+        </div>
+
+        <!-- ================================================================
+             SCHEDULED TASKS SECTION
+             ================================================================ -->
+
+        <div class="mt-10">
+          <!-- Section header -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-xl font-bold tracking-tight">Scheduled Tasks</h2>
+              <p class="text-sm text-[var(--on-surface-variant)] mt-1">
+                <span x-text="schedules.length"></span> scheduled tasks
+              </p>
+            </div>
+          </div>
+
+          <!-- Separator -->
+          <div class="mycelium-line mb-6"></div>
+
+          <!-- Empty state: no schedules -->
+          <div x-show="schedules.length === 0 && !loading" class="card text-center py-12">
+            <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-5xl mb-4 block opacity-30">schedule</span>
+            <h3 class="font-headline text-lg font-bold mb-2">No scheduled tasks</h3>
+            <p class="text-sm text-[var(--on-surface-variant)] max-w-sm mx-auto">
+              No scheduled tasks. Create a workflow and schedule it.
+            </p>
+          </div>
+
+          <!-- Schedule table -->
+          <div x-show="schedules.length > 0" class="card overflow-hidden p-0">
+            <div class="overflow-x-auto" style="scrollbar-width: thin; scrollbar-color: rgba(70, 72, 77, 0.4) transparent;">
+              <table class="w-full text-left">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Workflow</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Schedule</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Status</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Last Run</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Next Run</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3 text-right">Runs</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3 text-right">Budget</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="sched in schedules" :key="sched.id">
+                    <tr class="schedule-row" style="border-bottom: 1px solid rgba(70, 72, 77, 0.08);">
+                      <!-- Workflow name -->
+                      <td class="px-6 py-4">
+                        <span class="text-sm font-headline font-bold text-[var(--primary)] cursor-pointer hover:underline"
+                              x-text="workflowName(sched.workflow_id)"
+                              @click="scrollToWorkflow(sched.workflow_id)"></span>
+                      </td>
+                      <!-- Schedule expression -->
+                      <td class="px-6 py-4">
+                        <code class="text-xs font-label px-2 py-1 rounded bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)]"
+                              x-text="sched.schedule"></code>
+                      </td>
+                      <!-- Status badge -->
+                      <td class="px-6 py-4">
+                        <span :class="scheduleStatusClass(sched.status)" x-text="sched.status || 'paused'"></span>
+                      </td>
+                      <!-- Last run -->
+                      <td class="px-6 py-4">
+                        <span class="text-xs text-[var(--on-surface-variant)]"
+                              x-text="sched.last_run ? formatTimestamp(sched.last_run) : '--'"></span>
+                      </td>
+                      <!-- Next run -->
+                      <td class="px-6 py-4">
+                        <span class="text-xs text-[var(--on-surface)]"
+                              x-text="sched.next_run ? formatTimestamp(sched.next_run) : '--'"></span>
+                      </td>
+                      <!-- Run count -->
+                      <td class="px-6 py-4 text-right">
+                        <span class="text-xs font-label text-[var(--on-surface-variant)]"
+                              x-text="sched.run_count != null ? sched.run_count : '--'"></span>
+                      </td>
+                      <!-- Budget per run -->
+                      <td class="px-6 py-4 text-right">
+                        <span class="text-xs font-label text-[var(--on-surface-variant)]"
+                              x-text="sched.budget_per_run != null ? ('$' + Number(sched.budget_per_run).toFixed(2)) : '--'"></span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ================================================================
+             RECENT RUNS SECTION
+             ================================================================ -->
+
+        <div class="mt-10">
+          <!-- Section header -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-xl font-bold tracking-tight flex items-center gap-2">
+                <span class="material-symbols-outlined text-[var(--on-surface-variant)]">history</span>
+                Recent Runs
+              </h2>
+              <p class="text-sm text-[var(--on-surface-variant)] mt-1">
+                <span x-text="runs.length"></span> recent runs
+              </p>
+            </div>
+          </div>
+
+          <!-- Separator -->
+          <div class="mycelium-line mb-6"></div>
+
+          <!-- Status filter chips -->
+          <div x-show="runs.length > 0" class="flex flex-wrap gap-2 mb-4">
+            <template x-for="chip in runFilterChips" :key="chip.id">
+              <button @click="runFilter = chip.id"
+                      :class="runFilter === chip.id
+                        ? 'bg-[var(--primary)]/15 text-[var(--primary)] border-[var(--primary)]/40'
+                        : 'bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)] border-[rgba(70,72,77,0.15)] hover:bg-[var(--surface-container)]'"
+                      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-label font-semibold uppercase tracking-wider
+                             border transition-colors">
+                <span x-text="chip.label"></span>
+                <span x-show="runCountFor(chip.id) > 0"
+                      :class="runFilter === chip.id ? 'bg-[var(--primary)]/20' : 'bg-[var(--surface-container)]'"
+                      class="px-1.5 py-0.5 rounded-full text-[10px] font-mono"
+                      x-text="runCountFor(chip.id)"></span>
+              </button>
+            </template>
+          </div>
+
+          <!-- Empty state: no runs at all -->
+          <div x-show="runs.length === 0 && !loading" class="card text-center py-12">
+            <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-5xl mb-4 block opacity-30">history</span>
+            <h3 class="font-headline text-lg font-bold mb-2">No runs yet</h3>
+            <p class="text-sm text-[var(--on-surface-variant)] max-w-sm mx-auto">
+              Run a workflow to see execution history here.
+            </p>
+          </div>
+
+          <!-- Empty state: filter matches nothing -->
+          <div x-show="runs.length > 0 && filteredRuns.length === 0" class="card text-center py-10">
+            <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-4xl mb-3 block opacity-30">filter_alt_off</span>
+            <p class="text-sm text-[var(--on-surface-variant)]">
+              No runs match this filter.
+              <button @click="runFilter = 'all'" class="text-[var(--primary)] hover:underline ml-1">Show all</button>
+            </p>
+          </div>
+
+          <!-- Runs table -->
+          <div x-show="runs.length > 0 && filteredRuns.length > 0" class="card overflow-hidden p-0">
+            <div class="overflow-x-auto" style="scrollbar-width: thin; scrollbar-color: rgba(70, 72, 77, 0.4) transparent;">
+              <table class="w-full text-left">
+                <thead>
+                  <tr style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Workflow</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Status</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Started</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3">Result</th>
+                    <th class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] px-6 py-3 text-right">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="run in filteredRuns" :key="run.id">
+                    <tbody>
+                    <!-- Main run row (clickable) -->
+                    <tr class="run-row cursor-pointer select-none"
+                        :class="_expandedRun === run.id && 'expanded'"
+                        style="border-bottom: 1px solid rgba(70, 72, 77, 0.08);"
+                        @click="toggleRunDetail(run)">
+                      <!-- Workflow name -->
+                      <td class="px-6 py-4">
+                        <div class="flex items-center gap-2">
+                          <span class="material-symbols-outlined text-xs text-[var(--on-surface-variant)] transition-transform duration-200"
+                                :class="_expandedRun === run.id && 'rotate-90'"
+                                style="font-size: 16px;">chevron_right</span>
+                          <span class="text-sm font-headline font-bold text-[var(--on-surface)]"
+                                x-text="run.workflow_name || run.workflow_id || 'Unknown'"></span>
+                        </div>
+                      </td>
+                      <!-- Status badge -->
+                      <td class="px-6 py-4">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider"
+                              :class="runStatusColor(run.status) + (run.status === 'running' ? ' status-pulse' : '')">
+                          <span class="material-symbols-outlined text-xs"
+                                x-text="runStatusIcon(run.status)"></span>
+                          <span x-text="run.status === 'waiting_input' ? 'waiting' : (run.status || 'unknown')"></span>
+                        </span>
+                      </td>
+                      <!-- Time ago -->
+                      <td class="px-6 py-4">
+                        <span class="text-xs text-[var(--on-surface-variant)]"
+                              x-text="relativeTime(run.created_at)"></span>
+                      </td>
+                      <!-- Result / Error / Clarification (truncated preview) -->
+                      <td class="px-6 py-4 max-w-xs">
+                        <template x-if="run.status === 'waiting_input' && run.clarification">
+                          <div>
+                            <p class="text-xs text-[var(--warning)] truncate max-w-[240px]" x-text="run.clarification"></p>
+                            <a :href="'/pages/chat.html?resume_run=' + run.id"
+                               @click.stop
+                               class="text-[10px] font-label font-semibold text-[var(--primary)] hover:underline mt-0.5 inline-flex items-center gap-0.5">
+                              <span class="material-symbols-outlined text-xs">reply</span>
+                              Answer
+                            </a>
+                          </div>
+                        </template>
+                        <template x-if="run.status === 'failed' && run.error">
+                          <p class="text-xs text-[var(--error)] truncate max-w-[240px]"
+                             x-text="(run.error || '').substring(0, 100)"></p>
+                        </template>
+                        <template x-if="run.status === 'completed' && run.result">
+                          <p class="text-xs text-[var(--on-surface-variant)] truncate max-w-[240px]"
+                             x-text="(typeof run.result === 'string' ? run.result : JSON.stringify(run.result)).substring(0, 100)"></p>
+                        </template>
+                        <template x-if="run.status === 'running'">
+                          <span class="text-xs text-[var(--on-surface-variant)]">In progress...</span>
+                        </template>
+                      </td>
+                      <!-- Cost -->
+                      <td class="px-6 py-4 text-right">
+                        <span class="text-xs font-label text-[var(--on-surface-variant)]"
+                              x-text="run.cost != null ? '$' + Number(run.cost).toFixed(4) : '--'"></span>
+                      </td>
+                    </tr>
+
+                    <!-- Expandable detail panel -->
+                    <tr x-show="_expandedRun === run.id" x-transition.opacity.duration.200ms>
+                      <td colspan="5" class="run-detail-cell" style="border-bottom: 1px solid rgba(70, 72, 77, 0.08);">
+                        <div class="px-6 py-5 bg-[var(--surface-container-lowest)]/30"
+                             style="border-left: 2px solid var(--primary);">
+
+                          <!-- Loading state -->
+                          <div x-show="_runDetailLoading" class="flex items-center gap-2 py-4">
+                            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+                          </div>
+
+                          <!-- Detail content -->
+                          <div x-show="_runDetail && !_runDetailLoading" class="space-y-4">
+
+                            <!-- Meta row -->
+                            <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-[var(--on-surface-variant)]">
+                              <span class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">tag</span>
+                                <code class="font-mono text-[10px]" x-text="run.id"></code>
+                              </span>
+                              <span class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">schedule</span>
+                                <span x-text="formatTimestamp(run.created_at)"></span>
+                              </span>
+                              <span x-show="run.updated_at && run.status !== 'running'" class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">timer</span>
+                                <span x-text="calcDuration(run.created_at, run.updated_at) || '--'"></span>
+                              </span>
+                              <span class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">payments</span>
+                                <strong x-text="'$' + Number(_runDetail?.cost || 0).toFixed(4)"></strong>
+                              </span>
+                              <span x-show="_runDetail?.total_tokens" class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">token</span>
+                                <strong x-text="(_runDetail?.total_tokens || 0).toLocaleString() + ' tokens'"></strong>
+                              </span>
+                              <span x-show="_runDetail?.budget_limit" class="flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">savings</span>
+                                Budget: <strong x-text="'$' + Number(_runDetail?.budget_limit || 0).toFixed(2)"></strong>
+                              </span>
+                            </div>
+
+                            <!-- Session link (runs started from a chat session) -->
+                            <div x-show="_runDetail?.session_id" class="flex items-center gap-2">
+                              <a :href="'/pages/chat.html?session=' + (_runDetail?.session_id || '')"
+                                 @click.stop
+                                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label font-semibold
+                                        text-[var(--primary)] bg-[var(--primary)]/10 hover:bg-[var(--primary)]/20 transition-colors">
+                                <span class="material-symbols-outlined text-sm">forum</span>
+                                View Session
+                              </a>
+                              <span class="text-[11px] text-[var(--on-surface-variant)] font-mono truncate max-w-[240px]"
+                                    x-text="_runDetail?.session_id"></span>
+                            </div>
+
+                            <!-- Full result (completed runs) -->
+                            <div x-show="_runDetail?.artifacts?.result || (_runDetail?.status === 'completed' && _runDetail?.artifacts)"
+                                 class="rounded-xl p-4"
+                                 style="background: rgba(70, 72, 77, 0.08);">
+                              <h4 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-2 flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">description</span>
+                                Result
+                              </h4>
+                              <div class="text-sm text-[var(--on-surface)] detail-prose max-w-none leading-relaxed"
+                                   x-html="renderMarkdown(_runDetail?.artifacts?.result || JSON.stringify(_runDetail?.artifacts || {}, null, 2))">
+                              </div>
+                            </div>
+
+                            <!-- Error (failed runs) -->
+                            <div x-show="_runDetail?.error && _runDetail?.status === 'failed'"
+                                 class="rounded-xl p-4"
+                                 style="background: rgba(255, 84, 84, 0.06);">
+                              <h4 class="text-[10px] font-label uppercase tracking-widest text-[var(--error)] mb-2 flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">error</span>
+                                Error
+                              </h4>
+                              <pre class="text-xs text-[var(--error)] font-mono whitespace-pre-wrap leading-relaxed" x-text="_runDetail?.error"></pre>
+                            </div>
+
+                            <!-- Clarification (waiting runs) -->
+                            <div x-show="_runDetail?.status === 'waiting_input'"
+                                 class="rounded-xl p-4"
+                                 style="background: rgba(255, 183, 77, 0.08);">
+                              <h4 class="text-[10px] font-label uppercase tracking-widest text-[var(--warning)] mb-2 flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">help</span>
+                                Waiting for Input
+                              </h4>
+                              <p class="text-sm text-[var(--on-surface)] mb-3" x-text="_runDetail?.clarification"></p>
+                              <a :href="'/pages/chat.html?resume_run=' + run.id"
+                                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label font-semibold
+                                        text-[var(--primary)] bg-[var(--primary)]/10 hover:bg-[var(--primary)]/20 transition-colors">
+                                <span class="material-symbols-outlined text-sm">reply</span>
+                                Answer in Chat
+                              </a>
+                            </div>
+
+                            <!-- Completed steps -->
+                            <div x-show="_runDetail?.completed_steps?.length > 0">
+                              <h4 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-2 flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">check_circle</span>
+                                Completed Steps
+                              </h4>
+                              <div class="flex flex-wrap gap-1.5">
+                                <template x-for="(step, idx) in (_runDetail?.completed_steps || [])" :key="idx">
+                                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-medium
+                                              bg-[#48c78e]/10 text-[#48c78e]">
+                                    <span class="material-symbols-outlined text-xs">check</span>
+                                    <span x-text="step"></span>
+                                  </span>
+                                </template>
+                              </div>
+                            </div>
+
+                            <!-- Tool calls from conversation -->
+                            <div x-show="extractToolCalls(_runDetail?.conversation).length > 0">
+                              <h4 class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-2 flex items-center gap-1">
+                                <span class="material-symbols-outlined text-xs">build</span>
+                                Tool Calls
+                              </h4>
+                              <div class="flex flex-wrap gap-1.5">
+                                <template x-for="(tc, idx) in extractToolCalls(_runDetail?.conversation)" :key="tc.id || idx">
+                                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono
+                                              bg-[var(--surface-container)] text-[var(--on-surface-variant)]"
+                                        x-text="tc.name"></span>
+                                </template>
+                              </div>
+                            </div>
+
+                            <!-- Cost breakdown footer -->
+                            <div class="flex items-center gap-6 text-[11px] text-[var(--on-surface-variant)] pt-3"
+                                 style="border-top: 1px solid rgba(70, 72, 77, 0.1);">
+                              <span>Total Cost: <strong x-text="'$' + Number(_runDetail?.cost || 0).toFixed(4)"></strong></span>
+                              <span x-show="_runDetail?.total_tokens">Tokens: <strong x-text="(_runDetail?.total_tokens || 0).toLocaleString()"></strong></span>
+                              <span x-show="_runDetail?.retry_count > 0">Retries: <strong x-text="_runDetail?.retry_count"></strong></span>
+                            </div>
+
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    </tbody>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Run Workflow Dialog -->
+      <div x-show="runDialog.open" x-transition
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+           @keydown.escape.window="runDialog.open = false">
+        <div class="bg-surface-container rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl"
+             style="border: 1px solid rgba(106, 214, 255, 0.2);"
+             @click.outside="runDialog.open = false">
+          <div class="flex items-center gap-3 mb-5">
+            <span class="material-symbols-outlined text-primary text-2xl">play_arrow</span>
+            <div>
+              <h3 class="text-base font-semibold text-on-surface"
+                  x-text="runDialog.workflow ? runDialog.workflow.name : 'Run Workflow'"></h3>
+              <p class="text-xs text-on-surface-variant"
+                 x-text="runDialog.workflow ? runDialog.workflow.description : ''"></p>
+            </div>
+          </div>
+          <template x-for="field in runDialog.fields" :key="field.name">
+            <div class="mb-4">
+              <label class="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-2 block">
+                <span x-text="field.name"></span>
+                <span x-show="field.required" class="text-error">*</span>
+              </label>
+              <input type="text"
+                     x-model="runDialog.inputs[field.name]"
+                     class="input-field w-full text-sm"
+                     :placeholder="field.description || ''"
+                     @keydown.enter="submitRunDialog()">
+            </div>
+          </template>
+          <div class="flex justify-end gap-3 mt-2">
+            <button @click="runDialog.open = false"
+                    class="px-4 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface transition-colors">
+              Cancel
+            </button>
+            <button @click="submitRunDialog()"
+                    class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-primary-fixed
+                           hover:bg-primary-dim transition-colors flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">play_arrow</span>
+              Start
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+  <script>
+    /**
+     * Workflows and Scheduled Tasks page Alpine.js component.
+     * Fetches workflow list and schedules, manages card grid and schedule table.
+     */
+    function workflowsPage() {
+      return {
+        workflows: [],
+        schedules: [],
+        runs: [],
+        selectedWorkflow: null,
+        loading: true,
+        runDialog: { open: false, workflow: null, inputs: {}, fields: [] },
+        _expandedRun: null,
+        _runDetail: null,
+        _runDetailLoading: false,
+
+        // Status filter for Recent Runs. Default surfaces actionable runs.
+        runFilter: 'attention',
+        runFilterChips: [
+          { id: 'attention', label: 'Failed + Waiting' },
+          { id: 'running', label: 'Running' },
+          { id: 'completed', label: 'Completed' },
+          { id: 'all', label: 'All' },
+        ],
+
+        /**
+         * Return runs filtered by the active status chip.
+         */
+        get filteredRuns() {
+          return this.runs.filter(r => this._runMatchesFilter(r, this.runFilter));
+        },
+
+        /**
+         * Count runs matching a given filter id (for chip badges).
+         */
+        runCountFor(filterId) {
+          return this.runs.filter(r => this._runMatchesFilter(r, filterId)).length;
+        },
+
+        _runMatchesFilter(run, filterId) {
+          const status = run.status || '';
+          if (filterId === 'all') return true;
+          if (filterId === 'attention') return status === 'failed' || status === 'waiting_input';
+          if (filterId === 'running') return status === 'running';
+          if (filterId === 'completed') return status === 'completed';
+          return true;
+        },
+
+        /**
+         * Fetch workflows and schedules from API on page load.
+         */
+        async init() {
+          try {
+            const [wfData, schedData, runsData] = await Promise.all([
+              MycelosAPI.get('/api/workflows').catch(() => []),
+              MycelosAPI.get('/api/schedules').catch(() => []),
+              MycelosAPI.get('/api/workflow-runs?limit=20').catch(() => []),
+            ]);
+            this.workflows = Array.isArray(wfData) ? wfData : (wfData.workflows || []);
+            this.schedules = Array.isArray(schedData) ? schedData : (schedData.schedules || []);
+            this.runs = Array.isArray(runsData) ? runsData : [];
+          } catch (e) {
+            console.warn('Could not load workflows/schedules:', e.message);
+            this.workflows = [];
+            this.schedules = [];
+            this.runs = [];
+          } finally {
+            this.loading = false;
+          }
+
+          const params = new URLSearchParams(window.location.search);
+
+          // Deep-link: ?workflow=<id> scrolls to and highlights that workflow
+          const wfParam = params.get('workflow');
+          if (wfParam) {
+            this.$nextTick(() => {
+              setTimeout(() => this.scrollToWorkflow(wfParam), 100);
+            });
+          }
+
+          // Deep-link: ?run_id=<id> auto-expands that run in the detail panel.
+          // If the run is not in the default filter, widen to "all" so it's visible.
+          const runIdParam = params.get('run_id');
+          if (runIdParam) {
+            const target = this.runs.find(r => r.id === runIdParam);
+            if (target && !this._runMatchesFilter(target, this.runFilter)) {
+              this.runFilter = 'all';
+            }
+            if (target) {
+              this.$nextTick(() => {
+                setTimeout(() => this.toggleRunDetail(target), 120);
+              });
+            }
+          }
+
+          if (wfParam || runIdParam) {
+            window.history.replaceState({}, '', '/pages/workflows.html');
+          }
+        },
+
+        toggleRunDetail(run) {
+          if (this._expandedRun === run.id) {
+            this._expandedRun = null;
+            this._runDetail = null;
+          } else {
+            this._expandedRun = run.id;
+            this._runDetail = null;
+            this._runDetailLoading = true;
+            this.loadRunDetail(run.id);
+          }
+        },
+
+        async loadRunDetail(runId) {
+          try {
+            this._runDetail = await MycelosAPI.get('/api/workflow-runs/' + runId);
+          } catch (e) {
+            this._runDetail = { error: 'Failed to load run details' };
+          } finally {
+            this._runDetailLoading = false;
+          }
+        },
+
+        /**
+         * Render markdown text to HTML using marked.js.
+         */
+        renderMarkdown(text) {
+          if (!text) return '';
+          if (typeof marked !== 'undefined') {
+            try {
+              return marked.parse(String(text));
+            } catch { return String(text); }
+          }
+          return String(text);
+        },
+
+        /**
+         * Calculate duration between two ISO timestamps.
+         */
+        calcDuration(startIso, endIso) {
+          if (!startIso || !endIso) return null;
+          try {
+            const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+            if (ms < 0) return null;
+            if (ms < 1000) return ms + 'ms';
+            const secs = Math.floor(ms / 1000);
+            if (secs < 60) return secs + 's';
+            const mins = Math.floor(secs / 60);
+            const remSecs = secs % 60;
+            return mins + 'm ' + remSecs + 's';
+          } catch { return null; }
+        },
+
+        /**
+         * Extract tool call steps from a conversation array.
+         */
+        extractToolCalls(conversation) {
+          if (!Array.isArray(conversation)) return [];
+          const calls = [];
+          for (const msg of conversation) {
+            if (msg.role !== 'assistant') continue;
+            // Anthropic format: content array with tool_use blocks
+            if (Array.isArray(msg.content)) {
+              for (const block of msg.content) {
+                if (block.type === 'tool_use') {
+                  calls.push({ name: block.name, id: block.id });
+                }
+              }
+            }
+            // OpenAI format: tool_calls array
+            if (Array.isArray(msg.tool_calls)) {
+              for (const tc of msg.tool_calls) {
+                calls.push({ name: tc.function?.name || tc.name, id: tc.id });
+              }
+            }
+          }
+          return calls;
+        },
+
+        openRunDialog(wf) {
+          // Parse inputs schema
+          let fields = wf.inputs || [];
+          if (typeof fields === 'string') {
+            try { fields = JSON.parse(fields); } catch { fields = []; }
+          }
+          // If no inputs required, go directly to chat
+          if (!fields.length || !fields.some(f => f.required)) {
+            window.location.href = '/pages/chat.html?prefill=' + encodeURIComponent('/run ' + wf.id);
+            return;
+          }
+          // Show dialog
+          const inputs = {};
+          fields.forEach(f => { inputs[f.name] = f.default || ''; });
+          this.runDialog = { open: true, workflow: wf, inputs, fields };
+        },
+
+        submitRunDialog() {
+          const wf = this.runDialog.workflow;
+          // Build a natural language message instead of a slash command
+          const inputValues = Object.entries(this.runDialog.inputs)
+            .filter(([_, v]) => v && v.trim())
+            .map(([k, v]) => v.trim());
+          const topic = inputValues.join(', ') || wf.name;
+          const msg = `Run the "${wf.name}" workflow: ${topic}`;
+          this.runDialog.open = false;
+          window.location.href = '/pages/chat.html?prefill=' + encodeURIComponent(msg);
+        },
+
+        /**
+         * Resolve a workflow name from its ID.
+         */
+        workflowName(workflowId) {
+          const wf = this.workflows.find(w => w.id === workflowId);
+          return wf ? wf.name : workflowId || 'Unknown';
+        },
+
+        /**
+         * Scroll to a workflow card by ID (from schedule table link).
+         */
+        scrollToWorkflow(workflowId) {
+          // Find the workflow card element by iterating visible cards
+          const cards = document.querySelectorAll('.workflow-card');
+          const idx = this.workflows.findIndex(w => w.id === workflowId);
+          if (idx >= 0 && cards[idx]) {
+            cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Brief highlight
+            cards[idx].style.borderColor = 'rgba(106, 214, 255, 0.5)';
+            cards[idx].style.boxShadow = '0 0 32px -4px rgba(106, 214, 255, 0.2)';
+            setTimeout(() => {
+              cards[idx].style.borderColor = '';
+              cards[idx].style.boxShadow = '';
+            }, 1500);
+          }
+        },
+
+        /**
+         * Return CSS class for the creator badge.
+         */
+        creatorBadgeClass(createdBy) {
+          const c = (createdBy || '').toLowerCase();
+          if (c === 'system') return 'creator-badge--system';
+          if (c.includes('planner')) return 'creator-badge--planner';
+          return 'creator-badge--user';
+        },
+
+        /**
+         * Return Material Symbol icon for the creator type.
+         */
+        creatorIcon(createdBy) {
+          const c = (createdBy || '').toLowerCase();
+          if (c === 'system') return 'settings';
+          if (c.includes('planner')) return 'psychology';
+          return 'person';
+        },
+
+        /**
+         * Return the combined status badge CSS classes for workflows.
+         */
+        statusClass(status) {
+          const map = {
+            active: 'status-badge--active',
+            running: 'status-badge--active',
+            inactive: 'status-badge--paused',
+            error: 'status-badge--error',
+            proposed: 'status-badge--proposed',
+          };
+          return 'status-badge ' + (map[(status || '').toLowerCase()] || 'status-badge--paused');
+        },
+
+        /**
+         * Return the combined status badge CSS classes for schedules.
+         */
+        scheduleStatusClass(status) {
+          const map = {
+            active: 'status-badge--active',
+            running: 'status-badge--active',
+            paused: 'status-badge--paused',
+            error: 'status-badge--error',
+          };
+          return 'status-badge ' + (map[(status || '').toLowerCase()] || 'status-badge--paused');
+        },
+
+        /**
+         * Format an ISO timestamp into a human-readable local date/time.
+         */
+        formatTimestamp(ts) {
+          if (!ts) return '--';
+          try {
+            const d = new Date(ts);
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+              + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+          } catch {
+            return ts;
+          }
+        },
+
+        /**
+         * Return a relative time string like "2m ago", "1h ago".
+         */
+        relativeTime(isoStr) {
+          if (!isoStr) return '';
+          const diff = (Date.now() - new Date(isoStr).getTime()) / 1000;
+          if (diff < 60) return 'just now';
+          if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+          if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+          return Math.floor(diff / 86400) + 'd ago';
+        },
+
+        /**
+         * Return CSS classes for a run status badge.
+         */
+        runStatusColor(status) {
+          const colors = {
+            completed: 'text-[#48c78e] bg-[#48c78e]/10',
+            failed: 'text-[var(--error)] bg-[var(--error)]/10',
+            running: 'text-[var(--primary)] bg-[var(--primary)]/10',
+            waiting_input: 'text-[var(--warning)] bg-[var(--warning)]/10',
+          };
+          return colors[status] || 'text-[var(--on-surface-variant)] bg-[var(--surface-container)]';
+        },
+
+        /**
+         * Return a Material Symbol icon name for a run status.
+         */
+        runStatusIcon(status) {
+          const icons = {
+            completed: 'check_circle',
+            failed: 'error',
+            running: 'sync',
+            waiting_input: 'help',
+          };
+          return icons[status] || 'circle';
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

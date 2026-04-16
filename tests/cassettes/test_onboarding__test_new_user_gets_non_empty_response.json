@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "4ee09e9ada8adc980a5f5a7f1fff436a6f70da292890543ae1cfbae10a2685c2": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nWhat's your name?",
+      "cost": 0.007144,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7044
+    },
+    "976e1525248f66837d95e3e5a58777f88eecf0537854bca2de6acd8d6ac46024": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nWhat's your name?",
+      "cost": 0.007144,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7044
+    },
+    "bc8235e05fb850f08131b854c5d9337a9b947ca7e691513b7e834169080640ae": {
+      "content": "Hi! I'm Mycelos — your personal AI assistant that grows with you. Your data stays local, I use cloud AI as a tool — not as storage.\n\nWhat's your name?",
+      "cost": 0.006516999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6345
+    },
+    "d88dde430d83738a064f06f8b1ae661ae17cc1c3fb5ba7cb9e8e4e64d8cee185": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nWhat's your name?",
+      "cost": 0.007144,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7044
+    },
+    "e967a51fcac7cfd8cbeb62d6b36c53562d0ffbea843b10d39e3eaab9f3f27bc7": {
+      "content": "Hi! I'm Mycelos — your personal AI assistant that grows with you. Your data stays local, I use cloud AI as a tool, not as storage.\n\nWhat's your name?",
+      "cost": 0.006516999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6345
+    }
+  },
+  "version": 1
+}

@@ -1,0 +1,55 @@
+{
+  "entries": {
+    "0854aa07748c8e9121cec1b7cb68ed692f767fba9019dd6884347469637087ad": {
+      "content": "",
+      "cost": 0.006513999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6506
+    },
+    "116851e50bc3012da7f076ebb7bf2b1d648c2915403e91332cc4ee1ba6afebf0": {
+      "content": "Hi! Ich bin Mycelos, dein persönlicher AI-Assistent. 👋\n\nWie heißt du?",
+      "cost": 0.0071909999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7055
+    },
+    "1ec2dc1002268737dbcf0396a43cad2f4affd1df6963fa2a981416cc12cf82d4": {
+      "content": "Hi! 👋 Ich bin **Mycelos**, dein persönlicher AI-Assistent.\n\nWie heißt du denn?",
+      "cost": 0.0072109999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7059
+    },
+    "35f64b51f178310dd5d3d41c154f75729e426621a09d9d231c62f3f6897d7a13": {
+      "content": "Hallo! 👋 Ich bin **Mycelos**, dein persönlicher AI-Assistent.\n\nBevor wir starten — wie heißt du? 😊",
+      "cost": 0.007260999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7069
+    },
+    "85e32d4bdc1381d53a836857d6b67d28d0919df513349066166f6e2f8ba01e4e": {
+      "content": "Hallo! 👋\n\nIch bin Mycelos — dein persönlicher KI-Assistent, der mit dir wächst. Deine Daten bleiben lokal, und ich nutze Cloud-KI nur als Werkzeug — nicht als Speicher.\n\nWie heißt du?",
+      "cost": 0.006689,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6381
+    },
+    "db791732d40a9a065214f9fc88779a65d8cdfbde35b53b917b867fedeeb81861": {
+      "content": "Hallo! 👋 Ich bin **Mycelos** — dein persönlicher AI-Assistent, der mit dir wächst. Deine Daten bleiben lokal, ich nutze Cloud-AI als Werkzeug, nicht als Speicher.\n\nWie heißt du?",
+      "cost": 0.0070339999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"title\": \"Onboarding\", \"topic\": \"general\"}",
+            "name": "session_set"
+          },
+          "id": "toolu_016MitxjAV49oSYdA4HuZKF6"
+        }
+      ],
+      "total_tokens": 6450
+    }
+  },
+  "version": 1
+}

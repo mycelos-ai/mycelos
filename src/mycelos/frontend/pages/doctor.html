@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos — Doctor</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+  <!-- Sidebar placeholder, loaded via layout.js -->
+  <div id="sidebar"></div>
+
+  <div x-data="doctorPage()" x-init="init()" class="flex-1 flex overflow-hidden">
+    <main class="flex-1 overflow-y-auto">
+      <section class="max-w-4xl mx-auto px-6 py-10">
+
+        <!-- Page header -->
+        <div class="flex items-start justify-between mb-6 gap-4">
+          <div>
+            <h1 class="font-headline text-2xl font-bold tracking-tight flex items-center gap-2">
+              <span class="material-symbols-outlined text-[var(--primary)]">health_and_safety</span>
+              <span x-text="t('doctor.title')">System Doctor</span>
+            </h1>
+            <p class="text-sm text-[var(--on-surface-variant)] mt-1" x-text="t('doctor.subtitle')">
+              Read-only health check of your Mycelos installation.
+            </p>
+          </div>
+          <button @click="loadChecks()"
+                  :disabled="loading"
+                  class="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50">
+            <span class="material-symbols-outlined text-sm"
+                  :class="loading && 'animate-spin'">refresh</span>
+            <span x-text="loading ? t('doctor.running') : t('doctor.rerun')">Re-run</span>
+          </button>
+        </div>
+
+        <!-- Separator -->
+        <div class="mycelium-line mb-6"></div>
+
+        <!-- Summary strip -->
+        <div x-show="!loading && checks.length > 0" class="grid grid-cols-4 gap-3 mb-6">
+          <div class="card px-4 py-3">
+            <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
+                 x-text="t('doctor.summary.ok')">Healthy</div>
+            <div class="text-2xl font-headline font-bold text-[#48c78e]" x-text="countBy('ok')"></div>
+          </div>
+          <div class="card px-4 py-3">
+            <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
+                 x-text="t('doctor.summary.warn')">Warnings</div>
+            <div class="text-2xl font-headline font-bold text-[var(--warning)]" x-text="countBy('warn')"></div>
+          </div>
+          <div class="card px-4 py-3">
+            <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
+                 x-text="t('doctor.summary.error')">Errors</div>
+            <div class="text-2xl font-headline font-bold text-[var(--error)]" x-text="countBy('error')"></div>
+          </div>
+          <div class="card px-4 py-3">
+            <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
+                 x-text="t('doctor.summary.not_configured')">Not configured</div>
+            <div class="text-2xl font-headline font-bold text-[var(--on-surface-variant)]" x-text="countNotConfigured()"></div>
+          </div>
+        </div>
+
+        <!-- Loading state -->
+        <div x-show="loading && checks.length === 0" class="card text-center py-12">
+          <div class="flex items-center justify-center gap-2">
+            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+            <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+          </div>
+          <p class="text-sm text-[var(--on-surface-variant)] mt-4" x-text="t('doctor.running')">Running checks...</p>
+        </div>
+
+        <!-- Error state -->
+        <div x-show="loadError" class="card py-6">
+          <div class="flex items-center gap-2 text-[var(--error)] mb-2">
+            <span class="material-symbols-outlined">error</span>
+            <h3 class="font-headline font-bold" x-text="t('doctor.load_error')">Could not run doctor</h3>
+          </div>
+          <p class="text-sm text-[var(--on-surface-variant)]" x-text="loadError"></p>
+        </div>
+
+        <!-- Check cards -->
+        <div x-show="checks.length > 0" class="space-y-3">
+          <template x-for="check in checks" :key="check.category">
+            <div class="card"
+                 :class="statusBorderClass(check.status)"
+                 style="border-left-width: 3px;">
+              <div class="flex items-start gap-3">
+                <!-- Status icon -->
+                <span class="material-symbols-outlined mt-0.5"
+                      :class="statusIconClass(check.status)"
+                      x-text="statusIcon(check.status)"></span>
+
+                <!-- Body -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1 flex-wrap">
+                    <h3 class="font-headline font-bold text-sm uppercase tracking-wider"
+                        x-text="categoryLabel(check.category)"></h3>
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider"
+                          :class="statusBadgeClass(check.status)"
+                          x-text="check.status"></span>
+                  </div>
+                  <p class="text-sm text-[var(--on-surface-variant)] whitespace-pre-wrap"
+                     x-text="check.details"></p>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Foot note: deliberately no Fix button -->
+        <p class="text-[11px] text-[var(--on-surface-variant)] text-center mt-8 opacity-60"
+           x-text="t('doctor.readonly_note')">
+          Read-only view. To fix issues, run <code>mycelos doctor --fix</code> in your terminal.
+        </p>
+
+      </section>
+    </main>
+  </div>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+  <!-- Quick Capture container (loaded by layout.js) -->
+  <div id="quick-capture"></div>
+
+  <script>
+    function doctorPage() {
+      return {
+        checks: [],
+        loading: false,
+        loadError: '',
+
+        async init() {
+          await this.loadChecks();
+        },
+
+        async loadChecks() {
+          this.loading = true;
+          this.loadError = '';
+          try {
+            const data = await MycelosAPI.get('/api/admin/doctor');
+            this.checks = Array.isArray(data) ? data : [];
+          } catch (e) {
+            this.loadError = (e && e.message) || String(e);
+            this.checks = [];
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        countBy(status) {
+          return this.checks.filter(c => c.status === status).length;
+        },
+
+        countNotConfigured() {
+          // The CLI uses the literal string "not configured" — match both styles.
+          return this.checks.filter(c =>
+            c.status === 'not_configured' || c.status === 'not configured'
+          ).length;
+        },
+
+        categoryLabel(category) {
+          if (!category) return '';
+          // Known categories get translated, unknown ones fall back to the raw id.
+          const key = 'doctor.category.' + category;
+          const translated = t(key);
+          return translated === key ? category : translated;
+        },
+
+        statusIcon(status) {
+          const icons = {
+            ok: 'check_circle',
+            warn: 'warning',
+            error: 'error',
+            'not configured': 'help',
+            not_configured: 'help',
+          };
+          return icons[status] || 'help';
+        },
+
+        statusIconClass(status) {
+          const map = {
+            ok: 'text-[#48c78e]',
+            warn: 'text-[var(--warning)]',
+            error: 'text-[var(--error)]',
+            'not configured': 'text-[var(--on-surface-variant)]',
+            not_configured: 'text-[var(--on-surface-variant)]',
+          };
+          return map[status] || 'text-[var(--on-surface-variant)]';
+        },
+
+        statusBadgeClass(status) {
+          const map = {
+            ok: 'bg-[#48c78e]/10 text-[#48c78e]',
+            warn: 'bg-[var(--warning)]/10 text-[var(--warning)]',
+            error: 'bg-[var(--error)]/10 text-[var(--error)]',
+            'not configured': 'bg-[var(--surface-container)] text-[var(--on-surface-variant)]',
+            not_configured: 'bg-[var(--surface-container)] text-[var(--on-surface-variant)]',
+          };
+          return map[status] || 'bg-[var(--surface-container)] text-[var(--on-surface-variant)]';
+        },
+
+        statusBorderClass(status) {
+          const map = {
+            ok: 'border-l-[#48c78e]',
+            warn: 'border-l-[var(--warning)]',
+            error: 'border-l-[var(--error)]',
+          };
+          return map[status] || 'border-l-[var(--outline-variant)]';
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

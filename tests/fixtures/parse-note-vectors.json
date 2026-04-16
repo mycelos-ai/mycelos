@@ -1,0 +1,81 @@
+{
+  "description": "Shared DE+EN test vectors for parse_note. Loaded by both Python unit tests and Playwright E2E tests. 'due' values are expressed as offsets from a fixed reference time (see tests/test_parse_note.py REFERENCE_NOW) so results are deterministic.",
+  "reference_now": "2026-04-08T10:00:00Z",
+  "vectors": [
+    {
+      "name": "plain_note_en",
+      "input": "Buy milk on the way home",
+      "expected": {"type": "note", "due": null, "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "plain_note_de",
+      "input": "Milch auf dem Heimweg kaufen",
+      "expected": {"type": "note", "due": null, "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "todo_prefix_en",
+      "input": "TODO: refactor the parser",
+      "expected": {"type": "task", "due": null, "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "todo_prefix_de",
+      "input": "AUFGABE: Parser umbauen",
+      "expected": {"type": "task", "due": null, "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "remind_me_en",
+      "input": "remind me in 5 minutes to stretch",
+      "expected": {"type": "task", "due": "2026-04-08T10:05:00Z", "tags": [], "wikilinks": [], "reminder": true}
+    },
+    {
+      "name": "remind_me_de",
+      "input": "erinnere mich in 5 minuten zu strecken",
+      "expected": {"type": "task", "due": "2026-04-08T10:05:00Z", "tags": [], "wikilinks": [], "reminder": true}
+    },
+    {
+      "name": "tomorrow_en",
+      "input": "Call Lisa tomorrow 2pm",
+      "expected": {"type": "task", "due": "2026-04-09T14:00:00Z", "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "tomorrow_de",
+      "input": "Lisa morgen 14 Uhr anrufen",
+      "expected": {"type": "task", "due": "2026-04-09T14:00:00Z", "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "tags_en",
+      "input": "Review docs #project #urgent",
+      "expected": {"type": "note", "due": null, "tags": ["project", "urgent"], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "tags_de",
+      "input": "Doku prüfen #projekt #dringend",
+      "expected": {"type": "note", "due": null, "tags": ["projekt", "dringend"], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "wikilink_en",
+      "input": "See [[notes/architecture]] for context",
+      "expected": {"type": "note", "due": null, "tags": [], "wikilinks": ["notes/architecture"], "reminder": false}
+    },
+    {
+      "name": "wikilink_de",
+      "input": "Siehe [[notes/architecture]] für kontext",
+      "expected": {"type": "note", "due": null, "tags": [], "wikilinks": ["notes/architecture"], "reminder": false}
+    },
+    {
+      "name": "explicit_date_de",
+      "input": "14.04. 15:00 Arzttermin",
+      "expected": {"type": "task", "due": "2026-04-14T15:00:00Z", "tags": [], "wikilinks": [], "reminder": false}
+    },
+    {
+      "name": "in_hours_en",
+      "input": "remind me in 2 hours to check the oven",
+      "expected": {"type": "task", "due": "2026-04-08T12:00:00Z", "tags": [], "wikilinks": [], "reminder": true}
+    },
+    {
+      "name": "in_hours_de",
+      "input": "erinnere mich in 2 stunden den ofen zu checken",
+      "expected": {"type": "task", "due": "2026-04-08T12:00:00Z", "tags": [], "wikilinks": [], "reminder": true}
+    }
+  ]
+}

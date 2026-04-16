@@ -1,0 +1,525 @@
+/* ==========================================================================
+   Maicel — "Neural Mycelium" Design System
+   CSS Custom Properties + Shared Utilities
+   ========================================================================== */
+
+/* Alpine.js: hide elements tagged with x-cloak until Alpine has initialized.
+   Without this rule x-show="false" components flash visible on page load. */
+[x-cloak] { display: none !important; }
+
+/* --------------------------------------------------------------------------
+   1. Design Tokens (CSS Custom Properties)
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Surfaces */
+  --surface: #0c0e12;
+  --surface-dim: #0c0e12;
+  --surface-container-lowest: #000000;
+  --surface-container-low: #111318;
+  --surface-container: #171a1f;
+  --surface-container-high: #1d2025;
+  --surface-container-highest: #23262c;
+  --surface-bright: #292c33;
+  --surface-variant: #23262c;
+  --surface-tint: #6ad6ff;
+
+  /* Primary (Cyan) */
+  --primary: #6ad6ff;
+  --primary-dim: #00bcec;
+  --primary-container: #00cbfe;
+  --primary-fixed: #00cbfe;
+  --primary-fixed-dim: #00bcec;
+  --on-primary: #00485c;
+  --on-primary-fixed: #002733;
+  --on-primary-fixed-variant: #00485b;
+  --on-primary-container: #003e50;
+  --inverse-primary: #006783;
+
+  /* Secondary (Blue) */
+  --secondary: #23bcfe;
+  --secondary-dim: #00afee;
+  --secondary-container: #00658c;
+  --secondary-fixed: #9dd9ff;
+  --secondary-fixed-dim: #77cdff;
+  --on-secondary: #00354b;
+  --on-secondary-fixed: #003850;
+  --on-secondary-fixed-variant: #005778;
+  --on-secondary-container: #f2f8ff;
+
+  /* Tertiary (Violet-Blue) */
+  --tertiary: #879dff;
+  --tertiary-dim: #8097ff;
+  --tertiary-container: #778ff7;
+  --tertiary-fixed: #9aacff;
+  --tertiary-fixed-dim: #879dff;
+  --on-tertiary: #001b6b;
+  --on-tertiary-fixed: #00104c;
+  --on-tertiary-fixed-variant: #0b2e94;
+  --on-tertiary-container: #00104a;
+
+  /* Text / Content */
+  --on-surface: #f6f6fc;
+  --on-surface-variant: #aaabb0;
+  --on-background: #f6f6fc;
+  --inverse-surface: #f9f9ff;
+  --inverse-on-surface: #53555a;
+
+  /* Borders & Outlines */
+  --outline: #74757a;
+  --outline-variant: #46484d;
+
+  /* Error */
+  --error: #ff716c;
+  --error-dim: #d7383b;
+  --error-container: #9f0519;
+  --on-error: #490006;
+  --on-error-container: #ffa8a3;
+
+  /* Typography */
+  --font-headline: 'Space Grotesk', sans-serif;
+  --font-body: 'Manrope', sans-serif;
+  --font-label: 'Inter', sans-serif;
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* Spacing Scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 300ms ease-in-out;
+  --transition-slow: 500ms ease-in-out;
+}
+
+
+/* --------------------------------------------------------------------------
+   2. Typography
+   -------------------------------------------------------------------------- */
+
+.font-headline { font-family: var(--font-headline); }
+.font-body     { font-family: var(--font-body); }
+.font-label    { font-family: var(--font-label); }
+
+
+/* --------------------------------------------------------------------------
+   3. Glassmorphism
+   -------------------------------------------------------------------------- */
+
+.glass-card {
+  background: rgba(35, 38, 44, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.glass-card-strong {
+  background: rgba(35, 38, 44, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+
+/* --------------------------------------------------------------------------
+   4. Glow & Gradient Effects
+   -------------------------------------------------------------------------- */
+
+.glow-text {
+  text-shadow: 0 0 15px rgba(106, 214, 255, 0.4);
+}
+
+.glow-text-subtle {
+  text-shadow: 0 0 10px rgba(106, 214, 255, 0.2);
+}
+
+.mycelium-line {
+  background: linear-gradient(90deg, transparent, rgba(106, 214, 255, 0.2), transparent);
+  height: 1px;
+}
+
+.glow-pulse {
+  box-shadow: 0 0 8px rgba(106, 214, 255, 0.8);
+}
+
+
+/* --------------------------------------------------------------------------
+   5. Buttons
+   -------------------------------------------------------------------------- */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(to right, var(--primary), var(--primary-container));
+  color: var(--on-primary-fixed);
+  font-weight: 700;
+  font-size: 0.875rem;
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(106, 214, 255, 0.1);
+  transition: transform var(--transition-fast), box-shadow var(--transition-normal);
+}
+
+.btn-primary:hover {
+  box-shadow: 0 4px 30px rgba(106, 214, 255, 0.2);
+}
+
+.btn-primary:active {
+  transform: scale(0.95);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  background: rgba(35, 38, 44, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--on-surface-variant);
+  font-weight: 700;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border: 1px solid rgba(70, 72, 77, 0.3);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color var(--transition-normal), color var(--transition-normal);
+}
+
+.btn-secondary:hover {
+  border-color: rgba(106, 214, 255, 0.5);
+  color: var(--primary);
+}
+
+
+/* --------------------------------------------------------------------------
+   6. Cards
+   -------------------------------------------------------------------------- */
+
+.card {
+  background: var(--surface-container);
+  border: 1px solid rgba(70, 72, 77, 0.15);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  transition: border-color var(--transition-normal);
+}
+
+.card:hover {
+  border-color: rgba(70, 72, 77, 0.3);
+}
+
+.card-low {
+  background: var(--surface-container-low);
+  border: 1px solid rgba(70, 72, 77, 0.1);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4);
+}
+
+
+/* --------------------------------------------------------------------------
+   7. Status Badges
+   -------------------------------------------------------------------------- */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-full);
+  font-family: var(--font-label);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.status-badge--active {
+  background: rgba(106, 214, 255, 0.1);
+  color: var(--primary);
+}
+
+.status-badge--active::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 8px rgba(106, 214, 255, 0.8);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.status-badge--success {
+  background: rgba(72, 199, 142, 0.1);
+  color: #48c78e;
+}
+
+.status-badge--success::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #48c78e;
+}
+
+.status-badge--paused {
+  background: rgba(170, 171, 176, 0.1);
+  color: var(--on-surface-variant);
+}
+
+.status-badge--paused::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--on-surface-variant);
+}
+
+.status-badge--error {
+  background: rgba(255, 113, 108, 0.1);
+  color: var(--error);
+}
+
+.status-badge--error::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--error);
+}
+
+.status-badge--proposed {
+  background: rgba(135, 157, 255, 0.1);
+  color: var(--tertiary);
+}
+
+.status-badge--proposed::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+
+/* --------------------------------------------------------------------------
+   8. Input Fields
+   -------------------------------------------------------------------------- */
+
+/* Global form element reset for dark theme */
+input, textarea, select {
+  background-color: var(--surface-container-lowest) !important;
+  color: var(--on-surface) !important;
+  font-family: var(--font-body);
+  border-color: var(--outline-variant) !important;
+}
+input::placeholder, textarea::placeholder {
+  color: var(--on-surface-variant) !important;
+  opacity: 0.5;
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.625rem 1rem;
+  background: var(--surface-container-lowest) !important;
+  color: var(--on-surface) !important;
+  border: 1px solid rgba(70, 72, 77, 0.3);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.input-field::placeholder {
+  color: var(--on-surface-variant) !important;
+  opacity: 0.5;
+}
+
+.input-field:focus {
+  border-color: rgba(106, 214, 255, 0.4);
+  box-shadow: 0 0 4px rgba(106, 214, 255, 0.15);
+}
+
+
+/* --------------------------------------------------------------------------
+   9. Sidebar Navigation
+   -------------------------------------------------------------------------- */
+
+.sidebar-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  color: rgba(246, 246, 252, 0.5);
+  font-weight: 500;
+  font-family: var(--font-body);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-normal);
+  text-decoration: none;
+}
+
+.sidebar-nav-link:hover {
+  background: var(--surface-container);
+  color: var(--primary);
+}
+
+.sidebar-nav-link.active {
+  color: var(--primary);
+  background: var(--surface-container);
+  border-right: 2px solid var(--primary);
+  border-radius: 0;
+}
+
+
+/* --------------------------------------------------------------------------
+   10. Animations
+   -------------------------------------------------------------------------- */
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+
+/* --------------------------------------------------------------------------
+   11. Scrollbar Styling
+   -------------------------------------------------------------------------- */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(70, 72, 77, 0.4);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(70, 72, 77, 0.7);
+}
+
+
+/* --------------------------------------------------------------------------
+   12. Material Symbols Configuration
+   -------------------------------------------------------------------------- */
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Mermaid diagrams */
+.mermaid-container {
+  position: relative;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  overflow-x: auto;
+}
+.mermaid-container .mermaid {
+  display: flex;
+  justify-content: center;
+}
+.mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+.diagram-zoom-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 2;
+}
+.mermaid-container:hover .diagram-zoom-btn,
+.diagram-zoom-btn:focus { opacity: 1; }
+
+.diagram-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+.diagram-modal {
+  background: var(--surface, #1a1a1a);
+  border-radius: 0.75rem;
+  width: 90vw;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.diagram-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.diagram-modal-header button {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.diagram-modal-header button:hover { background: rgba(255, 255, 255, 0.18); }
+.diagram-modal-body {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.diagram-modal-body svg,
+.diagram-modal-body img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}

@@ -1,0 +1,37 @@
+name: creator-direct
+description: "Direct Creator-Agent test — bypasses routing, tests interview + pipeline"
+test_user_model: "anthropic/claude-haiku-4-5"
+max_turns: 15
+max_cost: 1.00
+direct_agent: "creator"
+
+setup:
+  user_name: "Stefan"
+  language: "en"
+
+first_message: "I need an agent that creates PDF quotes with customer name, quote number, and line items. Save to ~/Downloads/Quotes/. Use reportlab for PDF."
+
+user_persona: |
+  You are Stefan testing the Creator-Agent interview.
+  Answer questions specifically — never say just "yes" or "continue".
+  When asked about details, give concrete answers:
+  - Output folder: ~/Downloads/Quotes/
+  - PDF library: reportlab
+  - Fields: customer name, quote number, line items (description, qty, unit price)
+  - Auto-calculate totals and 20% VAT
+  - Company: Acme GmbH, Musterstrasse 1, 6020 Innsbruck
+  When shown a summary, say "looks good" or "that's correct".
+  When shown Gherkin scenarios, say "looks good, let's build it".
+  Be specific, not generic.
+
+assertions:
+  - type: agent_appeared
+    agent: "Creator-Agent"
+    message: "Creator-Agent must handle this"
+
+  - type: response_contains
+    text: "Gherkin"
+    message: "Should show Gherkin scenarios for confirmation"
+
+  - type: no_credential_leak
+    message: "No secrets in output"

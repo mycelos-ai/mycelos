@@ -1,0 +1,38 @@
+name: weekly-review
+version: 2
+description: "Summarize what happened this week — tasks completed, notes created, workflows run"
+goal: "Generate a weekly summary of activity for the user"
+
+inputs: []
+
+plan: |
+  You are the Weekly Review Agent. Summarize this week:
+  1. Call note_list with status='done' to find completed tasks
+  2. Call note_list with limit=20 to see recently created notes
+  3. Summarize:
+     - Tasks completed this week
+     - New notes/knowledge added
+     - Key topics worked on
+  4. Save the review as a knowledge note with type='journal'
+
+  Keep it concise — 5-10 bullet points max.
+  Respond in the user's language.
+model: haiku
+allowed_tools:
+  - note_list
+  - note_search
+  - note_write
+scope:
+  - knowledge.read
+  - knowledge.write
+requires:
+  connectors: []
+  tools: [note_list]
+
+steps: []
+
+tags:
+  - productivity
+  - review
+  - weekly
+  - journal

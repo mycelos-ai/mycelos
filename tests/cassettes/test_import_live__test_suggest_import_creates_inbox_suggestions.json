@@ -1,0 +1,145 @@
+{
+  "entries": {
+    "20fc11a2c545487eb0f3928f8a77c1d4b6446e48d76de1ec2947bbdade85d986": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"gardening\"\n}\n```",
+      "cost": 0.000539,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 327
+    },
+    "323b745a62dba26fab6b28f9369a0770689e9977902429e435ee7faed5aa3b72": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "418530547115af17bbcc874bc8b432f05e4fcc25ed77a9a86e85957822c12890": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.15,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Coffee\"\n}\n```",
+      "cost": 0.000534,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 326
+    },
+    "5166ffecae23863c8b63e4b3c4149cfd1ec42b0d508ca737628484b5923898c8": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "5a325ab959bbc4b3205bf48e60e690a985220df469e98894d6db804a2b89bdd7": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Running\"\n}\n```",
+      "cost": 0.000534,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 326
+    },
+    "5c77ceac766706d3750c5ce93b8f281ef44825183edd869e57701e1dd2aba59f": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "6913b2a5dc4e8cfee53f7617c113f97f9a92806f448e44b0eab948eaa138b6a3": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "6b3f32bd4d384c76cec6825e5d92289d9f7f216baf0e6759d4fd7ec0c2bf856a": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Travel Ideas\"\n}\n```",
+      "cost": 0.000539,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 327
+    },
+    "8234b397b4e0b9e95ebd6bcd0a1e1ffcbc4f442530c54d5921e7f1aa8873b59c": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "915fb2b77a7a1f0f9433b1bc8e9c813f9528e1c892a4f9c8b48e2bdae142e46f": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Photography\"\n}\n```",
+      "cost": 0.000534,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 326
+    },
+    "a1f7b0989e478006714ecb5c548f3f362f1163ff879b739fe07995159c1d6ebd": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "aa739f59e38a065c69a442e4e5f10d2bef99608250c1975af86f29e591f4866b": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "cfbed01e374c3587173d61033fdf3764eb9baacf7b0c26ee6286854e9052f32a": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "d55bb3c1cae6f6ef9d1359a6cbae742711dc98ced8b170ed61a350d120762fb7": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "e48a9ae7cc1100cd87dd649118afb07ed1a654d275b5c527d32b487b156f01f8": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Recipes & Cooking Ideas\"\n}\n```",
+      "cost": 0.000559,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 331
+    },
+    "ec59edfa6ff1b8dc1400c1ab22b61ec748a2acb63db21f236c32fd1e017472f6": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0,\n  \"related_note_paths\": [],\n  \"new_topic_name\": null\n}\n```",
+      "cost": 0.000362,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 170
+    },
+    "eeaed59a709736a2a31ae9f7992d38c1f95fb8b2e43b7568bfb9fe88acfd60ab": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Music Ideas\"\n}\n```",
+      "cost": 0.000539,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 327
+    },
+    "f77266667dcd7de01a29ec6cc7e322e8dff090d7d6a35dd8cea109a25665eec3": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.85,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Finance\"\n}\n```",
+      "cost": 0.000534,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 326
+    },
+    "f7a95700e560420c5f9f0b83bd01f5a61a35b4baf9fcbf89f0dc106c2da6e3ca": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.3,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Development Ideas\"\n}\n```",
+      "cost": 0.000539,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 327
+    },
+    "fd7e85b011b35d6ac688d082acf507abbc78d0b2b2157aabc427e3b2045af8a0": {
+      "content": "```json\n{\n  \"topic_path\": null,\n  \"confidence\": 0.95,\n  \"related_note_paths\": [],\n  \"new_topic_name\": \"Books & Reading\"\n}\n```",
+      "cost": 0.000544,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 328
+    }
+  },
+  "version": 1
+}

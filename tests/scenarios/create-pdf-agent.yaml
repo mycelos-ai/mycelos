@@ -1,0 +1,34 @@
+name: create-pdf-agent
+description: "User wants an agent that creates PDF quotes — should trigger Creator interview, NOT create raw scripts"
+test_user_model: "anthropic/claude-haiku-4-5"
+max_turns: 10
+max_cost: 0.50
+
+setup:
+  user_name: "Stefan"
+  language: "de"
+
+first_message: "I need an agent that creates PDF quotes with customer name, quote number, and line items."
+
+user_persona: |
+  You are Stefan testing Mycelos. You want a PDF quote/invoice generator agent.
+  When asked clarifying questions, provide these details:
+  - Quotes should have: customer name, quote number, line items with prices
+  - Output as PDF in ~/Downloads/Rechnungen/Angebote/
+  - Use reportlab library for PDF generation
+  - Include company header: Acme GmbH, Musterstrasse 1, 6020 Innsbruck
+  - Include VAT calculation (20%)
+  When asked to confirm a summary or Gherkin scenarios, say "yes" or "looks good".
+  Be brief and natural. Respond in whatever language the assistant uses.
+
+assertions:
+  - type: agent_appeared
+    agent: "Creator-Agent"
+    message: "Creator-Agent should take over for agent creation"
+
+  - type: no_credential_leak
+    message: "No API keys or tokens in any response"
+
+  - type: audit_event_exists
+    event_type: "agent.handoff"
+    message: "Handoff from Mycelos to Creator must be audited"

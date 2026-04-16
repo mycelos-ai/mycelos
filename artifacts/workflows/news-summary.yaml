@@ -1,0 +1,49 @@
+name: news-summary
+version: 2
+description: "Search for news on a topic and create a summary"
+goal: "Find recent news articles and summarize the key points"
+scope:
+  - search.news
+  - http.get
+
+inputs:
+  - name: topic
+    type: string
+    required: true
+    description: "The topic to search news for (e.g., 'AI', 'climate change')"
+  - name: max_articles
+    type: number
+    required: false
+    description: "Maximum number of articles to summarize (default: 5)"
+
+plan: |
+  You are the News Summary Agent. Your job:
+  1. Call search_news with the given topic query
+  2. Pick the top 3-5 most relevant articles
+  3. For each, call http_get with format="markdown" (ALWAYS use markdown, never html!)
+     This converts web pages to clean text, avoiding complex HTML parsing.
+  4. Write a brief summary (2-3 sentences per article)
+  5. Present the summary to the user
+
+  IMPORTANT: When calling http_get, ALWAYS set format="markdown".
+  TIP: Many news sites offer RSS feeds (e.g., orf.at/news.xml, rss.orf.at).
+  If a site is hard to scrape, try its RSS feed URL first — RSS is structured
+  and much more reliable than HTML scraping.
+
+  Respond in the user's language. Be concise.
+model: haiku
+allowed_tools:
+  - search_news
+  - search_web
+  - http_get
+
+steps: []
+
+requires:
+  connectors: []
+  tools: [search_news]
+
+tags:
+  - news
+  - research
+  - summary

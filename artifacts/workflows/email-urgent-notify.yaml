@@ -1,0 +1,41 @@
+name: email-urgent-notify
+version: 2
+description: "Forward urgent emails to Telegram — read-only, no sending"
+goal: "Check for urgent unread emails and notify via Telegram"
+
+inputs:
+  - name: hours_threshold
+    type: number
+    required: false
+    description: "Hours after which an unread email is considered possibly missed (default: 4)"
+
+plan: |
+  You are the Urgent Email Alert Agent. Your job:
+  1. Call email_inbox with unread_only=true, limit=20
+  2. For each email, assess urgency:
+     - From a known contact/boss → urgent
+     - Subject contains: urgent, ASAP, deadline, important → urgent
+     - Older than 4 hours and unread → possibly missed
+  3. If urgent emails found, summarize briefly:
+     "2 urgent emails: [sender] — [subject]"
+  4. If none: respond with nothing (empty response)
+
+  Be concise. Only report truly urgent items.
+  Respond in the user's language.
+model: haiku
+allowed_tools:
+  - email_inbox
+  - email_read
+scope:
+  - email.read
+requires:
+  connectors: [email]
+  tools: [email_inbox]
+
+steps: []
+
+tags:
+  - email
+  - urgent
+  - notification
+  - read-only

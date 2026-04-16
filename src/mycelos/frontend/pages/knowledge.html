@@ -1,0 +1,2006 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Knowledge Base</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* Internal wikilinks [[Note Title]] */
+    .wikilink {
+      color: var(--primary) !important;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-decoration-color: rgba(106, 214, 255, 0.4);
+      text-underline-offset: 3px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .wikilink:hover {
+      text-decoration-style: solid;
+      text-decoration-color: var(--primary);
+      background: rgba(106, 214, 255, 0.08);
+      border-radius: 3px;
+      padding: 0 2px;
+      margin: 0 -2px;
+    }
+    .wikilink-unresolved {
+      color: var(--on-surface-variant) !important;
+      text-decoration-color: rgba(170, 171, 176, 0.3) !important;
+      opacity: 0.7;
+    }
+    .wikilink-unresolved:hover {
+      opacity: 1;
+      color: var(--tertiary) !important;
+      text-decoration-color: var(--tertiary) !important;
+    }
+
+    /* Markdown prose styling for note content */
+    .prose-note p { margin-bottom: 0.75rem; line-height: 1.7; }
+    .prose-note p:last-child { margin-bottom: 0; }
+    .prose-note code {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-size: 0.8125rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .prose-note pre {
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      overflow-x: auto;
+      margin: 0.75rem 0;
+    }
+    .prose-note pre code {
+      background: none;
+      padding: 0;
+      font-size: 0.8125rem;
+    }
+    .prose-note ul, .prose-note ol {
+      padding-left: 1.25rem;
+      margin: 0.5rem 0;
+    }
+    .prose-note li { margin-bottom: 0.25rem; }
+    .prose-note ul li { list-style-type: disc; }
+    .prose-note ol li { list-style-type: decimal; }
+    .prose-note strong { color: var(--on-surface); font-weight: 700; }
+    .prose-note em { color: var(--tertiary); }
+    .prose-note a {
+      color: var(--primary);
+      text-decoration: underline;
+      text-decoration-color: rgba(106, 214, 255, 0.5);
+      text-underline-offset: 2px;
+    }
+    .prose-note a:hover { text-decoration-color: var(--secondary); }
+    .prose-note h1, .prose-note h2, .prose-note h3 {
+      font-family: var(--font-headline);
+      font-weight: 600;
+      margin: 1rem 0 0.5rem;
+      color: var(--on-surface);
+    }
+    .prose-note h1 { font-size: 1.5rem; }
+    .prose-note h2 { font-size: 1.25rem; }
+    .prose-note h3 { font-size: 1.125rem; }
+    .prose-note blockquote {
+      border-left: 2px solid var(--outline-variant);
+      padding-left: 1rem;
+      margin: 0.75rem 0;
+      color: var(--on-surface-variant);
+    }
+    .prose-note table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+    }
+    .prose-note th, .prose-note td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(70, 72, 77, 0.15);
+    }
+    .prose-note th {
+      font-family: var(--font-label);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--on-surface-variant);
+    }
+
+    /* Note list item hover transition */
+    .note-item {
+      transition: background-color 300ms ease-in-out, border-color 300ms ease-in-out;
+    }
+
+    /* Editor textarea styling */
+    .edit-textarea {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(70, 72, 77, 0.4) transparent;
+    }
+  </style>
+</head>
+
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content area: two-panel knowledge browser -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]"
+        x-data="knowledgeApp()" x-init="initKnowledge()"
+        @click="if ($event.target.closest('.wikilink')) { $event.preventDefault(); navigateToNote($event.target.closest('.wikilink').dataset.note); }">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Organizer Inbox — compact collapsible banner above the two-panel layout -->
+    <div x-data="organizerInbox()" x-init="load()"
+         x-show="hasItems() || busy"
+         x-cloak
+         class="flex-shrink-0 mt-20 mx-6">
+      <div class="rounded-lg border text-xs"
+           style="background: var(--surface-container, #1a1d24);
+                  border-color: rgba(106,214,255,0.25);">
+        <!-- Collapsed header -->
+        <div class="flex items-center gap-2 px-3 py-1.5">
+          <button type="button" @click="expanded = !expanded"
+                  class="flex items-center gap-2 flex-1 text-left hover:opacity-80 transition-opacity">
+            <span class="material-symbols-outlined text-sm"
+                  style="color:#6ad6ff"
+                  x-text="expanded ? 'expand_less' : 'expand_more'"></span>
+            <span class="font-semibold" style="color:#6ad6ff"
+                  x-text="t('organizer.inbox_heading')"></span>
+            <span class="px-1.5 py-0.5 rounded text-[10px]"
+                  style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
+                  x-text="totalCount()"></span>
+          </button>
+          <button type="button" @click="acceptAll()" :disabled="busy"
+                  class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
+                  style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
+                  x-text="t('organizer.accept') + ' All'"></button>
+          <button type="button" @click="runNow()" :disabled="busy"
+                  class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
+                  style="background: rgba(255,255,255,0.06); color: #cdd5e0;"
+                  x-text="busy ? '…' : t('organizer.run_now')"></button>
+          <button type="button" @click="sweepDuplicates()" :disabled="busy"
+                  class="px-3 py-1 rounded-lg text-[11px] font-label font-semibold uppercase tracking-wider flex-shrink-0
+                         bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors">
+            <span class="material-symbols-outlined text-xs align-middle">find_replace</span>
+            Find Duplicates
+          </button>
+        </div>
+
+        <!-- Expanded body — grouped by topic, scrollable -->
+        <div x-show="expanded" x-cloak
+             class="border-t overflow-y-auto px-3 py-2 space-y-3"
+             style="border-color: rgba(255,255,255,0.05); max-height: 40vh;">
+
+          <template x-for="group in topicGroups" :key="group.topic || '__links'">
+            <div>
+              <!-- Topic header with breadcrumb path -->
+              <div class="flex items-center gap-1.5 mb-1">
+                <span class="material-symbols-outlined text-xs"
+                      :style="group.is_new ? 'color:#6ad6ff' : 'color:#8b96aa'"
+                      x-text="group.topic ? 'folder' : 'link'"></span>
+                <span class="text-[11px] font-semibold"
+                      :style="group.is_new ? 'color:#6ad6ff' : 'color:#cdd5e0'"
+                      x-text="formatBreadcrumb(group)"></span>
+                <span x-show="group.is_new"
+                      class="text-[9px] px-1.5 py-0.5 rounded"
+                      style="background:rgba(106,214,255,0.15);color:#6ad6ff">new</span>
+                <span class="text-[10px]" style="color:#8b96aa"
+                      x-text="'(' + group.notes.length + ')'"></span>
+              </div>
+              <!-- Notes under this topic -->
+              <template x-for="s in group.notes" :key="s.id + '-' + s.note_path">
+                <div class="flex items-center justify-between py-0.5 gap-2 ml-4">
+                  <!-- Merge suggestion -->
+                  <template x-if="s.kind === 'merge'">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                      <span class="material-symbols-outlined text-xs flex-shrink-0" style="color:#c678dd">merge</span>
+                      <button @click="$dispatch('mycelos:open-note', { path: s.note_path })"
+                              class="text-[11px] text-left hover:text-[var(--primary)] transition-colors truncate"
+                              style="color:#cdd5e0"
+                              :title="s.note_path"
+                              x-text="s.note_title || s.note_path.split('/').pop().replace(/-/g, ' ')"></button>
+                      <span class="text-[10px] flex-shrink-0" style="color:#8b96aa">+</span>
+                      <button @click="$dispatch('mycelos:open-note', { path: s.payload && s.payload.duplicate_path })"
+                              class="text-[11px] text-left hover:text-[var(--primary)] transition-colors truncate"
+                              style="color:#cdd5e0"
+                              :title="s.payload && s.payload.duplicate_path"
+                              x-text="s.payload && (s.payload.duplicate_path || '').split('/').pop().replace(/-/g, ' ')"></button>
+                      <span x-show="s.payload && s.payload.similarity"
+                            class="text-[9px] px-1.5 py-0.5 rounded flex-shrink-0"
+                            style="background:rgba(198,120,221,0.15);color:#c678dd"
+                            x-text="Math.round((s.payload.similarity || 0) * 100) + '%'"></span>
+                    </div>
+                  </template>
+                  <!-- Regular (move/link) suggestion -->
+                  <template x-if="s.kind !== 'merge'">
+                    <button @click="$dispatch('mycelos:open-note', { path: s.note_path })"
+                            class="truncate flex-1 min-w-0 text-[11px] text-left
+                                   hover:text-[var(--primary)] transition-colors"
+                            style="color:#cdd5e0"
+                            :title="s.note_path"
+                            x-text="s.note_title || s.note_path.split('/').pop().replace(/-/g, ' ')"></button>
+                  </template>
+                  <span class="flex gap-1 flex-shrink-0">
+                    <button @click="accept(s)" class="text-[10px] px-2 py-0.5 rounded"
+                            style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
+                            x-text="t('organizer.accept')"></button>
+                    <button @click="dismiss(s)" class="text-[10px] px-2 py-0.5 rounded"
+                            style="background: rgba(255,255,255,0.08); color: #cdd5e0;"
+                            x-text="t('organizer.dismiss')"></button>
+                  </span>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function organizerInbox() {
+        return {
+          topicGroups: [],
+          busy: false,
+          expanded: false,
+          totalCount() {
+            return this.topicGroups.reduce((sum, g) => sum + g.notes.length, 0);
+          },
+          async load() {
+            try {
+              const resp = await fetch('/api/organizer/suggestions');
+              if (!resp.ok) return;
+              this.topicGroups = await resp.json();
+            } catch (e) { /* ignore */ }
+          },
+          hasItems() {
+            return this.topicGroups.some(g => g.notes && g.notes.length > 0);
+          },
+          formatBreadcrumb(group) {
+            if (!group.topic) return group.topic_name || 'Links';
+            // "topics/diverses/kaffee" → "Diverses / Kaffee"
+            return group.topic.replace(/^topics\//, '')
+              .split('/')
+              .map(s => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' '))
+              .join(' / ');
+          },
+          async accept(s) {
+            try {
+              if (!s._synthetic) {
+                await fetch(`/api/organizer/suggestions/${s.id}/accept`, { method: 'POST' });
+              }
+            } catch (e) { /* ignore */ }
+            await this.load();
+            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+          },
+          async dismiss(s) {
+            try {
+              if (!s._synthetic) {
+                await fetch(`/api/organizer/suggestions/${s.id}/dismiss`, { method: 'POST' });
+              }
+            } catch (e) { /* ignore */ }
+            await this.load();
+            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+          },
+          async acceptAll() {
+            this.busy = true;
+            try {
+              await fetch('/api/organizer/accept-all', { method: 'POST' });
+            } catch (e) { /* ignore */ }
+            this.busy = false;
+            await this.load();
+            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+          },
+          async runNow() {
+            this.busy = true;
+            try {
+              await fetch('/api/organizer/run', { method: 'POST' });
+            } catch (e) { /* ignore */ }
+            this.busy = false;
+            await this.load();
+          },
+          async loadSuggestions() {
+            await this.load();
+          },
+          async sweepDuplicates() {
+            try {
+              const res = await MycelosAPI.post('/api/organizer/sweep-duplicates');
+              if (res.duplicates_found > 0) {
+                await this.loadSuggestions();
+              }
+            } catch (e) {
+              console.warn('Sweep failed:', e.message);
+            }
+          },
+        };
+      }
+    </script>
+
+    <!-- Smart Import: drag-drop overlay + modal -->
+    <div x-data="smartImport()" x-init="init()"
+         @dragover.window.prevent="dragOver = true"
+         @dragleave.window.prevent="dragOver = false"
+         @drop.window.prevent="onDrop($event)"
+         @import-open.window="open = true">
+
+      <!-- Drag-over indicator -->
+      <div x-show="dragOver" x-cloak
+           class="fixed inset-0 pointer-events-none z-[9998] flex items-center justify-center"
+           style="border: 4px dashed rgba(106,214,255,0.7); background: rgba(10,12,20,0.25);">
+        <div class="text-sm font-semibold px-4 py-2 rounded"
+             style="background:#1a1d24; color:#6ad6ff;"
+             x-text="t('import.drop_here')"></div>
+      </div>
+
+      <!-- Modal -->
+      <div x-show="open" x-cloak
+           data-testid="smart-import-modal"
+           class="fixed inset-0 z-[9999] flex items-start justify-center"
+           style="background:rgba(10,12,20,0.6); padding-top:15vh"
+           @click.self="open = false">
+        <div class="rounded-xl p-5 border"
+             style="background:#1a1d24; color:#fff; width:min(560px,90vw);
+                    border-color:rgba(255,255,255,0.08);
+                    box-shadow:0 24px 64px -16px rgba(0,0,0,0.7)">
+          <div class="text-sm font-semibold mb-3" x-text="t('import.modal_title')"></div>
+
+          <label class="block text-xs mb-1" style="color:#cdd5e0"
+                 x-text="t('import.file_label')"></label>
+          <input type="file" accept=".zip"
+                 @change="file = $event.target.files[0]"
+                 class="w-full text-xs" style="color:#fff" />
+          <div x-show="file" class="mt-1 text-[11px]" style="color:#6ad6ff"
+               x-text="file && file.name"></div>
+
+          <div class="mt-3">
+            <a href="#" @click.prevent="showOptions = !showOptions"
+               class="text-xs" style="color:#6ad6ff"
+               x-text="t('import.options_toggle')"></a>
+            <div x-show="showOptions" x-cloak class="mt-2 flex flex-col gap-1 text-xs"
+                 style="color:#cdd5e0">
+              <label><input type="radio" value="auto" x-model="mode">
+                <span class="ml-1" x-text="t('import.option_auto')"></span></label>
+              <label><input type="radio" value="preserve" x-model="mode">
+                <span class="ml-1" x-text="t('import.option_preserve')"></span></label>
+              <label><input type="radio" value="suggest" x-model="mode">
+                <span class="ml-1" x-text="t('import.option_suggest')"></span></label>
+            </div>
+          </div>
+
+          <div class="mt-4 flex justify-end gap-2">
+            <button @click="open = false" class="text-xs px-3 py-1.5 rounded"
+                    style="background:rgba(255,255,255,0.08);color:#cdd5e0">Cancel</button>
+            <button @click="submit()" :disabled="!file || busy"
+                    data-testid="smart-import-submit"
+                    class="text-xs px-3 py-1.5 rounded"
+                    style="background:rgba(106,214,255,0.15);color:#6ad6ff"
+                    x-text="busy ? t('import.importing') : t('import.submit')"></button>
+          </div>
+          <div x-show="result" class="mt-3 text-xs" style="color:#6ad6ff"
+               x-text="resultMessage()"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function smartImport() {
+        return {
+          open: false,
+          dragOver: false,
+          showOptions: false,
+          mode: 'auto',
+          file: null,
+          busy: false,
+          result: null,
+          init() {},
+          onDrop(event) {
+            this.dragOver = false;
+            const files = event.dataTransfer && event.dataTransfer.files;
+            if (files && files.length) {
+              const f = files[0];
+              if (f.name.toLowerCase().endsWith('.zip')) {
+                this.file = f;
+                this.open = true;
+              }
+            }
+          },
+          async submit() {
+            if (!this.file) return;
+            this.busy = true;
+            this.result = null;
+            const form = new FormData();
+            form.append('mode', this.mode);
+            form.append('file', this.file);
+            try {
+              const resp = await fetch('/api/knowledge/import', {
+                method: 'POST', body: form,
+              });
+              const data = await resp.json();
+              if (!resp.ok) {
+                this.result = { error: data.error || 'failed' };
+              } else {
+                this.result = data;
+              }
+            } catch (e) {
+              this.result = { error: String(e) };
+            }
+            this.busy = false;
+          },
+          resultMessage() {
+            if (!this.result) return '';
+            if (this.result.error) {
+              return (window.t ? window.t('import.error') : 'Import failed') + ': ' + this.result.error;
+            }
+            const count = (this.result.created || []).length;
+            if (this.result.mode === 'preserve') {
+              const topics = (this.result.topics || []).length;
+              return count + ' ' + (window.t ? window.t('import.done_preserve') : 'notes imported into')
+                     + ' ' + topics + ' ' + (window.t ? window.t('import.done_preserve_topics') : 'topics');
+            }
+            return count + ' ' + (window.t ? window.t('import.done_suggest') : 'notes imported');
+          },
+        };
+      }
+    </script>
+
+    <!-- Two-panel layout -->
+    <div class="flex-1 flex overflow-hidden pt-16">
+
+      <!-- Left panel: Note list -->
+      <aside class="w-full md:w-80 flex-shrink-0 flex flex-col overflow-hidden bg-[var(--surface)]"
+             style="border-right: 1px solid rgba(70, 72, 77, 0.15);"
+             x-show="!selectedNote || !mobileView"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 -translate-x-4"
+             x-transition:enter-end="opacity-100 translate-x-0">
+
+        <!-- List header -->
+        <div class="px-6 pt-6 pb-4 flex-shrink-0">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface" x-text="t('knowledge.title')">Knowledge</h2>
+              <p class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant mt-0.5"
+                 x-text="notes.length + ' notes'"></p>
+            </div>
+            <button @click="newNote()"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center
+                           bg-surface-container text-on-surface-variant
+                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    :title="t('knowledge.create')"
+                    title="New note">
+              <span class="material-symbols-outlined text-xl">add</span>
+            </button>
+            <!-- New Topic / Sub-Topic button — context-sensitive -->
+            <button @click="createTopic(expandedTopic && expandedTopic !== '__uncategorized' ? expandedTopic : null)"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center
+                           bg-surface-container text-on-surface-variant
+                           hover:text-tertiary hover:bg-surface-container-high transition-colors"
+                    :title="expandedTopic && expandedTopic !== '__uncategorized' ? 'New Sub-Topic' : 'New Topic'">
+              <span class="material-symbols-outlined text-xl">create_new_folder</span>
+            </button>
+            <!-- Import button (opens Smart Import modal) -->
+            <button @click="$dispatch('import-open')"
+                    data-testid="smart-import-open"
+                    class="w-9 h-9 rounded-lg flex items-center justify-center
+                           bg-surface-container text-on-surface-variant
+                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    :title="t('import.button')"
+                    title="Import">
+              <span class="material-symbols-outlined text-xl">upload_file</span>
+            </button>
+          </div>
+
+          <!-- Search input -->
+          <div class="relative">
+            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40 text-lg">search</span>
+            <input type="text"
+                   x-model="searchQuery"
+                   @input="debouncedSearch()"
+                   class="input-field pl-10 text-sm"
+                   :placeholder="t('knowledge.search_placeholder')"
+                   placeholder="Search notes...">
+          </div>
+        </div>
+
+        <!-- View toggle: Topics / All / Tasks -->
+        <div class="flex gap-1 px-6 pb-3">
+          <button @click="viewMode = 'topics'; loadTopics()"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  :class="viewMode === 'topics' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'">
+            Topics
+          </button>
+          <button @click="viewMode = 'all'; filteredNotes = notes"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  :class="viewMode === 'all' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'">
+            All
+          </button>
+          <button @click="viewMode = 'tasks'; loadTasks()"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  :class="viewMode === 'tasks' ? 'bg-secondary/15 text-secondary' : 'text-on-surface-variant hover:text-secondary'">
+            Tasks
+            <span x-show="overdueTasks.length > 0"
+                  class="ml-1 px-1 py-0.5 rounded text-[9px] bg-error/20 text-error font-bold"
+                  x-text="overdueTasks.length"></span>
+          </button>
+        </div>
+
+        <!-- Content area -->
+        <div class="flex-1 overflow-y-auto px-3 pb-4 space-y-1">
+          <!-- Loading skeleton -->
+          <template x-if="loading">
+            <div class="space-y-2 px-3">
+              <template x-for="i in 5" :key="i">
+                <div class="animate-pulse">
+                  <div class="h-4 bg-surface-container rounded w-3/4 mb-2"></div>
+                  <div class="h-3 bg-surface-container rounded w-1/2 mb-1"></div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- === TOPICS VIEW === -->
+          <template x-if="!loading && viewMode === 'topics'">
+            <div class="space-y-1">
+              <template x-for="topic in topics" :key="topic.path">
+                <div>
+                  <!-- Topic header -->
+                  <div draggable="true"
+                       @dragstart="draggedNote = topic; $event.dataTransfer.effectAllowed = 'move'; $event.stopPropagation()"
+                       @dragend="draggedNote = null; dragOverTopic = null"
+                       @dragover.prevent="if (draggedNote) { dragOverTopic = topic.path; $event.dataTransfer.dropEffect = 'move' }"
+                       @dragleave="if (dragOverTopic === topic.path) dragOverTopic = null"
+                       @drop.prevent="if (draggedNote && draggedNote.path !== topic.path) { moveNoteTo(draggedNote, topic.path); draggedNote = null; dragOverTopic = null }"
+                       class="note-item w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-2 group"
+                       :class="[expandedTopic === topic.path ? 'bg-surface-container-high' : 'hover:bg-surface-container',
+                                selectedNote && selectedNote.path === topic.path ? 'bg-surface-container-high' : '',
+                                dragOverTopic === topic.path ? 'ring-2 ring-primary/50 bg-primary/5' : '',
+                                draggedNote && draggedNote.path === topic.path ? 'opacity-40' : '',
+                                !draggedNote ? 'cursor-grab' : '']">
+                    <!-- Chevron: click to expand/collapse -->
+                    <button @click.stop="toggleTopic(topic)" class="flex-shrink-0">
+                      <span class="material-symbols-outlined text-sm transition-transform"
+                            :class="expandedTopic === topic.path ? 'rotate-90' : ''">chevron_right</span>
+                    </button>
+                    <!-- Title: click to open topic note -->
+                    <button @click.stop="selectNote(topic)" class="flex items-center gap-2 flex-1 min-w-0 text-left">
+                      <span class="material-symbols-outlined text-sm text-tertiary">folder</span>
+                      <span class="text-sm font-medium truncate group-hover:text-primary" x-text="topic.title"></span>
+                    </button>
+                    <span class="text-[10px] text-on-surface-variant/50 font-label"
+                          x-text="'(' + (topic.child_count || 0) + ')'"></span>
+                    <span x-show="topic.open_tasks > 0"
+                          class="px-1.5 py-0.5 rounded text-[9px] font-label bg-secondary/15 text-secondary"
+                          x-text="topic.open_tasks + ' open'"></span>
+                  </div>
+                  <!-- Topic children -->
+                  <div x-show="expandedTopic === topic.path" class="ml-6 mt-1 space-y-0.5">
+                    <template x-for="child in topicChildren" :key="child.path">
+                      <button @click="selectNote(child)"
+                              draggable="true"
+                              @dragstart="draggedNote = child; $event.dataTransfer.effectAllowed = 'move'"
+                              @dragend="draggedNote = null; dragOverTopic = null"
+                              class="note-item w-full text-left px-3 py-2 rounded-lg flex items-center gap-2 group"
+                              :class="[selectedNote && selectedNote.path === child.path
+                                ? 'bg-surface-container-high border border-primary/20'
+                                : 'hover:bg-surface-container border border-transparent',
+                                draggedNote && draggedNote.path === child.path ? 'opacity-40' : '',
+                                !draggedNote ? 'cursor-grab' : 'cursor-grabbing']">
+                        <!-- Task checkbox -->
+                        <template x-if="child.type === 'task'">
+                          <button @click.stop="toggleDone(child)"
+                                  class="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                                  :class="child.status === 'done'
+                                    ? 'bg-primary border-primary text-on-primary-fixed'
+                                    : 'border-on-surface-variant/30 hover:border-primary'">
+                            <span x-show="child.status === 'done'" class="material-symbols-outlined text-xs">check</span>
+                          </button>
+                        </template>
+                        <template x-if="child.type !== 'task'">
+                          <span class="material-symbols-outlined text-xs"
+                                :class="child.type === 'topic' ? 'text-tertiary' : (child.type === 'document' ? 'text-tertiary' : 'text-on-surface-variant/40')"
+                                x-text="child.type === 'topic' ? 'folder' : (child.type === 'document' ? 'picture_as_pdf' : 'description')"></span>
+                        </template>
+                        <span class="text-xs truncate flex-1"
+                              :class="child.status === 'done' ? 'line-through text-on-surface-variant/40' : 'text-on-surface'"
+                              x-text="child.title"></span>
+                        <!-- Due date badge -->
+                        <span x-show="child.due"
+                              class="text-[9px] font-label shrink-0"
+                              :class="new Date(child.due) < new Date() ? 'text-error font-bold' : 'text-on-surface-variant/50'"
+                              x-text="new Date(child.due).toLocaleDateString()"></span>
+                        <!-- Reminder bell -->
+                        <button x-show="child.due" @click.stop="toggleReminder(child)"
+                                class="shrink-0 transition-colors"
+                                :class="child.reminder ? 'text-secondary' : 'text-on-surface-variant/20 hover:text-secondary'">
+                          <span class="material-symbols-outlined text-sm"
+                                x-text="child.reminder ? 'notifications_active' : 'notifications_off'"></span>
+                        </button>
+                      </button>
+                    </template>
+                    <div x-show="topicChildren.length === 0"
+                         class="text-[10px] text-on-surface-variant/40 px-3 py-2">
+                      No notes in this topic yet.
+                    </div>
+                    <!-- Add sub-topic inline -->
+                    <button @click="createTopic(expandedTopic)"
+                            class="text-[10px] text-on-surface-variant/40 hover:text-tertiary
+                                   px-3 py-1 flex items-center gap-1 transition-colors">
+                      <span class="material-symbols-outlined text-xs">add</span>
+                      Sub-Topic
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Uncategorized -->
+              <button @click="showUncategorized()"
+                      class="note-item w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-2 group hover:bg-surface-container"
+                      :class="viewMode === 'topics' && expandedTopic === '__uncategorized' ? 'bg-surface-container-high' : ''">
+                <span class="material-symbols-outlined text-sm text-on-surface-variant/40">folder_open</span>
+                <span class="text-sm font-medium flex-1 text-on-surface-variant group-hover:text-primary" x-text="t('knowledge.pending')">Pending</span>
+              </button>
+              <div x-show="expandedTopic === '__uncategorized'" class="ml-6 space-y-0.5">
+                <template x-for="note in uncategorizedNotes" :key="note.path">
+                  <button @click="selectNote(note)"
+                          draggable="true"
+                          @dragstart="draggedNote = note; $event.dataTransfer.effectAllowed = 'move'"
+                          @dragend="draggedNote = null; dragOverTopic = null"
+                          class="note-item w-full text-left px-3 py-2 rounded-lg flex items-center gap-2 text-xs truncate
+                                 hover:bg-surface-container"
+                          :class="[selectedNote && selectedNote.path === note.path ? 'bg-surface-container-high' : '',
+                                   draggedNote && draggedNote.path === note.path ? 'opacity-40' : '',
+                                   !draggedNote ? 'cursor-grab' : 'cursor-grabbing']">
+                    <span class="material-symbols-outlined text-xs text-on-surface-variant/40">description</span>
+                    <span x-text="note.title" class="truncate"></span>
+                  </button>
+                </template>
+              </div>
+
+              <!-- Empty: no topics -->
+              <div x-show="topics.length === 0"
+                   class="text-center py-8 px-6">
+                <span class="material-symbols-outlined text-2xl text-on-surface-variant/30 mb-2 block">folder_off</span>
+                <p class="text-xs text-on-surface-variant/50" x-text="t('knowledge.empty_state')">Press Cmd+K to write your first note</p>
+              </div>
+            </div>
+          </template>
+
+          <!-- === ALL NOTES VIEW === -->
+          <template x-if="!loading && viewMode === 'all'">
+            <div>
+              <template x-for="note in filteredNotes" :key="note.path">
+                <button @click="selectNote(note)"
+                        class="note-item w-full text-left px-4 py-3 rounded-xl group"
+                        :class="selectedNote && selectedNote.path === note.path
+                          ? 'bg-surface-container-high border border-primary/20'
+                          : 'hover:bg-surface-container border border-transparent'">
+                  <div class="flex items-center gap-2 mb-1">
+                    <p class="text-sm font-medium truncate flex-1"
+                       :class="selectedNote && selectedNote.path === note.path
+                         ? 'text-primary' : 'text-on-surface group-hover:text-primary'"
+                       x-text="note.title || 'Untitled'"></p>
+                    <span x-show="note.type === 'task'"
+                          class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-secondary/15 text-secondary">Task</span>
+                    <span x-show="note.type === 'topic'"
+                          class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-tertiary/15 text-tertiary">Topic</span>
+                    <span x-show="note.type === 'document'"
+                          class="material-symbols-outlined text-xs text-tertiary">picture_as_pdf</span>
+                  </div>
+                  <div x-show="note.due" class="flex items-center gap-1 mb-1">
+                    <span class="material-symbols-outlined text-xs"
+                          :class="new Date(note.due) <= new Date() ? 'text-error' : 'text-secondary'">schedule</span>
+                    <span class="text-[10px] font-label"
+                          :class="new Date(note.due) <= new Date() ? 'text-error font-bold' : 'text-on-surface-variant'"
+                          x-text="'Due: ' + new Date(note.due).toLocaleDateString()"></span>
+                  </div>
+                  <div class="flex flex-wrap gap-1 mb-1.5" x-show="parseTags(note.tags).length > 0">
+                    <template x-for="tag in parseTags(note.tags).slice(0, 3)" :key="tag">
+                      <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-label bg-tertiary/10 text-tertiary"
+                            x-text="tag"></span>
+                    </template>
+                  </div>
+                </button>
+              </template>
+              <div x-show="filteredNotes.length === 0 && searchQuery.length > 0"
+                   class="text-center py-12 px-6">
+                <span class="material-symbols-outlined text-3xl text-on-surface-variant/30 mb-2 block">search_off</span>
+                <p class="text-sm text-on-surface-variant/50">No notes matching your search.</p>
+              </div>
+              <div x-show="filteredNotes.length === 0 && searchQuery.length === 0 && notes.length === 0"
+                   class="text-center py-12 px-6">
+                <span class="material-symbols-outlined text-3xl text-on-surface-variant/30 mb-2 block">auto_stories</span>
+                <p class="text-sm text-on-surface-variant/50 leading-relaxed" x-text="t('knowledge.no_notes')">
+                  No notes yet. Start by chatting with Mycelos.
+                </p>
+              </div>
+            </div>
+          </template>
+
+          <!-- === TASKS VIEW === -->
+          <template x-if="!loading && viewMode === 'tasks'">
+            <div class="space-y-1">
+              <!-- Overdue section -->
+              <div x-show="overdueTasks.length > 0" class="mb-3">
+                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-error">Overdue</p>
+                <template x-for="task in overdueTasks" :key="task.path">
+                  <div @click="selectNote(task)"
+                       :title="taskTooltip(task)"
+                       class="note-item w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-2 group hover:bg-surface-container border-l-2 border-error cursor-pointer">
+                    <button @click.stop="toggleDone(task)"
+                            class="w-4 h-4 rounded border border-error/40 flex items-center justify-center flex-shrink-0 hover:border-error"></button>
+                    <span class="text-sm flex-1 truncate text-on-surface" x-text="task.title"></span>
+                    <span class="text-[9px] font-label text-error font-bold"
+                          x-text="new Date(task.due).toLocaleDateString()"></span>
+                  </div>
+                </template>
+              </div>
+              <!-- Open tasks -->
+              <div x-show="openTasks.length > 0">
+                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-on-surface-variant">Open</p>
+                <template x-for="task in openTasks" :key="task.path">
+                  <div @click="selectNote(task)"
+                       :title="taskTooltip(task)"
+                       class="note-item w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-2 group hover:bg-surface-container cursor-pointer">
+                    <button @click.stop="toggleDone(task)"
+                            class="w-4 h-4 rounded border border-on-surface-variant/30 flex items-center justify-center flex-shrink-0 hover:border-primary"></button>
+                    <span class="text-sm flex-1 truncate text-on-surface" x-text="task.title"></span>
+                    <span x-show="task.due" class="text-[9px] font-label text-on-surface-variant/50"
+                          x-text="new Date(task.due).toLocaleDateString()"></span>
+                    <button x-show="task.due" @click.stop="toggleReminder(task)"
+                            class="shrink-0 transition-colors"
+                            :class="task.reminder ? 'text-secondary' : 'text-on-surface-variant/20 hover:text-secondary'">
+                      <span class="material-symbols-outlined text-sm"
+                            x-text="task.reminder ? 'notifications_active' : 'notifications_off'"></span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+              <!-- Done tasks -->
+              <div x-show="doneTasks.length > 0">
+                <p class="px-4 py-1 mt-3 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/40">Done</p>
+                <template x-for="task in doneTasks" :key="task.path">
+                  <div @click="selectNote(task)"
+                       class="note-item w-full text-left px-4 py-2 rounded-xl flex items-center gap-2 group hover:bg-surface-container cursor-pointer">
+                    <button @click.stop="toggleDone(task)"
+                            class="w-4 h-4 rounded border bg-primary border-primary flex items-center justify-center flex-shrink-0">
+                      <span class="material-symbols-outlined text-xs text-on-primary-fixed">check</span>
+                    </button>
+                    <span class="text-sm flex-1 truncate text-on-surface-variant/40 line-through" x-text="task.title"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="openTasks.length === 0 && overdueTasks.length === 0 && doneTasks.length === 0"
+                   class="text-center py-12 px-6">
+                <span class="material-symbols-outlined text-3xl text-on-surface-variant/30 mb-2 block">task_alt</span>
+                <p class="text-sm text-on-surface-variant/50">No tasks yet.</p>
+              </div>
+            </div>
+          </template>
+        </div>
+      </aside>
+
+      <!-- Right panel: Note content -->
+      <section class="flex-1 flex flex-col overflow-hidden min-w-0"
+               x-show="selectedNote || creatingNew"
+               :class="mobileView && (selectedNote || creatingNew) ? 'absolute inset-0 z-30 bg-[var(--surface)] pt-16' : ''"
+               x-transition:enter="transition ease-out duration-200"
+               x-transition:enter-start="opacity-0 translate-x-4"
+               x-transition:enter-end="opacity-100 translate-x-0">
+
+        <!-- Content header bar -->
+        <div class="flex items-center gap-3 px-6 py-4 flex-shrink-0"
+             style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
+
+          <!-- Back button (mobile) -->
+          <button @click="deselectNote()"
+                  class="md:hidden w-9 h-9 rounded-lg flex items-center justify-center
+                         text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors">
+            <span class="material-symbols-outlined">arrow_back</span>
+          </button>
+
+          <!-- Note title -->
+          <div class="flex-1 min-w-0">
+            <template x-if="creatingNew">
+              <input type="text"
+                     x-model="newTitle"
+                     class="bg-transparent border-none text-lg font-headline font-bold text-on-surface
+                            focus:ring-0 focus:outline-none w-full placeholder:text-on-surface-variant/30"
+                     placeholder="Note title...">
+            </template>
+            <template x-if="!creatingNew && selectedNote">
+              <div>
+                <div x-show="buildBreadcrumb(selectedNote).length > 0"
+                     class="flex items-center gap-1 text-[11px] mb-0.5 flex-wrap"
+                     style="color: var(--on-surface-variant)">
+                  <template x-for="(seg, i) in buildBreadcrumb(selectedNote)" :key="i">
+                    <span class="flex items-center gap-1">
+                      <span x-show="i > 0" class="opacity-40">/</span>
+                      <button @click="navigateToBreadcrumb(seg.path)"
+                              class="hover:text-[var(--primary)] transition-colors truncate max-w-[120px]"
+                              x-text="seg.label"></button>
+                    </span>
+                  </template>
+                </div>
+                <div x-data="{ renamingTitle: false, newTitle: '' }" class="flex-1 min-w-0">
+                  <h1 x-show="!renamingTitle"
+                      @dblclick="if (selectedNote.type === 'topic') { renamingTitle = true; newTitle = selectedNote.title; $nextTick(() => $refs.titleInput.focus()) }"
+                      class="text-lg font-headline font-bold text-on-surface truncate"
+                      :class="selectedNote.type === 'topic' ? 'cursor-text' : ''"
+                      :title="selectedNote.type === 'topic' ? 'Double-click to rename' : ''"
+                      x-text="selectedNote.title || 'Untitled'"></h1>
+                  <input x-show="renamingTitle" x-ref="titleInput"
+                         x-model="newTitle"
+                         @keydown.enter.prevent="renameTopic(selectedNote, newTitle); renamingTitle = false"
+                         @keydown.escape="renamingTitle = false"
+                         @blur="if (newTitle.trim() && newTitle !== selectedNote.title) { renameTopic(selectedNote, newTitle); } renamingTitle = false"
+                         class="text-lg font-headline font-bold text-on-surface bg-transparent w-full border-b-2 border-primary outline-none">
+                </div>
+                <!-- Meta badges: type, status, due, reminder -->
+                <div class="flex items-center flex-wrap gap-1.5 mt-1.5">
+                  <!-- Type badge -->
+                  <span x-show="selectedNote.type"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider
+                               bg-[var(--surface-container)] text-[var(--on-surface-variant)]">
+                    <span class="material-symbols-outlined" style="font-size: 12px;"
+                          x-text="selectedNote.type === 'task' ? 'task_alt' : (selectedNote.type === 'decision' ? 'gavel' : 'description')"></span>
+                    <span x-text="selectedNote.type"></span>
+                  </span>
+                  <!-- Status toggle (tasks only) -->
+                  <button x-show="selectedNote.type === 'task' && selectedNote.status"
+                        @click="toggleTaskStatus()"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider cursor-pointer transition-colors"
+                        :class="selectedNote.status === 'done'
+                          ? 'bg-[#48c78e]/10 text-[#48c78e] hover:bg-[#48c78e]/20'
+                          : (selectedNote.status === 'in-progress'
+                            ? 'bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/20'
+                            : 'bg-[var(--warning)]/10 text-[var(--warning)] hover:bg-[var(--warning)]/20')"
+                        :title="selectedNote.status === 'done' ? 'Reopen task' : 'Mark as done'">
+                    <span class="material-symbols-outlined" style="font-size: 12px;"
+                          x-text="selectedNote.status === 'done' ? 'undo' : 'check_circle'"></span>
+                    <span x-text="selectedNote.status"></span>
+                  </button>
+                  <!-- Due date -->
+                  <span x-show="selectedNote.due"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider
+                               bg-[var(--surface-container)] text-[var(--on-surface-variant)]">
+                    <span class="material-symbols-outlined" style="font-size: 12px;">event</span>
+                    <span>Due</span>
+                    <span x-text="formatRemindAt(selectedNote.due)"></span>
+                  </span>
+                  <!-- Reminder with exact remind_at -->
+                  <span x-show="selectedNote.reminder"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider
+                               bg-[var(--warning)]/10 text-[var(--warning)]"
+                        :title="selectedNote.remind_at ? ('Fires at ' + formatRemindAt(selectedNote.remind_at)) : 'Reminder set — no exact time configured'">
+                    <span class="material-symbols-outlined" style="font-size: 12px;">notifications_active</span>
+                    <span x-show="selectedNote.remind_at" x-text="formatRemindAt(selectedNote.remind_at)"></span>
+                    <span x-show="!selectedNote.remind_at">Reminder on</span>
+                  </span>
+                  <!-- Channels badge -->
+                  <span x-show="selectedNote.reminder && Array.isArray(selectedNote.remind_via) && selectedNote.remind_via.length > 0"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider
+                               bg-[var(--surface-container)] text-[var(--on-surface-variant)]"
+                        x-text="'via ' + (selectedNote.remind_via || []).join(', ')"></span>
+                  <!-- remind_at edit control: visible for tasks with a due date -->
+                  <template x-if="selectedNote.type === 'task' && selectedNote.due">
+                    <span x-data="{ editing: false }" class="inline-flex items-center">
+                      <button x-show="!editing"
+                              @click="editing = true"
+                              class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider
+                                     bg-[var(--surface-container)] text-[var(--on-surface-variant)] hover:text-[var(--primary)] transition-colors"
+                              title="Set exact reminder time">
+                        <span class="material-symbols-outlined" style="font-size: 12px;">schedule</span>
+                        <span x-text="selectedNote.remind_at ? 'Change time' : 'Set time'"></span>
+                      </button>
+                      <input x-show="editing"
+                             type="datetime-local"
+                             :value="remindAtForInput(selectedNote.remind_at)"
+                             @blur="saveRemindAt($event.target.value); editing = false"
+                             @keydown.enter.prevent="saveRemindAt($event.target.value); editing = false"
+                             @keydown.escape="editing = false"
+                             class="text-[11px] px-2 py-0.5 rounded bg-[var(--surface-container)] text-[var(--on-surface)]"
+                             style="border: 1px solid var(--outline-variant);">
+                    </span>
+                  </template>
+                  <!-- Priority selector -->
+                  <span x-data="{ prioOpen: false }" class="relative inline-flex">
+                    <button @click="prioOpen = !prioOpen"
+                            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-semibold uppercase tracking-wider transition-colors"
+                            :class="(selectedNote.priority || 0) > 0
+                              ? (selectedNote.priority >= 3 ? 'bg-error/10 text-error' : (selectedNote.priority >= 2 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'))
+                              : 'bg-surface-container text-on-surface-variant/50 hover:text-primary'"
+                            title="Set priority">
+                      <span class="material-symbols-outlined" style="font-size: 12px;">flag</span>
+                      <span x-text="['none','low','medium','high'][selectedNote.priority || 0]"></span>
+                    </button>
+                    <div x-show="prioOpen" @click.outside="prioOpen = false" x-transition
+                         class="absolute left-0 top-full mt-1 bg-surface-container rounded-lg shadow-xl py-1 z-50 min-w-[100px]"
+                         style="border: 1px solid rgba(70, 72, 77, 0.3);">
+                      <template x-for="[val, label] in [[0,'None'],[1,'Low'],[2,'Medium'],[3,'High']]" :key="val">
+                        <button @click="setPriority(val); prioOpen = false"
+                                class="w-full text-left px-3 py-1.5 text-xs hover:bg-surface-container-high transition-colors"
+                                :class="selectedNote.priority === val ? 'text-primary font-semibold' : ''"
+                                x-text="label"></button>
+                      </template>
+                    </div>
+                  </span>
+                </div>
+                <!-- Editable tags -->
+                <div class="flex items-center flex-wrap gap-1.5 mt-1.5"
+                     x-show="selectedNote && (parseTags(selectedNote.tags).length > 0 || true)"
+                     @add-tag.window="addTag($event.detail.tag)">
+                  <template x-for="(tag, idx) in parseTags(selectedNote ? selectedNote.tags : [])" :key="tag">
+                    <span class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-label
+                                 bg-primary/10 text-primary">
+                      <span x-text="tag"></span>
+                      <button @click="removeTag(idx)"
+                              class="ml-0.5 hover:text-error transition-colors" title="Remove tag">
+                        <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
+                      </button>
+                    </span>
+                  </template>
+                  <span x-data="{ adding: false, newTag: '' }" class="inline-flex items-center">
+                    <button x-show="!adding" @click="adding = true; $nextTick(() => $refs.tagInput.focus())"
+                            class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-label
+                                   bg-surface-container text-on-surface-variant/50 hover:text-primary transition-colors"
+                            title="Add tag">
+                      <span class="material-symbols-outlined" style="font-size: 10px;">add</span> tag
+                    </button>
+                    <input x-show="adding" x-ref="tagInput"
+                           x-model="newTag"
+                           @keydown.enter.prevent="if (newTag.trim()) { addTag(newTag.trim()); newTag = ''; adding = false; }"
+                           @keydown.escape="adding = false; newTag = ''"
+                           @blur="if (newTag.trim()) { addTag(newTag.trim()); } newTag = ''; adding = false"
+                           placeholder="tag name"
+                           class="text-[10px] px-2 py-0.5 rounded-full bg-surface-container text-on-surface w-20"
+                           style="border: 1px solid var(--outline-variant);">
+                  </span>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <!-- Toggle edit/view (existing note) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="toggleEdit()"
+                      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                             transition-colors"
+                      :class="editing
+                        ? 'bg-primary/10 text-primary'
+                        : 'bg-surface-container text-on-surface-variant hover:text-primary'">
+                <span class="material-symbols-outlined text-sm" x-text="editing ? 'visibility' : 'edit'"></span>
+                <span x-text="editing ? 'Preview' : t('common.edit')"></span>
+              </button>
+            </template>
+
+            <!-- Move to topic -->
+            <template x-if="selectedNote && !creatingNew">
+              <div class="relative" x-data="{ moveOpen: false }">
+                <button @click="moveOpen = !moveOpen"
+                        class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
+                               bg-surface-container text-on-surface-variant hover:text-primary transition-colors"
+                        title="Move to topic">
+                  <span class="material-symbols-outlined text-sm">drive_file_move</span>
+                </button>
+                <div x-show="moveOpen" @click.outside="moveOpen = false" x-transition x-cloak
+                     class="absolute right-0 top-full mt-1 bg-surface-container rounded-lg shadow-xl py-1 z-50 min-w-[180px]"
+                     style="border: 1px solid rgba(70, 72, 77, 0.3); max-height: 240px; overflow-y: auto;">
+                  <template x-for="topic in topics" :key="topic.path">
+                    <button @click="moveNoteTo(selectedNote, topic.path); moveOpen = false"
+                            class="w-full text-left px-4 py-2 text-xs hover:bg-surface-container-high transition-colors flex items-center gap-2">
+                      <span class="material-symbols-outlined text-xs text-tertiary">folder</span>
+                      <span x-text="topic.title" class="truncate"></span>
+                    </button>
+                  </template>
+                  <div x-show="topics.length === 0" class="px-4 py-2 text-xs text-on-surface-variant/50">
+                    No topics yet
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- Reclassify (send back to organizer) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="reclassifyNote(selectedNote)"
+                      class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
+                             bg-surface-container text-on-surface-variant hover:text-tertiary transition-colors"
+                      title="Re-classify with AI">
+                <span class="material-symbols-outlined text-sm">auto_fix_high</span>
+              </button>
+            </template>
+
+            <!-- AI enhance dropdown -->
+            <div x-show="editing || creatingNew" class="relative" x-data="{ aiOpen: false }">
+              <button @click="aiOpen = !aiOpen"
+                      :disabled="enhancing"
+                      class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                             bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors
+                             disabled:opacity-50">
+                <span class="material-symbols-outlined text-sm" x-text="enhancing ? 'progress_activity' : 'auto_awesome'"></span>
+                <span x-text="enhancing ? 'Working...' : 'AI'"></span>
+              </button>
+              <div x-show="aiOpen" @click.outside="aiOpen = false" x-transition
+                   class="absolute right-0 top-full mt-1 bg-surface-container rounded-lg shadow-xl py-1 z-50 min-w-[160px]"
+                   style="border: 1px solid rgba(70, 72, 77, 0.3);">
+                <button @click="enhanceNote('improve'); aiOpen = false"
+                        class="w-full text-left px-4 py-2 text-sm hover:bg-surface-container-high transition-colors flex items-center gap-2">
+                  <span class="material-symbols-outlined text-sm">edit_note</span> Improve
+                </button>
+                <button @click="enhanceNote('expand'); aiOpen = false"
+                        class="w-full text-left px-4 py-2 text-sm hover:bg-surface-container-high transition-colors flex items-center gap-2">
+                  <span class="material-symbols-outlined text-sm">expand</span> Expand
+                </button>
+                <button @click="enhanceNote('summarize'); aiOpen = false"
+                        class="w-full text-left px-4 py-2 text-sm hover:bg-surface-container-high transition-colors flex items-center gap-2">
+                  <span class="material-symbols-outlined text-sm">summarize</span> Summarize
+                </button>
+                <button @click="enhanceNote('organize'); aiOpen = false"
+                        class="w-full text-left px-4 py-2 text-sm hover:bg-surface-container-high transition-colors flex items-center gap-2">
+                  <span class="material-symbols-outlined text-sm">reorder</span> Organize
+                </button>
+              </div>
+            </div>
+
+            <!-- Save button -->
+            <button x-show="editing || creatingNew"
+                    @click="saveNote()"
+                    :disabled="saving"
+                    class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-label font-bold uppercase tracking-widest
+                           bg-primary text-on-primary-fixed hover:bg-primary-dim transition-colors
+                           disabled:opacity-50 disabled:cursor-not-allowed">
+              <span class="material-symbols-outlined text-sm" x-text="saving ? 'hourglass_empty' : 'save'"></span>
+              <span x-text="saving ? 'Saving...' : t('common.save')"></span>
+            </button>
+
+            <!-- Download source file (documents only) -->
+            <template x-if="selectedNote && selectedNote.source_file && !creatingNew">
+              <a :href="'/api/knowledge/documents/' + encodeURIComponent(selectedNote.source_file)"
+                 target="_blank" download
+                 class="w-9 h-9 rounded-lg flex items-center justify-center
+                        text-on-surface-variant/40 hover:text-primary hover:bg-primary/10 transition-colors"
+                 title="Download original document">
+                <span class="material-symbols-outlined text-lg">download</span>
+              </a>
+            </template>
+
+            <!-- Vision analysis (scanned documents only) -->
+            <template x-if="selectedNote && selectedNote.source_file && parseTags(selectedNote.tags).includes('scanned') && !creatingNew">
+              <button @click="analyzeWithVision()"
+                      class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
+                             bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors"
+                      title="Analyze with Vision AI">
+                <span class="material-symbols-outlined text-sm">visibility</span>
+                <span>Vision</span>
+              </button>
+            </template>
+
+            <!-- Split note -->
+            <template x-if="selectedNote && !creatingNew && !editing">
+              <button @click="splitNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-tertiary hover:bg-tertiary/10 transition-colors"
+                      title="Split into sub-notes">
+                <span class="material-symbols-outlined text-lg">call_split</span>
+              </button>
+            </template>
+
+            <!-- Archive button (existing note) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="archiveNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-warning hover:bg-warning/10 transition-colors"
+                      title="Archive note">
+                <span class="material-symbols-outlined text-lg">archive</span>
+              </button>
+            </template>
+
+            <!-- Delete button (existing note) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="deleteNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-error hover:bg-error/10 transition-colors"
+                      :title="t('common.delete')"
+                      title="Delete note">
+                <span class="material-symbols-outlined text-lg">delete</span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Note body -->
+        <div class="flex-1 overflow-y-auto px-6 py-6">
+          <div class="max-w-3xl mx-auto">
+
+            <!-- View mode: rendered Markdown -->
+            <div x-show="!editing && !creatingNew"
+                 class="prose-note text-[15px] leading-relaxed text-on-surface font-light animate-fade-in"
+                 x-html="renderMarkdown(noteContent)">
+            </div>
+
+            <!-- Edit mode / New note: raw Markdown textarea -->
+            <div x-show="editing || creatingNew" class="animate-fade-in">
+              <textarea x-model="editContent"
+                        class="edit-textarea w-full min-h-[60vh] bg-surface-container-lowest text-on-surface
+                               text-[15px] leading-relaxed font-body
+                               border border-transparent rounded-xl p-6
+                               focus:border-primary/30 focus:ring-0 focus:outline-none
+                               resize-none placeholder:text-on-surface-variant/30"
+                        placeholder="Write your note in Markdown..."></textarea>
+            </div>
+
+            <!-- Loading state for content -->
+            <div x-show="loadingContent" class="animate-pulse space-y-4 py-4">
+              <div class="h-6 bg-surface-container rounded w-2/3"></div>
+              <div class="h-4 bg-surface-container rounded w-full"></div>
+              <div class="h-4 bg-surface-container rounded w-5/6"></div>
+              <div class="h-4 bg-surface-container rounded w-4/5"></div>
+              <div class="h-4 bg-surface-container rounded w-full"></div>
+              <div class="h-4 bg-surface-container rounded w-3/4"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Empty state: no note selected (desktop only) -->
+      <section x-show="!selectedNote && !creatingNew && !mobileView"
+               class="flex-1 hidden md:flex flex-col items-center justify-center text-center px-8">
+        <div class="w-20 h-20 rounded-full bg-gradient-to-tr from-tertiary/20 to-primary/10 p-[1px] mb-6">
+          <div class="w-full h-full rounded-full bg-surface-container-low flex items-center justify-center relative overflow-hidden">
+            <span class="material-symbols-outlined text-3xl text-tertiary/60">auto_stories</span>
+            <div class="absolute inset-0 bg-tertiary/5 animate-pulse"></div>
+          </div>
+        </div>
+        <h2 class="font-headline text-xl font-bold tracking-tight text-on-surface/60 mb-2">Select a note</h2>
+        <p class="text-on-surface-variant/40 max-w-sm text-sm leading-relaxed">
+          Choose a note from the list to view its content, or create a new one to start capturing knowledge.
+        </p>
+        <button @click="newNote()"
+                class="btn-secondary mt-6">
+          <span class="material-symbols-outlined text-sm">add</span>
+          <span x-text="t('knowledge.create')">Create</span>
+        </button>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+  <script>
+    /**
+     * Render Markdown content to HTML using marked.js.
+     */
+    let _mermaidCounter = 0;
+    // Global note title set for wikilink existence checks (updated by loadNotes)
+    window._knownNoteTitles = new Set();
+
+    function renderMarkdown(text) {
+      if (!text) return '';
+      let html;
+      if (typeof marked !== 'undefined') {
+        html = marked.parse(text);
+      } else {
+        html = text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>');
+      }
+      // Convert Obsidian-style wikilinks [[Note Title]] to clickable internal links
+      // Check existence against loaded notes — unresolved links get different styling
+      html = html.replace(
+        /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
+        (_, target, label) => {
+          const display = label || target;
+          const encoded = encodeURIComponent(target.trim());
+          const exists = window._knownNoteTitles.has(target.trim().toLowerCase());
+          const cls = exists ? 'wikilink' : 'wikilink wikilink-unresolved';
+          const title = exists ? target.trim() : target.trim() + ' (not found — click to create)';
+          return `<a href="#" class="${cls}" data-note="${encoded}" title="${title}">${display}</a>`;
+        }
+      );
+
+      // Convert mermaid code blocks to renderable containers
+      html = html.replace(
+        /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+        (_, code) => {
+          const id = 'mermaid-' + (++_mermaidCounter);
+          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+        }
+      );
+      // Trigger mermaid rendering after DOM update
+      if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
+        setTimeout(() => mermaid.run(), 50);
+      }
+      return html;
+    }
+
+    /**
+     * Knowledge Base Alpine.js component.
+     * Manages note list, search, selection, editing, and creation.
+     */
+    function parseTags(tags) {
+      if (Array.isArray(tags)) return tags;
+      if (typeof tags === 'string') {
+        try { return JSON.parse(tags); } catch { return []; }
+      }
+      return [];
+    }
+
+    function knowledgeApp() {
+      let searchTimeout = null;
+
+      return {
+        notes: [],
+        filteredNotes: [],
+        searchQuery: '',
+        selectedNote: null,
+        noteContent: '',
+        editing: false,
+        editContent: '',
+        loading: true,
+        loadingContent: false,
+        saving: false,
+        enhancing: false,
+        creatingNew: false,
+        newTitle: '',
+        mobileView: false,
+        viewMode: 'topics',
+        topics: [],
+        topicChildren: [],
+        expandedTopic: null,
+        uncategorizedNotes: [],
+        draggedNote: null,
+        dragOverTopic: null,
+        overdueTasks: [],
+        openTasks: [],
+        doneTasks: [],
+
+        async initKnowledge() {
+          this.checkMobileView();
+          window.addEventListener('resize', () => this.checkMobileView());
+          // Reload topics + notes when the organizer inbox changes something
+          window.addEventListener('mycelos:knowledge-changed', async () => {
+            await this.loadNotes();
+            await this.loadTopics();
+          });
+          await this.loadNotes();
+          await this.loadTopics();
+
+          // Organizer inbox: open a note when clicked in the suggestion list
+          window.addEventListener('mycelos:open-note', async (e) => {
+            const path = e.detail && e.detail.path;
+            if (path) {
+              const match = this.notes.find(n => n.path === path);
+              if (match) {
+                await this.selectNote(match);
+              } else {
+                // Note might not be in the current list (e.g., different filter)
+                await this.selectNote({ path, title: path.split('/').pop() });
+              }
+            }
+          });
+
+          // Open note from URL ?note=... (e.g., from chat link or wikilink)
+          const noteParam = new URLSearchParams(window.location.search).get('note');
+          if (noteParam) {
+            await this.navigateToNote(encodeURIComponent(noteParam));
+          }
+
+          // Handle browser Back/Forward buttons
+          window.addEventListener('popstate', (e) => {
+            if (e.state && e.state.note) {
+              // Find note directly by path, skip history push
+              const target = e.state.note.toLowerCase();
+              const match = this.notes.find(n =>
+                (n.path || '').toLowerCase() === target ||
+                (n.title || '').toLowerCase() === target
+              );
+              if (match) this.selectNote(match, true);
+            } else {
+              this.selectedNote = null;
+              this.noteContent = '';
+              history.replaceState({}, '', '/pages/knowledge.html');
+            }
+          });
+        },
+
+        /**
+         * Detect mobile viewport (below md breakpoint).
+         */
+        checkMobileView() {
+          this.mobileView = window.innerWidth < 768;
+        },
+
+        /**
+         * Fetch all notes from the API.
+         */
+        async enhanceNote(action) {
+          if (!this.editContent.trim()) return;
+          this.enhancing = true;
+          try {
+            const res = await fetch('/api/knowledge/enhance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: this.editContent, action }),
+            });
+            const data = await res.json();
+            if (data.error) {
+              alert('AI error: ' + data.error);
+            } else if (data.content) {
+              this.editContent = data.content;
+            }
+          } catch (e) {
+            alert('AI enhance failed: ' + e.message);
+          } finally {
+            this.enhancing = false;
+          }
+        },
+
+        startNewNote(title) {
+          this.creatingNew = true;
+          this.editing = true;
+          this.selectedNote = null;
+          this.editTitle = title || '';
+          this.editContent = '# ' + (title || 'New Note') + '\n\n';
+          this.noteContent = '';
+        },
+
+        async navigateToNote(title) {
+          const target = decodeURIComponent(title).toLowerCase().trim();
+
+          // 1. Exact title match (strongest)
+          let match = this.notes.find(n => (n.title || '').toLowerCase() === target);
+
+          // 2. Exact path match
+          if (!match) {
+            match = this.notes.find(n => (n.path || '').toLowerCase() === target);
+          }
+
+          // 3. Title slug match (e.g., "AWS IAM" matches path ending "aws-iam-2")
+          if (!match) {
+            const slug = target.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+            match = this.notes.find(n => {
+              const pathEnd = (n.path || '').split('/').pop().toLowerCase();
+              return pathEnd === slug || pathEnd.startsWith(slug + '-');
+            });
+          }
+
+          if (match) {
+            this.selectNote(match);
+          } else {
+            // 4. Fallback: API search for exact title
+            try {
+              const data = await MycelosAPI.get('/api/knowledge/notes?search=' + encodeURIComponent(target));
+              const results = Array.isArray(data) ? data : (data.notes || []);
+              // Only accept exact title match — don't jump to random results
+              const exact = results.find(r => (r.title || '').toLowerCase() === target);
+              if (exact) {
+                this.selectNote(exact);
+              } else if (confirm('Note "' + target + '" not found. Create it?')) {
+                this.startNewNote(target);
+              }
+            } catch {
+              if (confirm('Note "' + target + '" not found. Create it?')) {
+                this.startNewNote(target);
+              }
+            }
+          }
+        },
+
+        buildBreadcrumb(note) {
+          if (!note) return [];
+          // Use parent_path if set; otherwise derive from the note's own
+          // path prefix (e.g. "tasks/foo" → breadcrumb shows "Tasks").
+          let source = note.parent_path;
+          if (!source && note.path && note.path.includes('/')) {
+            source = note.path.rsplit ? note.path.split('/').slice(0, -1).join('/')
+                                      : note.path.substring(0, note.path.lastIndexOf('/'));
+          }
+          if (!source) return [];
+          const parts = source.split('/');
+          const segments = [];
+          let cumulative = '';
+          for (const part of parts) {
+            if (!part) continue;
+            cumulative = cumulative ? cumulative + '/' + part : part;
+            segments.push({
+              path: cumulative,
+              label: part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '),
+            });
+          }
+          return segments;
+        },
+        navigateToBreadcrumb(topicPath) {
+          this.viewMode = 'topics';
+          this.loadTopics();
+          this.$nextTick(() => this.toggleTopic({ path: topicPath }));
+        },
+
+        async moveNoteTo(note, topicPath) {
+          if (!note || !topicPath) return;
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(note.path), {
+              parent_path: topicPath,
+            });
+            await this.loadNotes();
+            await this.loadTopics();
+            // Re-select to refresh breadcrumb
+            const updated = this.notes.find(n => n.path === note.path);
+            if (updated) this.selectNote(updated);
+          } catch (e) {
+            console.warn('Move failed:', e);
+          }
+        },
+
+        async reclassifyNote(note) {
+          if (!note) return;
+          try {
+            // Flip back to pending so the organizer picks it up
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(note.path), {
+              organizer_state: 'pending',
+            });
+            // Trigger immediate organizer run
+            await fetch('/api/organizer/run', { method: 'POST' });
+            await this.loadNotes();
+            await this.loadTopics();
+            // Re-select to refresh breadcrumb
+            const updated = this.notes.find(n => n.path === note.path);
+            if (updated) this.selectNote(updated);
+          } catch (e) {
+            console.warn('Reclassify failed:', e);
+          }
+        },
+
+        async createTopic(parent) {
+          const parentLabel = parent ? parent.split('/').pop() : '';
+          const hint = parent ? `Sub-topic under ${parentLabel}:` : 'Topic name:';
+          const name = prompt(hint);
+          if (!name || !name.trim()) return;
+          try {
+            await fetch('/api/knowledge/topics', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: name.trim(), parent: parent || undefined }),
+            });
+            await this.loadNotes();
+            await this.loadTopics();
+          } catch (e) { /* ignore */ }
+        },
+
+        async importVault(file) {
+          if (!file) return;
+          const form = new FormData();
+          form.append('file', file);
+          try {
+            this.loading = true;
+            const res = await fetch('/api/knowledge/import', { method: 'POST', body: form });
+            const data = await res.json();
+            if (data.error) {
+              alert('Import error: ' + data.error);
+            } else {
+              alert(`Imported ${data.imported} notes` + (data.skipped ? `, ${data.skipped} skipped` : ''));
+              await this.loadNotes();
+              await this.loadTopics();
+            }
+          } catch (e) {
+            alert('Import failed: ' + e.message);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async loadNotes() {
+          this.loading = true;
+          try {
+            const data = await MycelosAPI.get('/api/knowledge/notes');
+            this.notes = Array.isArray(data) ? data : (data.notes || []);
+            this.filteredNotes = this.notes;
+            // Build title index for wikilink existence checks
+            window._knownNoteTitles = new Set(
+              this.notes.map(n => (n.title || '').toLowerCase())
+            );
+          } catch (e) {
+            console.warn('Could not load notes:', e.message);
+            this.notes = [];
+            this.filteredNotes = [];
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        /**
+         * Debounced search: waits 300ms after last keystroke.
+         */
+        debouncedSearch() {
+          if (searchTimeout) clearTimeout(searchTimeout);
+          searchTimeout = setTimeout(() => this.searchNotes(), 300);
+        },
+
+        /**
+         * Execute search against the API or filter locally.
+         */
+        async searchNotes() {
+          const query = this.searchQuery.trim();
+          if (!query) {
+            this.filteredNotes = this.notes;
+            return;
+          }
+          try {
+            const data = await MycelosAPI.get('/api/knowledge/notes?query=' + encodeURIComponent(query));
+            this.filteredNotes = Array.isArray(data) ? data : (data.notes || []);
+          } catch (e) {
+            // Fallback: client-side filter by title
+            const q = query.toLowerCase();
+            this.filteredNotes = this.notes.filter(n =>
+              (n.title || '').toLowerCase().includes(q) ||
+              (n.preview || '').toLowerCase().includes(q) ||
+              (n.tags || []).some(t => t.toLowerCase().includes(q))
+            );
+          }
+        },
+
+        /**
+         * Select a note and load its full content.
+         */
+        async selectNote(note, skipHistory) {
+          this.creatingNew = false;
+          this.editing = false;
+          this.selectedNote = note;
+          this.noteContent = '';
+          this.editContent = '';
+          this.loadingContent = true;
+
+          // Track in browser history (unless called from popstate)
+          if (!skipHistory) {
+            const noteId = note.path || note.title || '';
+            history.pushState({ note: noteId }, '', '?note=' + encodeURIComponent(noteId));
+          }
+
+          try {
+            const data = await MycelosAPI.get('/api/knowledge/notes/' + encodeURIComponent(note.path));
+            this.noteContent = data.content || '';
+            this.editContent = this.noteContent;
+            // Merge detail-only metadata (reminder, remind_at, remind_via)
+            // into selectedNote so the badges below the title can render.
+            // List view already provides type/status/due, but remind_at is
+            // only exposed via the detail endpoint.
+            this.selectedNote = {
+              ...this.selectedNote,
+              type: data.type ?? this.selectedNote.type,
+              status: data.status ?? this.selectedNote.status,
+              due: data.due ?? this.selectedNote.due,
+              reminder: data.reminder ?? this.selectedNote.reminder,
+              remind_at: data.remind_at ?? null,
+              remind_via: data.remind_via ?? null,
+            };
+          } catch (e) {
+            console.warn('Could not load note content:', e.message);
+            this.noteContent = '*Failed to load note content.*';
+          } finally {
+            this.loadingContent = false;
+          }
+        },
+
+        /**
+         * Build a hover tooltip for task list rows. Surfaces due date and
+         * reminder status (with remind_at if present) so users get the
+         * context without having to open the detail pane. remind_at is
+         * only loaded on detail, so list-level tooltips fall back to due.
+         */
+        taskTooltip(task) {
+          if (!task) return '';
+          const parts = [task.title || ''];
+          if (task.due) {
+            try {
+              const d = new Date(task.due);
+              if (!isNaN(d.getTime())) {
+                parts.push('Due: ' + d.toLocaleDateString(undefined, {
+                  year: 'numeric', month: 'short', day: 'numeric'
+                }));
+              }
+            } catch { /* ignore */ }
+          }
+          if (task.reminder) {
+            if (task.remind_at) {
+              parts.push('Reminder: ' + this.formatRemindAt(task.remind_at));
+            } else {
+              parts.push('Reminder on');
+            }
+          }
+          return parts.filter(Boolean).join(' · ');
+        },
+
+        /**
+         * Convert a stored ISO-UTC datetime to the local format expected
+         * by <input type="datetime-local">: "YYYY-MM-DDTHH:mm". If no
+         * value is set, default to the due date at 09:00 local.
+         */
+        remindAtForInput(iso) {
+          try {
+            const base = iso ? new Date(iso) : null;
+            let d;
+            if (base && !isNaN(base.getTime())) {
+              d = base;
+            } else if (this.selectedNote && this.selectedNote.due) {
+              d = new Date(this.selectedNote.due);
+              if (isNaN(d.getTime())) d = new Date();
+              d.setHours(9, 0, 0, 0);
+            } else {
+              d = new Date();
+              d.setHours(9, 0, 0, 0);
+            }
+            const pad = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '-'
+              + pad(d.getMonth() + 1) + '-'
+              + pad(d.getDate()) + 'T'
+              + pad(d.getHours()) + ':'
+              + pad(d.getMinutes());
+          } catch {
+            return '';
+          }
+        },
+
+        /**
+         * Persist a new remind_at datetime via the existing /remind endpoint
+         * and reflect the change locally so the badge updates immediately.
+         * Empty input clears remind_at (falls back to "any time on due day").
+         */
+        async saveRemindAt(localStr) {
+          if (!this.selectedNote || !this.selectedNote.path) return;
+          const due = this.selectedNote.due;
+          if (!due) return;
+          // datetime-local is a naive local timestamp — convert to an ISO
+          // string in UTC so the backend stores a single canonical value.
+          let remindAtIso = null;
+          if (localStr) {
+            const d = new Date(localStr);
+            if (!isNaN(d.getTime())) remindAtIso = d.toISOString();
+          }
+          try {
+            const res = await fetch(
+              '/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path) + '/remind',
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ when: due, remind_at: remindAtIso }),
+              }
+            );
+            if (!res.ok) throw new Error('failed');
+            this.selectedNote = { ...this.selectedNote, remind_at: remindAtIso, reminder: true };
+          } catch (e) {
+            console.warn('saveRemindAt failed:', e);
+          }
+        },
+
+        /**
+         * Format an ISO datetime for the reminder badge: "Apr 12, 09:00"
+         * or just the date if time is 00:00 (midnight = "whole day").
+         */
+        formatRemindAt(iso) {
+          if (!iso) return '';
+          try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return String(iso);
+            const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            const h = d.getHours();
+            const m = d.getMinutes();
+            if (h === 0 && m === 0) return dateStr;
+            const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+            return dateStr + ', ' + timeStr;
+          } catch {
+            return String(iso);
+          }
+        },
+
+        /**
+         * Deselect the current note (used for mobile back navigation).
+         */
+        deselectNote() {
+          this.selectedNote = null;
+          this.creatingNew = false;
+          this.editing = false;
+          this.noteContent = '';
+          this.editContent = '';
+        },
+
+        /**
+         * Toggle between edit and view mode.
+         */
+        toggleEdit() {
+          if (this.editing) {
+            // Switching to view: update rendered content from edit buffer
+            this.noteContent = this.editContent;
+          }
+          this.editing = !this.editing;
+        },
+
+        /**
+         * Start creating a new note.
+         */
+        newNote() {
+          this.selectedNote = null;
+          this.creatingNew = true;
+          this.editing = false;
+          this.newTitle = '';
+          this.editContent = '';
+          this.noteContent = '';
+        },
+
+        /**
+         * Save the current note (create or update).
+         */
+        async saveNote() {
+          if (this.saving) return;
+          this.saving = true;
+
+          try {
+            if (this.creatingNew) {
+              // Create new note
+              const data = await MycelosAPI.post('/api/knowledge/notes', {
+                title: this.newTitle.trim() || 'Untitled',
+                content: this.editContent,
+              });
+              // Reload notes and select the new one
+              await this.loadNotes();
+              const created = this.notes.find(n => n.path === (data.path || data.note_path));
+              if (created) {
+                this.creatingNew = false;
+                await this.selectNote(created);
+              } else {
+                this.creatingNew = false;
+                this.selectedNote = null;
+              }
+            } else if (this.selectedNote) {
+              // Update existing note
+              await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path), {
+                content: this.editContent,
+              });
+              this.noteContent = this.editContent;
+              this.editing = false;
+              // Refresh note list to update preview
+              await this.loadNotes();
+            }
+          } catch (e) {
+            console.warn('Could not save note:', e.message);
+          } finally {
+            this.saving = false;
+          }
+        },
+
+        async loadTopics() {
+          try {
+            this.topics = await MycelosAPI.get('/api/knowledge/topics');
+            // Uncategorized = notes whose parent_path is empty, or is a
+            // bucket name (notes/tasks) rather than an actual topic path.
+            const topicPaths = new Set(this.topics.map(t => t.path));
+            this.uncategorizedNotes = this.notes.filter(n =>
+              n.type !== 'topic' && !topicPaths.has(n.parent_path)
+            );
+          } catch (e) {
+            this.topics = [];
+          }
+        },
+
+        async toggleTopic(topic) {
+          if (this.expandedTopic === topic.path) {
+            this.expandedTopic = null;
+            this.topicChildren = [];
+            return;
+          }
+          this.expandedTopic = topic.path;
+          try {
+            this.topicChildren = await MycelosAPI.get('/api/knowledge/topics/' + encodeURIComponent(topic.path) + '/children');
+          } catch (e) {
+            this.topicChildren = [];
+          }
+        },
+
+        showUncategorized() {
+          this.expandedTopic = '__uncategorized';
+          const topicPaths = new Set(this.topics.map(t => t.path));
+          this.uncategorizedNotes = this.notes.filter(n =>
+            n.type !== 'topic' && !topicPaths.has(n.parent_path)
+          );
+        },
+
+        async renameTopic(topic, newName) {
+          if (!newName.trim() || newName.trim() === topic.title) return;
+          try {
+            const res = await MycelosAPI.post(
+              '/api/knowledge/topics/' + encodeURIComponent(topic.path) + '/rename',
+              { name: newName.trim() }
+            );
+            if (res.new_path) {
+              await this.loadTopics();
+              window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+            }
+          } catch (e) {
+            console.warn('Rename failed:', e.message);
+          }
+        },
+
+        async loadTasks() {
+          const allTasks = this.notes.filter(n => n.type === 'task');
+          const now = new Date().toISOString().slice(0, 10);
+          this.overdueTasks = allTasks.filter(t => t.due && t.due < now && t.status !== 'done');
+          this.openTasks = allTasks.filter(t => t.status !== 'done' && !(t.due && t.due < now));
+          this.doneTasks = allTasks.filter(t => t.status === 'done');
+        },
+
+        async toggleDone(task) {
+          const newStatus = task.status === 'done' ? 'open' : 'done';
+          try {
+            if (newStatus === 'done') {
+              await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(task.path) + '/done');
+            } else {
+              await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(task.path), { status: 'open' });
+            }
+            task.status = newStatus;
+            if (this.viewMode === 'tasks') this.loadTasks();
+            if (this.expandedTopic) {
+              const tp = this.expandedTopic;
+              await this.toggleTopic({ path: tp });
+              await this.toggleTopic({ path: tp });
+            }
+          } catch (e) { console.warn('Toggle done failed:', e.message); }
+        },
+
+        async toggleReminder(note) {
+          if (!note.due) return;
+          try {
+            await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(note.path) + '/remind', { when: note.due });
+            note.reminder = !note.reminder;
+          } catch (e) { console.warn('Toggle reminder failed:', e.message); }
+        },
+
+        async deleteNote() {
+          if (!this.selectedNote) return;
+          if (!confirm('Delete this note? This cannot be undone.')) return;
+
+          try {
+            await MycelosAPI.delete('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path));
+            this.selectedNote = null;
+            this.noteContent = '';
+            this.editing = false;
+            await this.loadNotes();
+          } catch (e) {
+            console.warn('Could not delete note:', e.message);
+          }
+        },
+
+        async toggleTaskStatus() {
+          if (!this.selectedNote) return;
+          const newStatus = this.selectedNote.status === 'done' ? 'open' : 'done';
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path),
+              { status: newStatus });
+            this.selectedNote.status = newStatus;
+            const inList = this.notes.find(n => n.path === this.selectedNote.path);
+            if (inList) inList.status = newStatus;
+          } catch (e) {
+            console.warn('Status toggle failed:', e.message);
+          }
+        },
+
+        async archiveNote() {
+          if (!this.selectedNote) return;
+          if (!confirm('Archive this note?')) return;
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path),
+              { archive: true });
+            this.notes = this.notes.filter(n => n.path !== this.selectedNote.path);
+            this.selectedNote = null;
+            this.noteContent = '';
+            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+          } catch (e) {
+            console.warn('Archive failed:', e.message);
+          }
+        },
+
+        async analyzeWithVision() {
+          if (!this.selectedNote) return;
+          if (!confirm('Analyze this document with Vision AI?')) return;
+          try {
+            const res = await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path) + '/vision');
+            if (res.status === 'analyzed') {
+              await this.selectNote(this.selectedNote);
+            }
+          } catch (e) {
+            console.warn('Vision analysis failed:', e.message);
+          }
+        },
+
+        async splitNote() {
+          if (!this.selectedNote) return;
+          try {
+            const proposal = await MycelosAPI.post(
+              '/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path) + '/split',
+              { confirm: false }
+            );
+            if (proposal.status === 'proposed' && proposal.sections) {
+              const sectionList = proposal.sections.map((s, i) => `${i+1}. ${s}`).join('\n');
+              if (confirm(`Split into ${proposal.sections.length} sections?\n\n${sectionList}`)) {
+                const result = await MycelosAPI.post(
+                  '/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path) + '/split',
+                  { confirm: true }
+                );
+                if (result.status === 'split') {
+                  await this.loadNotes();
+                  await this.selectNote(this.selectedNote);
+                  window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Split failed:', e.message);
+          }
+        },
+
+        async removeTag(index) {
+          if (!this.selectedNote) return;
+          const tags = parseTags(this.selectedNote.tags).filter((_, i) => i !== index);
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path),
+              { tags });
+            this.selectedNote.tags = tags;
+            const inList = this.notes.find(n => n.path === this.selectedNote.path);
+            if (inList) inList.tags = tags;
+          } catch (e) {
+            console.warn('Remove tag failed:', e.message);
+          }
+        },
+
+        async addTag(tag) {
+          if (!this.selectedNote || !tag) return;
+          const tags = [...parseTags(this.selectedNote.tags), tag];
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path),
+              { tags });
+            this.selectedNote.tags = tags;
+            const inList = this.notes.find(n => n.path === this.selectedNote.path);
+            if (inList) inList.tags = tags;
+          } catch (e) {
+            console.warn('Add tag failed:', e.message);
+          }
+        },
+
+        async setPriority(level) {
+          if (!this.selectedNote) return;
+          try {
+            await MycelosAPI.put('/api/knowledge/notes/' + encodeURIComponent(this.selectedNote.path),
+              { priority: level });
+            this.selectedNote.priority = level;
+            const inList = this.notes.find(n => n.path === this.selectedNote.path);
+            if (inList) inList.priority = level;
+          } catch (e) {
+            console.warn('Set priority failed:', e.message);
+          }
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

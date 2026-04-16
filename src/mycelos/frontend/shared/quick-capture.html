@@ -1,0 +1,261 @@
+<!-- Quick Capture modal — injected by layout.js into #quick-capture container.
+     Opens via global Cmd+K / Ctrl+K. Plain JS (no Alpine) to avoid re-init loops. -->
+<div id="quick-capture-root"
+     style="display:none; position:fixed; inset:0; z-index:9999;
+            background:rgba(10,12,20,0.6);
+            align-items:flex-start; justify-content:center; padding-top:15vh">
+  <div style="background:#1a1d24; color:#fff; width:min(560px,90vw);
+              border:1px solid rgba(255,255,255,0.08); border-radius:12px;
+              padding:20px; box-shadow:0 24px 64px -16px rgba(0,0,0,0.7)">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+      <div id="quick-capture-label"
+           style="font-size:11px;color:#8b96aa;text-transform:uppercase;
+                  letter-spacing:1px">Quick Capture</div>
+      <div style="display:flex; gap:4px; align-items:center">
+        <!-- Expand/collapse toggle -->
+        <button id="quick-capture-expand-btn" type="button"
+                style="background:rgba(255,255,255,0.06);color:#8b96aa;
+                       border:none;border-radius:6px;padding:2px 6px;
+                       font-size:11px;cursor:pointer;display:flex;align-items:center;gap:2px"
+                title="Expand">
+          <span class="material-symbols-outlined" style="font-size:14px">unfold_more</span>
+        </button>
+        <!-- AI enhance button -->
+        <button id="quick-capture-ai-btn" type="button"
+                style="background:rgba(106,214,255,0.12);color:#6ad6ff;
+                       border:none;border-radius:6px;padding:2px 8px;
+                       font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"
+                title="AI improve">
+          <span class="material-symbols-outlined" style="font-size:14px">auto_awesome</span>
+          <span>AI</span>
+        </button>
+      </div>
+    </div>
+    <!-- Single-line input (default) -->
+    <input id="quick-capture-input" type="text"
+           style="width:100%;background:transparent;border:none;font-size:18px;
+                  color:#fff;padding:0;outline:none"
+           placeholder="Capture a thought, task, or reminder…" />
+    <!-- Multi-line textarea (expanded mode, hidden by default) -->
+    <textarea id="quick-capture-textarea"
+              style="display:none;width:100%;background:transparent;border:none;
+                     font-size:16px;color:#fff;padding:0;outline:none;
+                     resize:none;min-height:120px;line-height:1.5;
+                     font-family:inherit"
+              placeholder="Write more…"></textarea>
+    <div id="quick-capture-chips"
+         style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap"></div>
+    <!-- AI status line -->
+    <div id="quick-capture-ai-status"
+         style="display:none;margin-top:8px;font-size:11px;color:#6ad6ff"></div>
+    <div id="quick-capture-hint"
+         style="margin-top:14px;font-size:10px;color:#8b96aa">Esc to cancel · Enter to save</div>
+  </div>
+</div>
+<div id="quick-capture-toast"
+     style="display:none;position:fixed;right:24px;bottom:24px;
+            background:#2a2e3a;color:#fff;padding:12px 16px;border-radius:8px;
+            border:1px solid rgba(106,214,255,0.3);z-index:10000"></div>
+
+<script>
+(function() {
+  if (window.__quickCaptureWired) return;
+  window.__quickCaptureWired = true;
+
+  var root = document.getElementById('quick-capture-root');
+  var input = document.getElementById('quick-capture-input');
+  var textarea = document.getElementById('quick-capture-textarea');
+  var expandBtn = document.getElementById('quick-capture-expand-btn');
+  var aiBtn = document.getElementById('quick-capture-ai-btn');
+  var aiStatus = document.getElementById('quick-capture-ai-status');
+  var chips = document.getElementById('quick-capture-chips');
+  var hint = document.getElementById('quick-capture-hint');
+  var label = document.getElementById('quick-capture-label');
+  var toast = document.getElementById('quick-capture-toast');
+  if (!root || !input || !textarea || !chips) return;
+
+  var expanded = false;
+  var aiWorking = false;
+
+  // Localize static strings
+  if (window.t) {
+    try {
+      label.textContent = window.t('quick_capture.placeholder');
+      input.setAttribute('placeholder', window.t('quick_capture.placeholder'));
+      hint.textContent = window.t('quick_capture.esc_hint');
+    } catch (e) { /* fall through to English defaults */ }
+  }
+
+  var parseNoteText = null;
+  import('/shared/parse-note.js').then(function(mod) {
+    parseNoteText = mod.parseNoteText;
+  }).catch(function(e) {
+    console.warn('[quick-capture] parse-note.js failed to load', e);
+  });
+
+  // --- Expand / Collapse ---
+  function setExpanded(val) {
+    expanded = val;
+    if (expanded) {
+      textarea.value = input.value;
+      input.style.display = 'none';
+      textarea.style.display = 'block';
+      textarea.focus();
+      expandBtn.querySelector('span').textContent = 'unfold_less';
+      expandBtn.title = 'Collapse';
+    } else {
+      // Take first line back to input, keep rest in textarea value
+      var lines = textarea.value.split('\n');
+      input.value = lines[0] || '';
+      input.style.display = 'block';
+      textarea.style.display = 'none';
+      input.focus();
+      expandBtn.querySelector('span').textContent = 'unfold_more';
+      expandBtn.title = 'Expand';
+    }
+    reparse();
+  }
+  expandBtn.addEventListener('click', function() { setExpanded(!expanded); });
+
+  // --- AI Enhance ---
+  aiBtn.addEventListener('click', async function() {
+    if (aiWorking) return;
+    var text = expanded ? textarea.value.trim() : input.value.trim();
+    if (!text) return;
+
+    aiWorking = true;
+    aiStatus.style.display = 'block';
+    aiStatus.textContent = 'Improving…';
+    aiBtn.style.opacity = '0.5';
+
+    try {
+      var resp = await fetch('/api/knowledge/enhance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, action: 'improve' }),
+      });
+      if (!resp.ok) throw new Error('enhance failed');
+      var data = await resp.json();
+      var improved = data.content || text;
+
+      if (expanded) {
+        textarea.value = improved;
+      } else {
+        // If the improved text is multi-line, auto-expand
+        if (improved.includes('\n')) {
+          input.value = '';
+          textarea.value = improved;
+          setExpanded(true);
+        } else {
+          input.value = improved;
+        }
+      }
+      aiStatus.textContent = 'Improved';
+      setTimeout(function() { aiStatus.style.display = 'none'; }, 2000);
+    } catch (e) {
+      aiStatus.textContent = 'Failed';
+      setTimeout(function() { aiStatus.style.display = 'none'; }, 2000);
+    }
+    aiWorking = false;
+    aiBtn.style.opacity = '1';
+    reparse();
+  });
+
+  // --- Core functions ---
+  function getFullText() {
+    if (expanded) return textarea.value;
+    return input.value;
+  }
+
+  function openModal() {
+    input.value = '';
+    textarea.value = '';
+    chips.innerHTML = '';
+    aiStatus.style.display = 'none';
+    setExpanded(false);
+    root.style.display = 'flex';
+    setTimeout(function() { input.focus(); }, 0);
+  }
+  function closeModal() {
+    root.style.display = 'none';
+  }
+  function renderChips(parsed) {
+    chips.innerHTML = '';
+    function chip(text) {
+      var el = document.createElement('span');
+      el.textContent = text;
+      el.style.cssText = 'background:rgba(106,214,255,0.15);color:#6ad6ff;' +
+                         'padding:4px 8px;border-radius:6px;font-size:11px';
+      chips.appendChild(el);
+    }
+    if (parsed.type === 'task') chip('task');
+    if (parsed.reminder) chip('reminder');
+    if (parsed.due) {
+      try {
+        var d = new Date(parsed.due);
+        chip(d.toLocaleString(undefined, {
+          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        }));
+      } catch (e) { chip(parsed.due); }
+    }
+    (parsed.tags || []).forEach(function(tag) { chip('#' + tag); });
+  }
+  function reparse() {
+    if (!parseNoteText) return;
+    try {
+      var parsed = parseNoteText(getFullText(), new Date());
+      renderChips(parsed);
+    } catch (e) { /* ignore parse errors while typing */ }
+  }
+  function showToast(message) {
+    toast.textContent = message;
+    toast.style.display = 'block';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function() { toast.style.display = 'none'; }, 6000);
+  }
+  async function save() {
+    var text = getFullText().trim();
+    if (!text) { closeModal(); return; }
+    var parts = text.split('\n');
+    var title = parts.shift();
+    var content = parts.join('\n');
+    try {
+      var resp = await fetch('/api/knowledge/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, content: content }),
+      });
+      if (!resp.ok) throw new Error('save failed');
+      var data = await resp.json();
+      var prefix = (window.t ? window.t('quick_capture.saved_to') : 'Saved to');
+      showToast(prefix + ' ' + (data.path || ''));
+    } catch (e) {
+      showToast(window.t ? window.t('quick_capture.error') : 'Could not save note');
+    }
+    closeModal();
+  }
+
+  // Global hotkey (registered exactly once via the __quickCaptureWired guard)
+  window.addEventListener('keydown', function(e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      openModal();
+    } else if (e.key === 'Escape' && root.style.display !== 'none') {
+      closeModal();
+    }
+  });
+
+  input.addEventListener('input', reparse);
+  textarea.addEventListener('input', reparse);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
+  });
+  textarea.addEventListener('keydown', function(e) {
+    // Cmd/Ctrl+Enter saves from expanded mode
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+  });
+  root.addEventListener('click', function(e) {
+    if (e.target === root) closeModal();
+  });
+})();
+</script>

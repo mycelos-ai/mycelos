@@ -1,0 +1,40 @@
+name: topic-monitor
+version: 2
+description: "Monitor the web for mentions of a topic and save findings"
+goal: "Search for a topic online, summarize new mentions, save to knowledge base"
+
+inputs:
+  - name: topic
+    type: string
+    required: true
+    description: "The topic to monitor (e.g., 'Mycelos', 'your company name')"
+
+plan: |
+  You are the Topic Monitor Agent. Your job:
+  1. Call search_web with the topic query
+  2. Call search_news with the topic query
+  3. For each interesting result, summarize it in 1-2 sentences
+  4. Call note_write to save the summary as a knowledge note
+  5. Report: "Found X mentions of [topic]. Saved to knowledge base."
+
+  If no new results: "No new mentions of [topic] found."
+  Respond in the user's language.
+model: haiku
+allowed_tools:
+  - search_web
+  - search_news
+  - note_write
+scope:
+  - search.web
+  - search.news
+  - knowledge.write
+requires:
+  connectors: []
+  tools: [search_web, note_write]
+
+steps: []
+
+tags:
+  - research
+  - monitoring
+  - knowledge

@@ -1,0 +1,220 @@
+<aside
+  class="fixed left-0 h-full w-64 border-r border-[var(--outline-variant)]/15 bg-[var(--surface)] flex flex-col py-4 px-3 z-40 hidden md:flex overflow-y-auto"
+  x-data="sidebarData()"
+  x-init="loadSidebar()"
+>
+  <!-- Brand (links to chat) -->
+  <a href="/pages/chat.html" class="block mb-4 px-2 no-underline">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg bg-[var(--surface-container)] flex items-center justify-center overflow-hidden">
+        <img alt="Mycelos Logo" class="w-8 h-8 object-contain" src="/assets/logo-transparent.svg">
+      </div>
+      <div>
+        <h1 class="text-[var(--primary)] font-headline font-bold text-lg leading-tight">Mycelos</h1>
+        <p class="text-[var(--on-surface-variant)] text-[10px] font-label uppercase tracking-widest opacity-60" x-text="t('sidebar.tagline')">Neural Mycelium</p>
+      </div>
+    </div>
+  </a>
+
+  <!-- Security status badge -->
+  <div class="mb-3 px-1" x-show="security">
+    <!-- Warning: network exposed without password -->
+    <div x-show="security && security.network_exposed && !security.password_protected"
+         class="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--error)]/10 border border-[var(--error)]/30 text-xs">
+      <span class="material-symbols-outlined text-sm text-[var(--error)] flex-shrink-0 mt-0.5">warning</span>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-[var(--error)] leading-tight">Network exposed</div>
+        <div class="text-[var(--on-surface-variant)] mt-0.5 leading-tight">
+          No password set. Anyone on your network can access Mycelos.
+        </div>
+        <div class="text-[10px] text-[var(--on-surface-variant)]/70 mt-1 font-mono">
+          <span x-text="security.bind_host"></span> · <span x-text="security.client_ip"></span>
+        </div>
+      </div>
+    </div>
+    <!-- OK: network exposed but protected -->
+    <div x-show="security && security.network_exposed && security.password_protected"
+         class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--surface-container)] text-[10px]">
+      <span class="material-symbols-outlined text-sm text-[var(--primary)]">shield_lock</span>
+      <div class="flex-1 text-[var(--on-surface-variant)] leading-tight">
+        Network access · Basic Auth on
+      </div>
+    </div>
+    <!-- OK: localhost only -->
+    <div x-show="security && !security.network_exposed"
+         class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--surface-container)] text-[10px]">
+      <span class="material-symbols-outlined text-sm text-[var(--on-surface-variant)]">home</span>
+      <div class="flex-1 text-[var(--on-surface-variant)] leading-tight">
+        Localhost only
+      </div>
+    </div>
+  </div>
+
+  <!-- + New Chat -->
+  <button
+    type="button"
+    class="btn-primary w-full mb-3"
+    @click="startNewChat()"
+  >
+    <span class="material-symbols-outlined text-sm mr-1">add</span>
+    <span x-text="t('sidebar.new_chat')">New Chat</span>
+  </button>
+
+  <!-- Customer-facing Agents -->
+  <div class="mb-3" x-show="agents.length > 0">
+    <p class="px-2 text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]/60 mb-1"
+       x-text="t('sidebar.agents')">Agents</p>
+    <template x-for="agent in agents" :key="agent.id">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="selectAgentAndStart(agent.id)"
+      >
+        <span class="material-symbols-outlined text-base">smart_toy</span>
+        <span x-text="agent.display_name || agent.name || agent.id"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Active workflow runs -->
+  <div class="mb-3" x-show="activeRuns.length > 0">
+    <p class="px-2 text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]/60 mb-1"
+       x-text="t('sidebar.active_workflows')">Active</p>
+    <template x-for="run in activeRuns" :key="run.id">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="resumeWorkflowRun(run.id)"
+      >
+        <span
+          class="w-2 h-2 rounded-full flex-shrink-0"
+          :class="run.status === 'running' ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'"
+        ></span>
+        <span class="truncate" x-text="run.workflow_name || run.workflow_id"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Scheduled runs -->
+  <div class="mb-3" x-show="scheduledRuns.length > 0">
+    <p class="px-2 text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]/60 mb-1"
+       x-text="t('sidebar.scheduled_workflows')">Scheduled</p>
+    <template x-for="run in scheduledRuns" :key="run.id">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="openScheduledWorkflow(run.workflow_id)"
+      >
+        <span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0"></span>
+        <span class="truncate" x-text="run.workflow_name || run.workflow_id"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Reminders -->
+  <div class="mb-3" x-show="reminders.length > 0">
+    <p class="px-2 text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]/60 mb-1"
+       x-text="t('sidebar.reminders')">Reminders</p>
+    <template x-for="rem in reminders" :key="rem.path">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="openReminder(rem.path)"
+      >
+        <span class="material-symbols-outlined text-base">alarm</span>
+        <span class="truncate" x-text="rem.title"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Recent sessions -->
+  <div class="mb-3" x-show="recentSessions.length > 0">
+    <p class="px-2 text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]/60 mb-1"
+       x-text="t('sidebar.recent_sessions')">Recent</p>
+    <template x-for="session in recentSessions" :key="session.id || session.session_id">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="openSession(session.id || session.session_id)"
+      >
+        <span class="material-symbols-outlined text-base">forum</span>
+        <span class="truncate" x-text="sessionLabel(session)"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Quick Capture hint -->
+  <div class="px-2 py-2 text-[10px] font-label opacity-60"
+       style="color:var(--on-surface-variant)"
+       x-text="t('quick_capture.hint_footer')">Quick Capture</div>
+
+  <!-- Static links -->
+  <nav class="mt-auto pt-3 border-t border-[var(--outline-variant)]/10 space-y-1">
+    <a
+      :href="'/pages/knowledge.html'"
+      :class="activePage === 'knowledge' ? 'sidebar-nav-link active' : 'sidebar-nav-link'"
+      class="sidebar-nav-link"
+    >
+      <span class="material-symbols-outlined">database</span>
+      <span x-text="t('sidebar.knowledge')">Knowledge</span>
+    </a>
+
+    <!-- Admin group (collapsed by default) -->
+    <div x-data="{ open: false }">
+      <button
+        type="button"
+        class="sidebar-nav-link w-full text-left"
+        @click="open = !open"
+      >
+        <span class="material-symbols-outlined">admin_panel_settings</span>
+        <span class="flex-1" x-text="t('sidebar.admin')">Admin</span>
+        <span class="material-symbols-outlined text-sm" x-text="open ? 'expand_less' : 'expand_more'"></span>
+      </button>
+      <div class="ml-6 space-y-1" x-show="open" x-transition>
+        <a :href="'/pages/dashboard.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">dashboard</span>
+          <span x-text="t('sidebar.admin_dashboard')">Dashboard</span>
+        </a>
+        <a :href="'/pages/agents.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">smart_toy</span>
+          <span x-text="t('sidebar.admin_agents')">Agents</span>
+        </a>
+        <a :href="'/pages/workflows.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">account_tree</span>
+          <span x-text="t('sidebar.admin_workflows')">Workflows</span>
+        </a>
+        <a :href="'/pages/doctor.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">health_and_safety</span>
+          <span x-text="t('sidebar.admin_doctor')">Doctor</span>
+        </a>
+        <a :href="'/pages/connectors.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">hub</span>
+          <span x-text="t('sidebar.admin_connectors')">Connectors</span>
+        </a>
+        <a :href="'/pages/settings.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">settings</span>
+          <span x-text="t('sidebar.admin_settings')">Settings</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Footer links -->
+    <div class="pt-3 border-t border-[var(--outline-variant)]/10">
+      <a class="flex items-center gap-3 px-4 py-2 text-[var(--on-surface)]/50 text-sm hover:text-[var(--primary)] transition-colors"
+         href="/pages/docs.html">
+        <span class="material-symbols-outlined text-sm">description</span>
+        <span x-text="t('sidebar.docs')">Docs</span>
+      </a>
+      <a class="flex items-center gap-3 px-4 py-2 text-[var(--on-surface)]/50 text-sm hover:text-[var(--primary)] transition-colors"
+         href="/pages/about.html">
+        <span class="material-symbols-outlined text-sm">info</span>
+        <span x-text="t('sidebar.about')">About</span>
+      </a>
+      <a class="flex items-center gap-3 px-4 py-2 text-[var(--on-surface)]/50 text-sm hover:text-[var(--primary)] transition-colors"
+         href="https://github.com/mycelos-ai/mycelos" target="_blank" rel="noopener">
+        <span class="material-symbols-outlined text-sm">code</span>
+        <span x-text="t('sidebar.github')">GitHub</span>
+      </a>
+    </div>
+  </nav>
+</aside>

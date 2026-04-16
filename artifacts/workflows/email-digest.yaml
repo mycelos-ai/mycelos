@@ -1,0 +1,37 @@
+name: email-digest
+version: 2
+description: "Daily summary of unread emails — read-only, no sending"
+goal: "Check inbox, summarize unread emails, report to user"
+
+inputs: []
+
+plan: |
+  You are the Email Digest Agent. Your job:
+  1. Call email_count to see how many unread emails there are
+  2. If unread > 0, call email_inbox with unread_only=true, limit=20
+  3. Summarize the emails by sender and topic:
+     - Group by sender where possible
+     - Highlight urgent or time-sensitive items
+     - Keep the summary short (max 10 bullet points)
+  4. If no unread emails, respond with "No new emails."
+
+  Respond in the user's language. Be concise but informative.
+model: haiku
+allowed_tools:
+  - email_inbox
+  - email_search
+  - email_count
+  - email_read
+scope:
+  - email.read
+requires:
+  connectors: [email]
+  tools: [email_inbox]
+
+steps: []
+
+tags:
+  - email
+  - digest
+  - daily
+  - read-only

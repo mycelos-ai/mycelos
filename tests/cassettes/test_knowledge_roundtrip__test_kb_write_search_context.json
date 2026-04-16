@@ -1,0 +1,142 @@
+{
+  "entries": {
+    "225a919ade29342401872ea713feebec6676b337f80a090ed1891d32eb56ccba": {
+      "content": "Got it! ✓ **March 30th alpha release deadline** saved to memory.\n\nBy the way, today is April 8th, 2026 — so that deadline has just passed. Was the alpha released on time, or do you need to track a new deadline? Let me know if you'd like me to update this or add a follow-up task.",
+      "cost": 0.007589,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7257
+    },
+    "309272297136e6448c896ced173969ea9177941ea23f66b0595d1948497b3f30": {
+      "content": "According to what you just told me, the project deadline for the alpha release is **March 30th**.\n\nHowever, I should mention that today is April 15th, 2026 — so that deadline has already passed. Was this a past project, or did you mean a different date? Let me know and I can help you capture the correct deadline.\n\nBy the way, I'd still like to know your name so I can properly get to know you! What should I call you?",
+      "cost": 0.007423,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6999
+    },
+    "38074071facbf98798d4b580c388ffd67d0f14a9813b03f46ada9588bf78fe39": {
+      "content": "Got it! I've saved your alpha release deadline for **March 30th**. I'll remember this for future reference. \n\nIs this your current project, or would you like me to create a task with a reminder so you don't miss it?",
+      "cost": 0.007451999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7228
+    },
+    "4783ba1f6eefabe72aab2de63c002c5ce768a2c7fae3e2d56017ea8bc8e0bff2": {
+      "content": "Your **alpha release deadline is March 30th**.\n\n(I just saved that to memory, so I'll remember it going forward.)",
+      "cost": 0.007988,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7864
+    },
+    "5eac22617a7b8a63118bc4d4f36dbf18c448e598a30765b523ace0d99690e6c4": {
+      "content": "I'll remember that important deadline for you.",
+      "cost": 0.007586,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"category\": \"fact\", \"key\": \"project.alpha_deadline\", \"value\": \"March 30th is the deadline for the alpha release.\"}",
+            "name": "memory_write"
+          },
+          "id": "toolu_01EcFc7jq2NqkGZgaB3J2vDC"
+        }
+      ],
+      "total_tokens": 7142
+    },
+    "745d8ffd504c5e54183f418429fe3155aa639fc21cf0b9a2cb5a1964b235e464": {
+      "content": "Based on what you just told me, the alpha release deadline is **March 30th** — which was about two weeks ago (today is April 15th, 2026).\n\nIs the project still ongoing, or has it moved to a new phase? I can help you track the current status or set up a new deadline if needed.",
+      "cost": 0.006516999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6221
+    },
+    "756a7bf3bba18e83fdd971f776ca7bac8cbe10747ef967b538b799c4d8b17d07": {
+      "content": "I'll save that important project deadline for you.",
+      "cost": 0.007576,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"category\": \"fact\", \"key\": \"project.alpha_deadline\", \"value\": \"Alpha release deadline is March 30th\"}",
+            "name": "memory_write"
+          },
+          "id": "toolu_01Cnwoz6NcgAqP613exQquxT"
+        }
+      ],
+      "total_tokens": 7140
+    },
+    "7a87bbcc8767558af7409ab6c245f2c18501e885c9ef30781b77ded87b894cbd": {
+      "content": "I'll remember that for you.",
+      "cost": 0.006467,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"category\": \"context\", \"key\": \"project_deadline\", \"value\": \"Alpha release deadline is March 30th. Note: This date appears to be in the past (current date is April 15, 2026).\"}",
+            "name": "memory_write"
+          },
+          "id": "toolu_01LTtp5whzR6awpoWMNoooNm"
+        }
+      ],
+      "total_tokens": 5959
+    },
+    "7c38be6910aa172cb33358b687a0fa69b4f5fb6bcbb38051004c535dda127949": {
+      "content": "The project deadline for the alpha release is **March 30th**.\n\n(Note: That date has already passed — today is April 8th, 2026. If you need to update the deadline or track a new milestone, just let me know!)",
+      "cost": 0.007973,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7749
+    },
+    "7f26e47a6a2ad45445e0672e8194e7a64e3f125a59aaf9662c8cedcb5f53f8c7": {
+      "content": "Got it. I've saved that the alpha release deadline was March 30th. \n\n⚠️ Since today is April 15th, that deadline has already passed. Do you want me to:\n- Check if there are any open tasks related to this project?\n- Help you update the timeline or plan the next milestone?\n- Create a note tracking the alpha release status?\n\nWhat should we focus on?",
+      "cost": 0.006449,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6081
+    },
+    "8f08c7f37dfecc3404321ea529b339c73d677367c860cc080ea0285733013823": {
+      "content": "Got it! 📌 I've saved your **alpha release deadline: March 30th**.\n\nIs there anything you'd like me to help with for this project? I can:\n- Create a task tracker for the deadline\n- Set a reminder as the date approaches\n- Help organize project notes and milestones\n- Research or fetch any resources you need\n\nWhat would be most helpful?",
+      "cost": 0.007744999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7401
+    },
+    "91232a92607b3fb8d1f3a2563f76075ec87ccbad70669f0c6906af0f1a69f3da": {
+      "content": "The project deadline for the alpha release is **March 30th**.\n\nHowever, I should note that today is **April 8th, 2026** — so that deadline has already passed. Did you mean a different deadline, or would you like to update it?",
+      "cost": 0.007954999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7719
+    },
+    "a40d5a4ed94f09791cf65fbdc486f84cac331d2e95787151caa7624faa4a56a6": {
+      "content": "",
+      "cost": 0.007801,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"category\": \"fact\", \"key\": \"project.alpha_deadline\", \"value\": \"Alpha release deadline is March 30th\"}",
+            "name": "memory_write"
+          },
+          "id": "toolu_017t1HkyHrnwFvpfcFaA39KG"
+        },
+        {
+          "function": {
+            "arguments": "{\"title\": \"Project deadline reminder\", \"topic\": \"projects\"}",
+            "name": "session_set"
+          },
+          "id": "toolu_01JMJGrrusG7FHxuoGPmf131"
+        }
+      ],
+      "total_tokens": 7185
+    },
+    "f88032312083d382cc0fd5cc3b9276e081fe991a81f8f6893246d86968eaf478": {
+      "content": "Hi! I'm Mycelos — your personal AI assistant that grows with you. Your data stays local, and I use cloud AI as a tool — not as storage.\n\nBefore I save that project deadline, I'd like to get to know you a bit. **What's your name?**",
+      "cost": 0.006633999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6378
+    }
+  },
+  "version": 1
+}

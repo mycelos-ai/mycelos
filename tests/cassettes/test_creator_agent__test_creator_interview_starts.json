@@ -1,0 +1,33 @@
+{
+  "entries": {
+    "1815c5022de173e79aaf45244720169a2d71f4b999c9ed53eed2377929f85d2f": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nBefore I help you build that CSV summarizer agent, let me ask — what's your name?",
+      "cost": 0.007227999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7068
+    },
+    "936d46748179531ad550620c01f5f83b15d886ee2c16262a7638c15e304e1e89": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nBefore I help you build this agent, let me ask a couple quick questions to get the setup right:\n\n**What's your name?** This helps me personalize things for you.\n\n(Once I know that, I'll connect you with our builder to create your CSV summarizer agent.)",
+      "cost": 0.007428,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7108
+    },
+    "ed8719bbc92865cff4448c8ed40df863eb37d19b0a2776552cbf99f6c736218d": {
+      "content": "Hi! I'm Mycelos — your personal AI assistant that grows with you. Your data stays local, I use cloud AI as a tool — not as storage.\n\nBefore I connect you with the right team to build this agent, I'd love to know: **What's your name?**\n\n(Once I have that, I'll hand you off to our builder to create your CSV summarizer agent.)",
+      "cost": 0.006746,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6398
+    },
+    "fdbc1a70c6263b3624fef6a594d89934077bbe40097ced0f747cebd550dd1db8": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nBefore I help you build this agent, I'd like to get to know you a bit. **What's your name?**\n\n(Once I know that, I'll connect you with the right builder to create your CSV summarization agent!)",
+      "cost": 0.007372999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7097
+    }
+  },
+  "version": 1
+}

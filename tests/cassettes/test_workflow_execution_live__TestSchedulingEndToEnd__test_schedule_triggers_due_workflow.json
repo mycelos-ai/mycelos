@@ -1,0 +1,19 @@
+{
+  "entries": {
+    "9927977453bfc259960e68faf5cfe8038304780c609e58d008ce078526f6a358": {
+      "content": "Hello! I'm ready to help you. Before I start, I'd like to know your name so I can address you properly throughout our conversation.\n\nWhat's your name?\n\n(Once you tell me, I'll execute the task: running a single search_web call for 'test' and returning the first result.)",
+      "cost": 0.001438,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 1158
+    },
+    "e0f64e6622d618abdc41c26621e67ccc7e8ad55fae1a251ea2bb5fb3724ee5bb": {
+      "content": "Hello! I'd like to start by getting to know you better. **What's your name?**\n\nOnce you tell me, I'll proceed with executing the task: running a web search for 'test' and returning the first result.",
+      "cost": 0.001083,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 871
+    }
+  },
+  "version": 1
+}

@@ -1,0 +1,226 @@
+"""mycelos db — quick database inspection for debugging."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+
+from mycelos.app import App
+
+console = Console()
+
+
+@click.group("db")
+def db_cmd() -> None:
+    """Inspect Mycelos database (debugging)."""
+    pass
+
+
+def _get_app(data_dir: Path) -> App:
+    if not os.environ.get("MYCELOS_MASTER_KEY"):
+        key_file = data_dir / ".master_key"
+        if key_file.exists():
+            os.environ["MYCELOS_MASTER_KEY"] = key_file.read_text().strip()
+    return App(data_dir)
+
+
+@db_cmd.command("connectors")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def connectors_cmd(data_dir: Path) -> None:
+    """Show all connectors with capabilities."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall(
+        """SELECT c.id, c.name, c.connector_type, c.status, c.description,
+                  GROUP_CONCAT(cc.capability, ', ') as capabilities
+           FROM connectors c
+           LEFT JOIN connector_capabilities cc ON c.id = cc.connector_id
+           GROUP BY c.id ORDER BY c.id"""
+    )
+    table = Table(title="Connectors")
+    table.add_column("ID", style="bold")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Capabilities")
+    table.add_column("Description", style="dim")
+    for r in rows:
+        table.add_row(r["id"], r["name"], r["connector_type"],
+                       r["status"], r["capabilities"] or "", r["description"] or "")
+    console.print(table)
+
+
+@db_cmd.command("agents")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def agents_cmd(data_dir: Path) -> None:
+    """Show all agents with capabilities."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall(
+        """SELECT a.id, a.name, a.agent_type, a.status, a.created_by,
+                  GROUP_CONCAT(ac.capability, ', ') as capabilities
+           FROM agents a
+           LEFT JOIN agent_capabilities ac ON a.id = ac.agent_id
+           GROUP BY a.id ORDER BY a.id"""
+    )
+    table = Table(title="Agents")
+    table.add_column("ID", style="bold")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Capabilities")
+    table.add_column("Created By", style="dim")
+    for r in rows:
+        table.add_row(r["id"], r["name"], r["agent_type"],
+                       r["status"], r["capabilities"] or "", r["created_by"] or "")
+    console.print(table)
+
+
+@db_cmd.command("policies")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def policies_cmd(data_dir: Path) -> None:
+    """Show all policies."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall("SELECT * FROM policies ORDER BY user_id, resource")
+    table = Table(title="Policies")
+    table.add_column("User", style="bold")
+    table.add_column("Agent")
+    table.add_column("Resource")
+    table.add_column("Decision")
+    for r in rows:
+        table.add_row(r["user_id"], r["agent_id"] or "*", r["resource"], r["decision"])
+    console.print(table)
+
+
+@db_cmd.command("channels")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def channels_cmd(data_dir: Path) -> None:
+    """Show channel configurations."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall("SELECT * FROM channels ORDER BY id")
+    table = Table(title="Channels")
+    table.add_column("ID", style="bold")
+    table.add_column("Type")
+    table.add_column("Mode")
+    table.add_column("Status")
+    table.add_column("Allowed Users")
+    table.add_column("Config", style="dim")
+    for r in rows:
+        allowed = r["allowed_users"]
+        if isinstance(allowed, str):
+            allowed = allowed[:50]
+        config = r["config"]
+        if isinstance(config, str) and len(config) > 50:
+            config = config[:50] + "..."
+        table.add_row(r["id"], r["channel_type"], r["mode"],
+                       r["status"], str(allowed), str(config))
+    console.print(table)
+
+
+@db_cmd.command("credentials")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def credentials_cmd(data_dir: Path) -> None:
+    """Show stored credential services (not the secrets!)."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall(
+        "SELECT service, security_rotated, created_at FROM credentials ORDER BY service"
+    )
+    table = Table(title="Credentials (encrypted)")
+    table.add_column("Service", style="bold")
+    table.add_column("Rotated")
+    table.add_column("Created")
+    for r in rows:
+        table.add_row(r["service"], str(r["security_rotated"]), r["created_at"] or "")
+    console.print(table)
+
+
+@db_cmd.command("audit")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--type", "event_type", default=None, help="Filter by event type")
+@click.option("--limit", "max_rows", default=20, help="Max rows to show")
+def audit_cmd(data_dir: Path, event_type: str | None, max_rows: int) -> None:
+    """Show recent audit events."""
+    app = _get_app(data_dir)
+    if event_type:
+        rows = app.storage.fetchall(
+            "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?",
+            (event_type, max_rows),
+        )
+    else:
+        rows = app.storage.fetchall(
+            "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?",
+            (max_rows,),
+        )
+    table = Table(title=f"Audit Events (last {max_rows})")
+    table.add_column("Time", style="dim")
+    table.add_column("Type", style="bold")
+    table.add_column("Agent")
+    table.add_column("Details")
+    for r in rows:
+        details = r["details"] or ""
+        if isinstance(details, str) and len(details) > 80:
+            details = details[:80] + "..."
+        table.add_row(
+            (r["created_at"] or "")[-8:],  # just time part
+            r["event_type"],
+            r["agent_id"] or "",
+            details,
+        )
+    console.print(table)
+
+
+@db_cmd.command("memory")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def memory_cmd(data_dir: Path) -> None:
+    """Show memory entries."""
+    app = _get_app(data_dir)
+    rows = app.storage.fetchall(
+        "SELECT key, value, created_by, created_at FROM memory_entries ORDER BY key LIMIT 50"
+    )
+    table = Table(title="Memory Entries")
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    table.add_column("By", style="dim")
+    for r in rows:
+        value = r["value"] or ""
+        if len(value) > 60:
+            value = value[:60] + "..."
+        table.add_row(r["key"], value, r["created_by"] or "")
+    console.print(table)
+
+
+@db_cmd.command("sql")
+@click.argument("query")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def sql_cmd(query: str, data_dir: Path) -> None:
+    """Run a raw SQL query (read-only)."""
+    if not query.strip().upper().startswith("SELECT"):
+        console.print("[red]Only SELECT queries allowed.[/red]")
+        return
+    app = _get_app(data_dir)
+    try:
+        rows = app.storage.fetchall(query)
+        if not rows:
+            console.print("[dim]No results.[/dim]")
+            return
+        table = Table()
+        for col in rows[0].keys():
+            table.add_column(col)
+        for r in rows:
+            table.add_row(*[str(v)[:100] if v is not None else "" for v in r.values()])
+        console.print(table)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+
+
+@db_cmd.command("context")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+def context_cmd(data_dir: Path) -> None:
+    """Show what the LLM sees as system context (live)."""
+    app = _get_app(data_dir)
+    from mycelos.chat.context import build_context
+    ctx = build_context(app)
+    console.print(ctx)

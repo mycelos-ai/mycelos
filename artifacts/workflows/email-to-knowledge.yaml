@@ -1,0 +1,45 @@
+name: email-to-knowledge
+version: 2
+description: "Save important emails as knowledge notes — read-only, no sending"
+goal: "Read recent emails, identify important ones, save to knowledge base"
+
+inputs:
+  - name: limit
+    type: number
+    required: false
+    description: "Number of recent emails to check (default: 10)"
+
+plan: |
+  You are the Email-to-Knowledge Agent. Your job:
+  1. Call email_inbox with limit=10
+  2. For each email, decide if it's worth saving:
+     - Business decisions, agreements, important info → save
+     - Newsletters, spam, automated notifications → skip
+  3. For each worth saving:
+     - Call note_write with:
+       - title: "[From] — [Subject]"
+       - type: "reference"
+       - tags: [email, sender-name]
+       - content: brief summary + key points
+  4. Report: "Saved X emails to knowledge base."
+
+  Respond in the user's language.
+model: haiku
+allowed_tools:
+  - email_inbox
+  - email_read
+  - note_write
+scope:
+  - email.read
+  - knowledge.write
+requires:
+  connectors: [email]
+  tools: [email_inbox, note_write]
+
+steps: []
+
+tags:
+  - email
+  - knowledge
+  - archive
+  - read-only

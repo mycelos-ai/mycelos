@@ -1,0 +1,19 @@
+{
+  "entries": {
+    "c8de4b55735f4d34939e135ea2c65ad64af1d278dc02c377cf6ff70bdfa87be1": {
+      "content": "Hello! I'm here to help you search for information on Python programming. Before I get started, may I ask your name?\n\nOnce I have that, I'll search the web and return the top 3 results for \"Python programming.\"",
+      "cost": 0.001367,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 1155
+    },
+    "fa8233b48d214c5c00d9b8a6811fd18227e1139cb1acb70c65806d291a73327c": {
+      "content": "Hello! 👋 Before I search for information on Python programming, I'd like to know your name so I can personalize our interaction. What's your name?",
+      "cost": 0.001022,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 870
+    }
+  },
+  "version": 1
+}

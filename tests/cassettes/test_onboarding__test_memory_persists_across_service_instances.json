@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "2be896d5e7f74f6fa3508aff4d999c544a8aea31a2b3cc67cec45beb0ce0e5b7": {
+      "content": "Your name is **IntegrationUser**. \n\nIs there anything you'd like to do? I can help you search the web, manage notes, set reminders, check emails, or build automations. What brings you here?",
+      "cost": 0.006077,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 5869
+    },
+    "3ade3cd4e0b40534c53cbbc4f817287bab11cce919c6605a5c8a9822b8717836": {
+      "content": "Hi! I'm Mycelos — your personal AI assistant that grows with you. Your data stays local, I use cloud AI as a tool — not as storage.\n\nI don't have your name yet. **What's your name?**",
+      "cost": 0.0065699999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6358
+    },
+    "7c30904d329d8282fe1c361884c07b9b1814701259c10a44e2b88f1c8c086355": {
+      "content": "I don't know your name yet! This is our first conversation. 👋\n\nI'm **Mycelos**, your personal AI assistant. Before we get started, what's your name?",
+      "cost": 0.0072369999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7065
+    },
+    "ab5d165069c22e289e649f864eed7b2bb68dc62012e6e64e9b9e5e2e27aadd1c": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. 👋\n\nI don't know your name yet — this is our first conversation! What's your name?",
+      "cost": 0.0072169999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7061
+    },
+    "ffd5013f2d9fdaff1acc024e1f809f839696eee9d551c205b02c1e98bca1017f": {
+      "content": "Hi! I'm Mycelos, your personal AI assistant. \n\nI don't have your name yet — what's your name? 😊",
+      "cost": 0.007192,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7056
+    }
+  },
+  "version": 1
+}

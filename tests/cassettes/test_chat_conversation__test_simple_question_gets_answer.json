@@ -1,0 +1,40 @@
+{
+  "entries": {
+    "723632cb2f6b2d5562510b001591564034d4ee4760a9c091e80e5b48e250d9e2": {
+      "content": "4",
+      "cost": 0.007057,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7037
+    },
+    "81700ecf9763e536b9501d056e1fb1f2d8bcd2b4025f24dff7934c0f53d2ac0b": {
+      "content": "4",
+      "cost": 0.007057,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7037
+    },
+    "e51edb93c92583164fced82ed4a20abe824af3c317c884b8b63007507e1828b9": {
+      "content": "4",
+      "cost": 0.007057,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 7037
+    },
+    "ea691ebdc4e6fd0d89771a5b21a0e47baf6df0d51dfb1ec4c56b37ad4444dc5d": {
+      "content": "4",
+      "cost": 0.006339999999999999,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 6320
+    },
+    "eebbb9f56a5ad1f483c24604224115605a58323fee2ae1ef6a48dd9f53cebc5e": {
+      "content": "4",
+      "cost": 0.0058579999999999995,
+      "model": "anthropic/claude-haiku-4-5",
+      "tool_calls": null,
+      "total_tokens": 5838
+    }
+  },
+  "version": 1
+}

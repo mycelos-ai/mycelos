@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mycelos"
+version = "0.1.0"
+description = "Mycelos — a security-first agent operating system"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "Stefan", email = "stefan@kaproblem.com"},
+]
+keywords = ["ai", "agent", "assistant", "llm", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "click>=8.1",
+    "cryptography>=43.0",
+    "ddgs>=9.0",
+    "httpx>=0.27",
+    "litellm>=1.40",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "huey>=2.5",
+    "mcp>=1.26",
+    "aiogram>=3.26",
+    "prompt_toolkit>=3.0",
+    "sqlite-vec>=0.1.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.0",
+    "pytest-mock>=3.14",
+    "vcrpy>=6.0",
+    "pytest-playwright>=0.6",
+    "playwright>=1.49",
+    "pytest-timeout>=2.3",
+    "freezegun>=1.2",
+]
+files = [
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+]
+embeddings = [
+    "sentence-transformers>=3.0",
+]
+all = [
+    "mycelos[files,embeddings]",
+]
+
+[project.urls]
+Homepage = "https://mycelos.com"
+Repository = "https://github.com/mycelos-ai/mycelos"
+
+[project.scripts]
+mycelos = "mycelos.cli.main:cli"
+
+[tool.hatch.build]
+artifacts = [
+    "/src/mycelos/frontend/out",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mycelos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+timeout = 30
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

@@ -1,0 +1,25 @@
+# Mycelos — Docker Compose
+#
+# Quick start:
+#   docker compose up -d
+#
+# First start auto-initializes. Web UI: http://localhost:9100
+# Mycelos will ask for your API key on first use and store it encrypted.
+#
+# Optional: set MYCELOS_PASSWORD in .env for network access protection.
+
+services:
+  mycelos:
+    image: ghcr.io/mycelos-ai/mycelos:main
+    container_name: mycelos
+    ports:
+      - "9100:9100"
+    volumes:
+      - mycelos-data:/data
+    environment:
+      - MYCELOS_MASTER_KEY=${MYCELOS_MASTER_KEY:-}
+      - MYCELOS_PASSWORD=${MYCELOS_PASSWORD:-}
+    restart: unless-stopped
+
+volumes:
+  mycelos-data:

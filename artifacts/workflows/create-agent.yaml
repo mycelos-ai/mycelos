@@ -1,0 +1,80 @@
+name: create-agent
+version: 2
+description: "Create a new agent from user description -- interview, code, test, audit, register"
+goal: "Generate a tested, audited agent and register it in the system"
+scope:
+  - agent.register
+  - sandbox.execute
+
+inputs:
+  - name: name
+    type: string
+    required: true
+    description: "Agent name in kebab-case (e.g., 'weather-agent')"
+  - name: description
+    type: string
+    required: true
+    description: "What the agent should do"
+  - name: capabilities
+    type: string
+    required: false
+    description: "Comma-separated list of required capabilities (e.g., 'filesystem.read,http.get')"
+
+plan: |
+  This is the Creator Pipeline — it runs as a multi-step process, not as a
+  single LLM loop. The steps below define the pipeline sequence.
+model: sonnet
+allowed_tools:
+  - create_agent
+requires:
+  connectors: []
+  tools: [create_agent]
+
+steps:
+  - id: feasibility
+    action: "Assess feasibility and estimate effort"
+    agent: planner-agent
+    policy: always
+    model_tier: haiku
+
+  - id: generate-gherkin
+    action: "Generate Gherkin acceptance scenarios from spec"
+    agent: creator-agent
+    policy: always
+    model_tier: sonnet
+
+  - id: generate-code
+    action: "Generate agent Python code from spec"
+    agent: creator-agent
+    policy: always
+    model_tier: sonnet
+
+  - id: generate-tests
+    action: "Generate pytest tests for the agent"
+    agent: creator-agent
+    policy: always
+    model_tier: sonnet
+
+  - id: run-tests
+    action: "Execute tests in sandbox environment"
+    agent: system
+    policy: always
+    model_tier: deterministic
+
+  - id: audit
+    action: "Security review of code and tests"
+    agent: auditor-agent
+    policy: always
+    model_tier: sonnet
+    condition: "steps.run-tests.passed"
+
+  - id: register
+    action: "Register agent in system"
+    agent: system
+    policy: confirm
+    model_tier: deterministic
+    condition: "steps.audit.approved"
+
+tags:
+  - system
+  - agent-creation

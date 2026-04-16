@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Dashboard</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Dashboard content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="{
+        todayCost: {},
+        weekCost: {},
+        monthCost: {},
+        sessions: [],
+        agents: [],
+        health: {},
+        audit: [],
+        connectorList: [],
+        workflowList: [],
+        scheduleList: [],
+        loading: true,
+        error: null,
+
+        async init() {
+          try {
+            const [today, week, month, sessions, agents, health, audit, connectorList, workflowList, scheduleList] = await Promise.all([
+              MycelosAPI.get('/api/cost?period=today'),
+              MycelosAPI.get('/api/cost?period=week'),
+              MycelosAPI.get('/api/cost?period=month'),
+              MycelosAPI.get('/api/sessions'),
+              MycelosAPI.get('/api/agents'),
+              MycelosAPI.get('/api/health'),
+              MycelosAPI.get('/api/audit?limit=8'),
+              MycelosAPI.get('/api/connectors'),
+              MycelosAPI.get('/api/workflows'),
+              MycelosAPI.get('/api/schedules'),
+            ]);
+            this.todayCost = today;
+            this.weekCost = week;
+            this.monthCost = month;
+            this.sessions = (Array.isArray(sessions) ? sessions : []).slice(0, 5);
+            this.agents = Array.isArray(agents) ? agents : [];
+            this.health = health;
+            this.audit = Array.isArray(audit) ? audit : [];
+            this.connectorList = Array.isArray(connectorList) ? connectorList : [];
+            this.workflowList = (Array.isArray(workflowList) ? workflowList : []).slice(0, 5);
+            this.scheduleList = (Array.isArray(scheduleList) ? scheduleList : []).slice(0, 5);
+          } catch (e) {
+            this.error = e.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        formatCost(data) {
+          return '$' + (data.total_cost || 0).toFixed(2);
+        },
+        formatTokens(data) {
+          const t = data.total_tokens || 0;
+          if (t >= 1000000) return (t / 1000000).toFixed(1) + 'M';
+          if (t >= 1000) return (t / 1000).toFixed(1) + 'K';
+          return t.toString();
+        },
+        formatCalls(data) {
+          const models = data.models || [];
+          return models.reduce((sum, m) => sum + (m.calls || 0), 0);
+        },
+        formatUptime(seconds) {
+          if (!seconds) return '0s';
+          const h = Math.floor(seconds / 3600);
+          const m = Math.floor((seconds % 3600) / 60);
+          if (h > 0) return h + 'h ' + m + 'm';
+          return m + 'm';
+        },
+        timeAgo(ts) {
+          if (!ts) return '';
+          const diff = Date.now() - new Date(ts).getTime();
+          const mins = Math.floor(diff / 60000);
+          if (mins < 1) return 'just now';
+          if (mins < 60) return mins + 'm ago';
+          const hrs = Math.floor(mins / 60);
+          if (hrs < 24) return hrs + 'h ago';
+          return Math.floor(hrs / 24) + 'd ago';
+        },
+        truncate(str, len) {
+          if (!str) return '';
+          return str.length > len ? str.slice(0, len) + '...' : str;
+        },
+        statusClass(status) {
+          const map = {
+            active: 'status-badge--active',
+            running: 'status-badge--active',
+            ok: 'status-badge--success',
+            paused: 'status-badge--paused',
+            error: 'status-badge--error',
+            proposed: 'status-badge--proposed',
+          };
+          return 'status-badge ' + (map[(status || '').toLowerCase()] || 'status-badge--paused');
+        },
+        tokenBarModels() {
+          const allModels = [
+            ...(this.monthCost.models || []),
+          ];
+          const totalTokens = allModels.reduce((s, m) => s + (m.total_tokens || 0), 0);
+          if (!totalTokens) return [];
+          return allModels.map(m => ({
+            model: m.model || 'unknown',
+            tokens: m.total_tokens || 0,
+            pct: Math.max(1, Math.round(((m.total_tokens || 0) / totalTokens) * 100)),
+            cost: (m.total_cost || 0).toFixed(4),
+          }));
+        },
+        auditIcon(eventType) {
+          const map = {
+            'connector.added': 'add_circle',
+            'connector.removed': 'remove_circle',
+            'config.rollback': 'history',
+            'credential.stored': 'key',
+            'credential.deleted': 'key_off',
+            'gateway.reloaded': 'refresh',
+            'gateway.started': 'power_settings_new',
+          };
+          if (map[eventType]) return map[eventType];
+          if (eventType.startsWith('task')) return 'task_alt';
+          if (eventType.startsWith('workflow')) return 'account_tree';
+          return 'info';
+        },
+        auditText(event) {
+          const type = event.event_type || '';
+          const d = event.details || {};
+          if (type === 'connector.added') return 'Connector added: ' + (d.connector || '');
+          if (type === 'connector.removed') return 'Connector removed: ' + (d.connector || '');
+          if (type === 'config.rollback') return 'Config rollback to #' + (d.target_generation || '');
+          if (type === 'credential.stored') return 'Credential stored: ' + (d.service || '');
+          if (type === 'credential.deleted') return 'Credential deleted: ' + (d.service || '');
+          if (type === 'gateway.started') return 'Gateway started';
+          if (type === 'gateway.reloaded') return 'Gateway reloaded';
+          return type.replace(/\./g, ' ');
+        },
+      }"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error && !loading" class="card max-w-md mx-auto mt-12 text-center">
+        <span class="material-symbols-outlined text-[var(--error)] text-3xl mb-3">error_outline</span>
+        <p class="text-sm text-[var(--on-surface-variant)]" x-text="'Connection failed: ' + error"></p>
+        <button class="btn-secondary mt-4" @click="loading = true; error = null; init()" x-text="t('common.retry')">Retry</button>
+      </div>
+
+      <!-- Dashboard grid -->
+      <div x-show="!loading && !error" class="animate-fade-in max-w-5xl mx-auto space-y-8">
+
+        <!-- Section: Cost Overview -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.cost_overview')">Cost Overview</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+            <!-- Today -->
+            <div class="card">
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-tighter mb-2 font-label" x-text="t('dashboard.today')">Today</p>
+              <div class="flex items-end justify-between">
+                <span class="text-2xl font-headline font-bold" x-text="formatCost(todayCost)"></span>
+                <span class="text-[10px] text-[var(--primary)] bg-[var(--primary)]/10 px-1.5 py-0.5 rounded" x-text="formatTokens(todayCost) + ' tokens'"></span>
+              </div>
+              <p class="text-[10px] text-[var(--on-surface-variant)] mt-2" x-text="formatCalls(todayCost) + ' LLM calls'"></p>
+            </div>
+
+            <!-- This Week -->
+            <div class="card">
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-tighter mb-2 font-label" x-text="t('dashboard.this_week')">This Week</p>
+              <div class="flex items-end justify-between">
+                <span class="text-2xl font-headline font-bold" x-text="formatCost(weekCost)"></span>
+                <span class="text-[10px] text-[var(--primary)] bg-[var(--primary)]/10 px-1.5 py-0.5 rounded" x-text="formatTokens(weekCost) + ' tokens'"></span>
+              </div>
+              <p class="text-[10px] text-[var(--on-surface-variant)] mt-2" x-text="formatCalls(weekCost) + ' LLM calls'"></p>
+            </div>
+
+            <!-- This Month -->
+            <div class="card">
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-tighter mb-2 font-label" x-text="t('dashboard.this_month')">This Month</p>
+              <div class="flex items-end justify-between">
+                <span class="text-2xl font-headline font-bold" x-text="formatCost(monthCost)"></span>
+                <span class="text-[10px] text-[var(--primary)] bg-[var(--primary)]/10 px-1.5 py-0.5 rounded" x-text="formatTokens(monthCost) + ' tokens'"></span>
+              </div>
+              <p class="text-[10px] text-[var(--on-surface-variant)] mt-2" x-text="formatCalls(monthCost) + ' LLM calls'"></p>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Section: Token Usage by Model -->
+        <div x-show="tokenBarModels().length > 0">
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.token_usage')">Token Usage by Model</h2>
+          <div class="card space-y-3">
+            <template x-for="m in tokenBarModels()" :key="m.model">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-mono text-[var(--on-surface)]" x-text="m.model"></span>
+                  <span class="text-[10px] text-[var(--on-surface-variant)]" x-text="formatTokens({total_tokens: m.tokens}) + ' tokens  ·  $' + m.cost"></span>
+                </div>
+                <div class="h-2 rounded-full bg-[var(--surface-container-lowest)]">
+                  <div class="h-full rounded-full bg-gradient-to-r from-[var(--primary)] to-[var(--primary-container)]" :style="'width:' + m.pct + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Two-column: Sessions + Health -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          <!-- Recent Sessions -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.recent_sessions')">Recent Sessions</h2>
+            <div class="card space-y-1 p-4">
+              <template x-if="sessions.length === 0">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center" x-text="t('dashboard.no_sessions')">No sessions yet</p>
+              </template>
+              <template x-for="s in sessions" :key="s.session_id || s.id">
+                <a
+                  :href="'/pages/chat.html?session=' + (s.session_id || s.id)"
+                  class="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors group"
+                >
+                  <div class="flex items-center gap-3 min-w-0">
+                    <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg group-hover:text-[var(--primary)] transition-colors">forum</span>
+                    <div class="min-w-0">
+                      <p class="text-xs font-mono text-[var(--on-surface)] truncate" x-text="truncate(s.session_id || s.id, 16)"></p>
+                      <p class="text-[10px] text-[var(--on-surface-variant)]" x-text="(s.message_count || 0) + ' messages'"></p>
+                    </div>
+                  </div>
+                  <span class="text-[10px] text-[var(--on-surface-variant)] whitespace-nowrap" x-text="timeAgo(s.updated_at || s.created_at)"></span>
+                </a>
+              </template>
+            </div>
+          </div>
+
+          <!-- System Health -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.system_health')">System Health</h2>
+            <div class="card space-y-4">
+
+              <div class="flex items-center justify-between" x-show="health.user">
+                <span class="text-sm text-[var(--on-surface-variant)]" x-text="t('dashboard.user')">User</span>
+                <span class="text-sm font-headline font-bold" x-text="health.user?.name || health.user?.id || '—'"></span>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-[var(--on-surface-variant)]" x-text="t('dashboard.uptime')">Uptime</span>
+                <span class="text-sm font-headline font-bold" x-text="formatUptime(health.uptime_seconds)"></span>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-[var(--on-surface-variant)]" x-text="t('dashboard.gateway')">Gateway</span>
+                <span
+                  :class="health.status === 'ok' ? 'status-badge status-badge--success' : 'status-badge status-badge--error'"
+                  x-text="health.status || 'unknown'"
+                ></span>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-[var(--on-surface-variant)]" x-text="t('dashboard.scheduler')">Scheduler</span>
+                <span
+                  :class="health.scheduler ? 'status-badge status-badge--active' : 'status-badge status-badge--paused'"
+                  x-text="health.scheduler ? t('common.running') : t('common.stopped')"
+                ></span>
+              </div>
+
+              <div class="flex items-center justify-between">
+                <span class="text-sm text-[var(--on-surface-variant)]">Config Generation</span>
+                <span class="text-xs font-mono text-[var(--primary)]" x-text="'#' + (health.generation_id || '—')"></span>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Section: Agent Status -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('agents.title')">Agents</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="a in agents" :key="a.id">
+              <div class="card">
+                <div class="flex items-start justify-between mb-3">
+                  <div>
+                    <p class="text-sm font-headline font-bold" x-text="a.name || a.id"></p>
+                    <p class="text-[10px] text-[var(--on-surface-variant)] mt-0.5" x-text="a.type || 'agent'"></p>
+                  </div>
+                  <span :class="statusClass(a.status)" x-text="a.status || 'idle'"></span>
+                </div>
+                <div class="flex flex-wrap gap-1.5" x-show="a.capabilities && a.capabilities.length > 0">
+                  <template x-for="cap in (a.capabilities || []).slice(0, 4)" :key="cap">
+                    <span class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)]" x-text="cap"></span>
+                  </template>
+                  <span
+                    x-show="(a.capabilities || []).length > 4"
+                    class="text-[10px] font-label px-2 py-0.5 rounded-full bg-[var(--surface-container-lowest)] text-[var(--on-surface-variant)]"
+                    x-text="'+' + ((a.capabilities || []).length - 4)"
+                  ></span>
+                </div>
+              </div>
+            </template>
+            <template x-if="agents.length === 0">
+              <div class="card text-center col-span-full">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4">No agents registered</p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Two-column: Activity + Connectors -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          <!-- Recent Activity -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.recent_activity')">Recent Activity</h2>
+            <div class="card p-4">
+              <template x-if="audit.length === 0">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center" x-text="t('dashboard.no_activity')">No recent activity</p>
+              </template>
+              <div class="space-y-1">
+                <template x-for="ev in audit" :key="ev.id || ev.created_at">
+                  <div class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors">
+                    <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg" x-text="auditIcon(ev.event_type)"></span>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-xs text-[var(--on-surface)] truncate" x-text="auditText(ev)"></p>
+                    </div>
+                    <span class="text-[10px] text-[var(--on-surface-variant)] whitespace-nowrap" x-text="timeAgo(ev.created_at)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connector Health -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.connector_health')">Connector Health</h2>
+            <div class="card p-4">
+              <template x-if="connectorList.length === 0">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center" x-text="t('dashboard.no_connectors')">No connectors configured</p>
+              </template>
+              <div class="space-y-1">
+                <template x-for="c in connectorList" :key="c.id || c.name">
+                  <div class="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors">
+                    <div class="flex items-center gap-3">
+                      <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg">extension</span>
+                      <span class="text-xs text-[var(--on-surface)]" x-text="c.name || c.id"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] text-[var(--on-surface-variant)]" x-text="(c.tool_count || 0) + ' tools'"></span>
+                      <span :class="statusClass(c.status)" x-text="c.status || 'unknown'"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Two-column: Workflows + Schedules -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          <!-- Workflow Status -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.workflow_status')">Workflow Status</h2>
+            <div class="card p-4">
+              <template x-if="workflowList.length === 0">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center" x-text="t('dashboard.no_workflows')">No workflows defined</p>
+              </template>
+              <div class="space-y-1">
+                <template x-for="w in workflowList" :key="w.id || w.name">
+                  <div class="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg">account_tree</span>
+                      <div class="min-w-0">
+                        <p class="text-xs text-[var(--on-surface)] truncate" x-text="w.name || w.id"></p>
+                        <p class="text-[10px] text-[var(--on-surface-variant)] truncate" x-text="truncate(w.description || '', 40)"></p>
+                      </div>
+                    </div>
+                    <span :class="statusClass(w.status)" x-text="w.status || 'draft'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scheduled Tasks -->
+          <div>
+            <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.scheduled_tasks')">Scheduled Tasks</h2>
+            <div class="card p-4">
+              <template x-if="scheduleList.length === 0">
+                <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center" x-text="t('dashboard.no_schedules')">No scheduled tasks</p>
+              </template>
+              <div class="space-y-1">
+                <template x-for="s in scheduleList" :key="s.id">
+                  <div class="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg">schedule</span>
+                      <div class="min-w-0">
+                        <p class="text-xs text-[var(--on-surface)] truncate" x-text="s.workflow_id || s.id"></p>
+                        <p class="text-[10px] text-[var(--on-surface-variant)] font-mono" x-text="s.schedule || ''"></p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <span :class="statusClass(s.status)" x-text="s.status || 'active'"></span>
+                      <p class="text-[10px] text-[var(--on-surface-variant)] mt-0.5" x-show="s.next_run" x-text="timeAgo(s.next_run)"></p>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+</body>
+</html>

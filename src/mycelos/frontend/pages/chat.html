@@ -1,0 +1,2289 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Chat</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+  <script>
+    // Diagram zoom + export — adds a magnifier button to mermaid containers
+    // and opens a 90vw/90vh modal with PNG/SVG download.
+    (function () {
+      function svgToPng(svgEl, scale, cb) {
+        const clone = svgEl.cloneNode(true);
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        const bbox = svgEl.getBoundingClientRect();
+        const w = Math.max(1, Math.round(bbox.width));
+        const h = Math.max(1, Math.round(bbox.height));
+        clone.setAttribute('width', w);
+        clone.setAttribute('height', h);
+        const svgStr = new XMLSerializer().serializeToString(clone);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = function () {
+          const canvas = document.createElement('canvas');
+          canvas.width = w * scale;
+          canvas.height = h * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#1a1a1a';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(cb, 'image/png');
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); cb(null); };
+        img.src = url;
+      }
+      function downloadBlob(blob, filename) {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      function openDiagramModal(sourceSvg) {
+        const overlay = document.createElement('div');
+        overlay.className = 'diagram-modal-overlay';
+        overlay.innerHTML = `
+          <div class="diagram-modal" role="dialog" aria-modal="true">
+            <div class="diagram-modal-header">
+              <button data-action="png">Download PNG</button>
+              <button data-action="svg">Download SVG</button>
+              <button data-action="close" aria-label="Close">✕</button>
+            </div>
+            <div class="diagram-modal-body"></div>
+          </div>`;
+        const body = overlay.querySelector('.diagram-modal-body');
+        const cloned = sourceSvg.cloneNode(true);
+        cloned.removeAttribute('style');
+        body.appendChild(cloned);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        overlay.querySelector('[data-action="close"]').addEventListener('click', close);
+        overlay.querySelector('[data-action="svg"]').addEventListener('click', () => {
+          const svgStr = new XMLSerializer().serializeToString(sourceSvg);
+          downloadBlob(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }), 'diagram.svg');
+        });
+        overlay.querySelector('[data-action="png"]').addEventListener('click', () => {
+          svgToPng(sourceSvg, 2, (blob) => downloadBlob(blob, 'diagram.png'));
+        });
+        document.addEventListener('keydown', function esc(e) {
+          if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+        });
+        document.body.appendChild(overlay);
+      }
+      function decorateDiagrams(root) {
+        (root || document).querySelectorAll('.mermaid-container').forEach((c) => {
+          if (c.querySelector('.diagram-zoom-btn')) return;
+          const svg = c.querySelector('svg');
+          if (!svg) return;
+          const btn = document.createElement('button');
+          btn.className = 'diagram-zoom-btn';
+          btn.type = 'button';
+          btn.title = 'Zoom & download';
+          btn.innerHTML = '🔍 Zoom';
+          btn.addEventListener('click', (e) => { e.stopPropagation(); openDiagramModal(svg); });
+          c.appendChild(btn);
+        });
+      }
+      // Re-scan periodically — mermaid renders async, and chat appends new messages.
+      const observer = new MutationObserver(() => decorateDiagrams(document));
+      document.addEventListener('DOMContentLoaded', () => {
+        decorateDiagrams(document);
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+      window.decorateDiagrams = decorateDiagrams;
+    })();
+  </script>
+  <script>
+    // Alpine.js store for cross-component state sharing (chat <-> right panel)
+    document.addEventListener('alpine:init', () => {
+      Alpine.store('chat', {
+        activeAgent: 'Mycelos',
+        activeSessionId: null,
+        sending: false,
+        tokenCount: 0,
+        modelUsed: '',
+        costTotal: 0,
+        messageCount: 0,
+      });
+    });
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* Markdown prose styling for agent responses */
+    .prose-agent p { margin-bottom: 0.75rem; line-height: 1.7; }
+    .prose-agent p:last-child { margin-bottom: 0; }
+    .prose-agent code {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 0.125rem 0.375rem;
+      border-radius: 0.25rem;
+      font-size: 0.8125rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .prose-agent pre {
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      overflow-x: auto;
+      margin: 0.75rem 0;
+    }
+    .prose-agent pre code {
+      background: none;
+      padding: 0;
+      font-size: 0.8125rem;
+    }
+    .prose-agent ul, .prose-agent ol {
+      padding-left: 1.25rem;
+      margin: 0.5rem 0;
+    }
+    .prose-agent li { margin-bottom: 0.25rem; }
+    .prose-agent ul li { list-style-type: disc; }
+    .prose-agent ol li { list-style-type: decimal; }
+    .prose-agent strong { color: var(--on-surface); font-weight: 700; }
+    .prose-agent em { color: var(--tertiary); }
+    .prose-agent a {
+      color: var(--primary);
+      text-decoration: underline;
+      text-decoration-color: rgba(106, 214, 255, 0.5);
+      text-underline-offset: 2px;
+    }
+    .prose-agent a:hover { text-decoration-color: var(--primary); }
+    .prose-agent h1, .prose-agent h2, .prose-agent h3 {
+      font-family: var(--font-headline);
+      font-weight: 600;
+      margin: 1rem 0 0.5rem;
+      color: var(--on-surface);
+    }
+    .prose-agent h1 { font-size: 1.25rem; }
+    .prose-agent h2 { font-size: 1.125rem; }
+    .prose-agent h3 { font-size: 1rem; }
+    .prose-agent blockquote {
+      border-left: 2px solid var(--outline-variant);
+      padding-left: 1rem;
+      margin: 0.75rem 0;
+      color: var(--on-surface-variant);
+    }
+    .prose-agent table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+    }
+    .prose-agent th, .prose-agent td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(70, 72, 77, 0.15);
+    }
+    .prose-agent th {
+      font-family: var(--font-label);
+      font-size: 0.6875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--on-surface-variant);
+    }
+
+    /* Clickable slash commands in chat messages */
+    .cmd-link {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      display: inline-block;
+      font: inherit;
+      text-decoration: none;
+      -webkit-appearance: none;
+    }
+    .cmd-link code {
+      background: rgba(106, 214, 255, 0.12) !important;
+      border: 1px solid rgba(106, 214, 255, 0.25) !important;
+      color: var(--primary) !important;
+      border-radius: 6px;
+      padding: 0.15em 0.5em;
+      transition: all 0.15s ease;
+      cursor: pointer;
+    }
+    .cmd-link:hover code {
+      background: rgba(106, 214, 255, 0.22) !important;
+      border-color: rgba(106, 214, 255, 0.5) !important;
+      box-shadow: 0 0 8px rgba(106, 214, 255, 0.15);
+    }
+    .cmd-link:active code {
+      transform: scale(0.97);
+    }
+
+    /* Step progress pill animation */
+    @keyframes slide-in-up {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-slide-in-up {
+      animation: slide-in-up 0.25s ease-out;
+    }
+
+    /* Session dropdown */
+    .session-dropdown {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(70, 72, 77, 0.4) transparent;
+    }
+  </style>
+</head>
+
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content area -->
+  <main class="flex-1 flex flex-col md:pl-64 md:pr-72 min-w-0 bg-[var(--surface)]"
+        x-data="chatApp()" x-init="initChat()"
+        @new-session.window="newSession()"
+        @run-command.window="handleClickedCommand($event.detail.command)"
+        @dragover.prevent="dragOver = true"
+        @dragleave.prevent="dragOver = false"
+        @drop.prevent="dragOver = false; handleFileUpload($event.dataTransfer.files[0])">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Session selector bar -->
+    <div class="fixed top-0 left-0 md:left-64 md:right-72 right-0 z-20 pt-16 px-8">
+      <div class="max-w-4xl mx-auto flex items-center gap-3 py-3">
+        <!-- Session dropdown -->
+        <div class="relative" x-data="{ open: false }">
+          <button @click="open = !open"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                         bg-[var(--surface-container)] text-[var(--on-surface-variant)]
+                         hover:text-[var(--primary)] transition-colors">
+            <span class="material-symbols-outlined text-sm">forum</span>
+            <span x-text="(() => { if (!activeSessionId) return t('chat.no_session'); const s = sessions.find(s => (s.session_id || s.id) === activeSessionId); return s?.title || (s?.timestamp ? 'Chat · ' + new Date(s.timestamp).toLocaleString([], {hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + activeSessionId.slice(0, 8)); })()" class="truncate max-w-[160px]"></span>
+            <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
+          </button>
+          <div x-show="open" @click.outside="open = false" x-transition
+               class="absolute top-full left-0 mt-2 w-64 glass-card-strong rounded-xl py-2 z-50 session-dropdown max-h-64 overflow-y-auto">
+            <button @click="newSession(); open = false"
+                    class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--primary)] hover:bg-[var(--surface-container)] transition-colors">
+              <span class="material-symbols-outlined text-sm">add_circle</span>
+              <span x-text="t('chat.new_session')">New Session</span>
+            </button>
+            <div class="mycelium-line mx-4 my-1"></div>
+            <template x-for="session in sessions" :key="(session.session_id || session.id)">
+              <button @click="switchSession((session.session_id || session.id)); open = false"
+                      class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)] transition-colors"
+                      :class="(session.session_id || session.id) === activeSessionId && 'text-[var(--primary)] bg-[var(--surface-container)]'">
+                <span class="material-symbols-outlined text-sm">chat_bubble</span>
+                <span class="truncate" x-text="session.title || (session.timestamp ? 'Chat · ' + new Date(session.timestamp).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + (session.session_id || session.id).slice(0, 8))"></span>
+              </button>
+            </template>
+            <p x-show="sessions.length === 0" class="px-4 py-2 text-xs text-[var(--on-surface-variant)]/50 font-label"
+               x-text="t('chat.no_sessions')">
+              No sessions yet
+            </p>
+          </div>
+        </div>
+
+        <!-- Agent selector dropdown -->
+        <div class="relative" x-data="{ open: false }">
+          <button @click="open = !open"
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                         bg-[var(--surface-container)] transition-colors"
+                  :class="selectedAgentId !== 'mycelos' ? 'text-[var(--primary)] border border-[var(--primary)]/30' : 'text-[var(--on-surface-variant)] hover:text-[var(--primary)]'">
+            <span class="material-symbols-outlined text-sm">smart_toy</span>
+            <span x-text="selectedAgentName" class="truncate max-w-[100px]"></span>
+            <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
+          </button>
+          <div x-show="open" @click.outside="open = false" x-transition
+               class="absolute top-full left-0 mt-2 w-56 glass-card-strong rounded-xl py-2 z-50 session-dropdown max-h-64 overflow-y-auto">
+            <template x-for="agent in availableAgents" :key="agent.id">
+              <button @click="selectTargetAgent(agent); open = false"
+                      class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)] transition-colors"
+                      :class="agent.id === selectedAgentId && 'text-[var(--primary)] bg-[var(--surface-container)]'">
+                <span class="material-symbols-outlined text-sm" x-text="agent.id === 'mycelos' ? 'sensors' : (agent.id === 'builder' ? 'construction' : 'smart_toy')"></span>
+                <span class="truncate" x-text="agent.display_name || agent.name || agent.id"></span>
+              </button>
+            </template>
+            <p x-show="availableAgents.length === 0" class="px-4 py-2 text-xs text-[var(--on-surface-variant)]/50 font-label"
+               x-text="t('chat.no_agents')"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat messages area -->
+    <!-- Drag & drop overlay -->
+    <div x-show="dragOver" x-transition
+         class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 pointer-events-none">
+      <div class="bg-surface-container rounded-2xl p-8 shadow-2xl text-center"
+           style="border: 2px dashed rgba(106, 214, 255, 0.5);">
+        <span class="material-symbols-outlined text-primary text-4xl mb-2">upload_file</span>
+        <p class="text-on-surface font-medium" x-text="t('chat.drop_file')"></p>
+        <p class="text-on-surface-variant text-sm" x-text="t('chat.drop_file_types')"></p>
+      </div>
+    </div>
+
+    <section id="chat-area" class="flex-1 overflow-y-auto pt-28 pb-56 px-8 scroll-smooth">
+      <div class="max-w-4xl mx-auto w-full space-y-6">
+
+        <!-- Empty state: shown when no messages -->
+        <div x-show="messages.length === 0" class="flex flex-col items-center justify-center min-h-[60vh] text-center">
+          <div class="w-20 h-20 rounded-full bg-gradient-to-tr from-primary/20 to-secondary/10 p-[1px] mb-6">
+            <div class="w-full h-full rounded-full bg-surface-container-low flex items-center justify-center relative overflow-hidden">
+              <img alt="Mycelos" class="w-12 h-12 object-contain opacity-80" src="/assets/logo-transparent.svg">
+              <div class="absolute inset-0 bg-primary/5 animate-pulse"></div>
+            </div>
+          </div>
+          <h2 class="font-headline text-2xl font-bold tracking-tight glow-text mb-2" x-text="activeAgent || 'Mycelos'"></h2>
+          <p class="text-on-surface-variant max-w-md text-sm leading-relaxed"
+             x-text="t('chat.empty_description')"></p>
+          <div class="flex flex-wrap justify-center gap-3 mt-8 max-w-lg">
+            <button @click="input = t('chat.suggestion_capabilities'); sendMessage()"
+                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
+                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    x-text="t('chat.suggestion_capabilities')"></button>
+            <button @click="input = t('chat.suggestion_create_agent'); sendMessage()"
+                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
+                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    x-text="t('chat.suggestion_create_agent')"></button>
+            <button @click="input = t('chat.suggestion_show_workflows'); sendMessage()"
+                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
+                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    x-text="t('chat.suggestion_show_workflows')"></button>
+          </div>
+        </div>
+
+        <!-- Messages loop -->
+        <template x-for="(msg, index) in messages" :key="index">
+          <div class="animate-fade-in">
+
+            <!-- User message -->
+            <div x-show="msg.role === 'user'" class="flex justify-end w-full">
+              <div class="max-w-[80%] bg-secondary-container text-on-secondary-container px-6 py-4 rounded-xl rounded-tr-sm">
+                <p class="text-[15px] leading-relaxed" x-text="msg.content"></p>
+              </div>
+            </div>
+
+            <!-- Assistant message -->
+            <div x-show="msg.role === 'assistant'" class="flex justify-start w-full group">
+              <div class="max-w-[85%] glass-card rounded-2xl rounded-tl-sm p-6 relative overflow-hidden"
+                   style="border: 1px solid rgba(106, 214, 255, 0.1);">
+                <!-- Decorative glow -->
+                <div class="absolute -top-12 -left-12 w-24 h-24 bg-primary/10 blur-3xl rounded-full"></div>
+                <!-- Agent name header -->
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-[10px] font-label uppercase tracking-widest text-primary font-bold"
+                        x-text="formatAgentLabel(msg.agent || activeAgent, availableAgents)"></span>
+                  <div class="h-[1px] flex-1 mycelium-line"></div>
+                </div>
+                <!-- Content rendered as Markdown -->
+                <div class="text-[15px] leading-relaxed text-on-surface font-light prose-agent"
+                     x-html="renderMarkdown(msg.content)"></div>
+              </div>
+            </div>
+
+            <!-- System message -->
+            <div x-show="msg.role === 'system'" class="flex justify-center w-full">
+              <div class="px-4 py-2 rounded-lg text-xs font-label"
+                   :class="msg.type === 'error'
+                     ? 'bg-error/10 text-error'
+                     : 'bg-surface-container text-on-surface-variant'">
+                <span x-html="renderMarkdown(msg.content)"></span>
+              </div>
+            </div>
+
+            <!-- Step progress pill -->
+            <div x-show="msg.role === 'step'" class="flex justify-start w-full animate-slide-in-up">
+              <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-tertiary/10 text-tertiary text-xs font-label">
+                <span class="material-symbols-outlined text-sm">settings</span>
+                <span x-text="msg.content"></span>
+              </div>
+            </div>
+
+            <!-- Suggested actions (clickable command buttons) -->
+            <div x-show="msg.role === 'actions'" class="flex justify-start w-full animate-slide-in-up">
+              <div class="flex flex-wrap gap-2">
+                <template x-for="action in (msg.actions || [])" :key="action.command">
+                  <button @click="action.prefill ? openCommandDialog(action) : (input = action.command, sendMessage())"
+                          class="px-4 py-2 rounded-xl text-sm font-medium
+                                 bg-primary/10 text-primary border border-primary/20
+                                 hover:bg-primary/20 hover:border-primary/40
+                                 active:scale-95 transition-all cursor-pointer">
+                    <span x-text="action.label"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <!-- Widget: Connector Setup Form -->
+            <div x-show="msg.role === 'widget' && msg.widgetType === 'connector_setup'" class="flex justify-start w-full animate-slide-in-up">
+              <div class="bg-surface-container-low rounded-2xl p-5 w-full max-w-sm sm:max-w-md relative overflow-hidden
+                          hover:shadow-[0_0_20px_rgba(106,214,255,0.08)] transition-shadow"
+                   style="border: 1px solid rgba(106, 214, 255, 0.15);">
+                <div class="absolute left-0 top-0 bottom-0 w-1 bg-primary rounded-l-2xl"></div>
+                <!-- Success state -->
+                <div x-show="msg.widgetData?._completed" class="flex items-center gap-2 text-sm py-1">
+                  <span class="material-symbols-outlined text-lg" :class="msg.widgetData?._status === 'error' ? 'text-error' : 'text-primary'"
+                        x-text="msg.widgetData?._status === 'error' ? 'error' : 'check_circle'"></span>
+                  <span class="font-medium" :class="msg.widgetData?._status === 'error' ? 'text-error' : 'text-primary'"
+                        x-text="msg.widgetData?._statusText || t('widgets.connected').replace('{name}', msg.widgetData?.name || 'Connector')"></span>
+                </div>
+                <!-- Form state -->
+                <div x-show="!msg.widgetData?._completed">
+                  <div class="flex items-center gap-2 mb-3">
+                    <span class="material-symbols-outlined text-primary">extension</span>
+                    <h3 class="font-semibold text-on-surface" x-text="msg.widgetData?.name || 'Connector'"></h3>
+                  </div>
+                  <p class="text-xs text-on-surface-variant mb-4" x-text="msg.widgetData?.description || ''"></p>
+                  <template x-if="msg.widgetData?.needs_credential">
+                    <div class="mb-3">
+                      <label class="text-xs font-label sm:uppercase sm:tracking-widest text-on-surface-variant mb-1 block"
+                             x-text="msg.widgetData?.credential_env_var || 'API Key'"></label>
+                      <input type="password" :id="'cred-' + msg.widgetData?.connector_id"
+                             class="input-field w-full text-sm font-mono"
+                             :placeholder="msg.widgetData?.credential_help || t('widgets.paste_api_key')">
+                      <p x-show="msg.widgetData?.credential_help"
+                         class="mt-1 text-xs text-on-surface-variant/60" x-text="msg.widgetData?.credential_help"></p>
+                    </div>
+                  </template>
+                  <button @click="submitConnectorWidget(msg.widgetData, $event)"
+                          :disabled="msg.widgetData?._loading === true"
+                          class="w-full py-2.5 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                                 hover:bg-primary-dim transition-colors flex items-center justify-center gap-2
+                                 disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!msg.widgetData?._loading" class="material-symbols-outlined text-sm">add_circle</span>
+                    <span x-show="msg.widgetData?._loading" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                    <span x-text="msg.widgetData?._loading ? t('widgets.connecting') : t('widgets.add_connector').replace('{name}', msg.widgetData?.name || 'Connector')"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Widget: Credential Input -->
+            <div x-show="msg.role === 'widget' && msg.widgetType === 'credential_input'" class="flex justify-start w-full animate-slide-in-up">
+              <div class="bg-surface-container-low rounded-2xl p-5 w-full max-w-sm sm:max-w-md relative overflow-hidden
+                          hover:shadow-[0_0_20px_rgba(255,183,77,0.08)] transition-shadow"
+                   style="border: 1px solid rgba(255, 183, 77, 0.15);">
+                <div class="absolute left-0 top-0 bottom-0 w-1 bg-warning rounded-l-2xl"></div>
+                <!-- Success state -->
+                <div x-show="msg.widgetData?._completed" class="flex items-center gap-2 text-sm py-1">
+                  <span class="material-symbols-outlined text-lg" :class="msg.widgetData?._status === 'error' ? 'text-error' : 'text-primary'"
+                        x-text="msg.widgetData?._status === 'error' ? 'error' : 'check_circle'"></span>
+                  <span class="font-medium" :class="msg.widgetData?._status === 'error' ? 'text-error' : 'text-primary'"
+                        x-text="msg.widgetData?._statusText || t('widgets.key_stored_securely').replace('{service}', msg.widgetData?.service || '')"></span>
+                </div>
+                <!-- Form state -->
+                <div x-show="!msg.widgetData?._completed">
+                  <div class="flex items-center gap-2 mb-3">
+                    <span class="material-symbols-outlined text-warning">key</span>
+                    <h3 class="font-semibold text-on-surface" x-text="msg.widgetData?.label || 'API Key'"></h3>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-xs text-on-surface-variant bg-surface-container-lowest
+                              rounded-lg px-2.5 py-1.5 mb-3 border border-on-surface-variant/10">
+                    <span class="material-symbols-outlined text-sm text-warning">shield_lock</span>
+                    <span x-text="t('widgets.encrypted_locally')"></span>
+                  </div>
+                  <input type="password" :id="'key-' + msg.widgetData?.service"
+                         class="input-field w-full text-sm font-mono mb-3"
+                         :placeholder="msg.widgetData?.placeholder || t('widgets.paste_api_key')">
+                  <button @click="submitCredentialWidget(msg.widgetData, $event)"
+                          :disabled="msg.widgetData?._loading === true"
+                          class="w-full py-2.5 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                                 hover:bg-primary-dim transition-colors flex items-center justify-center gap-2
+                                 disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!msg.widgetData?._loading" class="material-symbols-outlined text-sm">lock</span>
+                    <span x-show="msg.widgetData?._loading" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                    <span x-text="msg.widgetData?._loading ? t('widgets.storing') : t('widgets.store_securely')"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </template>
+
+        <!-- Typing indicator -->
+        <div x-show="sending" class="flex items-center gap-2 px-2 animate-fade-in">
+          <div class="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+          <span class="text-xs text-on-surface-variant ml-2 font-label"
+                x-text="t('chat.thinking').replace('{agent}', activeAgent)"></span>
+        </div>
+
+      </div>
+
+      <!-- Connector Setup Dialog (multi-field, auto-detect, secure) -->
+      <div x-show="connectorForm.open" x-transition
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+           @keydown.escape.window="connectorForm.open = false">
+        <div class="bg-surface-container rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl"
+             style="border: 1px solid rgba(106, 214, 255, 0.2);"
+             @click.outside="connectorForm.open = false">
+          <!-- Header -->
+          <div class="flex items-center gap-3 mb-5">
+            <span class="material-symbols-outlined text-primary text-2xl"
+                  x-text="connectorForm.icon || 'extension'"></span>
+            <div>
+              <h3 class="text-base font-semibold text-on-surface" x-text="connectorForm.title"></h3>
+              <p class="text-xs text-on-surface-variant" x-text="t('widgets.credentials_encrypted')"></p>
+            </div>
+          </div>
+
+          <!-- Provider detection badge -->
+          <div x-show="connectorForm.providerDetected" class="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10">
+            <span class="material-symbols-outlined text-primary text-sm">check_circle</span>
+            <span class="text-sm text-primary" x-text="connectorForm.providerDetected"></span>
+          </div>
+
+          <!-- Dynamic fields -->
+          <template x-for="field in connectorForm.visibleFields" :key="field.id">
+            <div class="mb-4" x-show="!field.advanced || connectorForm.showAdvanced">
+              <label class="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-2 block"
+                     x-text="field.label"></label>
+              <input :type="field.type || 'text'"
+                     x-model="connectorForm.values[field.id]"
+                     @keydown.enter="submitConnectorForm()"
+                     @input="field.id === 'email' && detectProvider()"
+                     class="input-field w-full text-sm"
+                     :class="field.type === 'password' ? 'font-mono' : ''"
+                     :placeholder="field.placeholder || ''"
+                     autocomplete="off">
+              <!-- Help text -->
+              <p x-show="connectorForm.fieldHelp[field.id]"
+                 class="mt-1 text-xs text-on-surface-variant"
+                 x-html="connectorForm.fieldHelp[field.id]"></p>
+            </div>
+          </template>
+
+          <!-- Advanced toggle -->
+          <button x-show="connectorForm.hasAdvanced && connectorForm.step > 0"
+                  @click="connectorForm.showAdvanced = !connectorForm.showAdvanced"
+                  class="mb-4 flex items-center gap-1 text-xs text-on-surface-variant hover:text-on-surface transition-colors">
+            <span class="material-symbols-outlined text-sm"
+                  x-text="connectorForm.showAdvanced ? 'expand_less' : 'expand_more'"></span>
+            <span x-text="connectorForm.showAdvanced ? t('widgets.hide_advanced') : t('widgets.show_advanced')"></span>
+          </button>
+
+          <!-- Error message -->
+          <div x-show="connectorForm.error" class="mb-4 px-3 py-2 rounded-lg bg-error/10 text-error text-sm">
+            <span x-text="connectorForm.error"></span>
+          </div>
+
+          <!-- Buttons -->
+          <div class="flex justify-end gap-3">
+            <button @click="connectorForm.open = false"
+                    class="px-4 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface transition-colors"
+                    x-text="t('web.common.cancel')"></button>
+            <button @click="submitConnectorForm()"
+                    :disabled="connectorForm.submitting"
+                    class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-primary-fixed
+                           hover:bg-primary-dim transition-colors disabled:opacity-40 flex items-center gap-2">
+              <span class="material-symbols-outlined text-sm animate-spin" x-show="connectorForm.submitting">progress_activity</span>
+              <span x-text="connectorForm.isLastStep ? t('widgets.test_and_save') : t('widgets.next')"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Simple Command Dialog (for non-connector commands needing input) -->
+      <div x-show="commandDialog.open" x-transition
+           class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+           @keydown.escape.window="commandDialog.open = false">
+        <div class="bg-surface-container rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl"
+             style="border: 1px solid rgba(106, 214, 255, 0.2);"
+             @click.outside="commandDialog.open = false">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="material-symbols-outlined text-primary">terminal</span>
+            <code class="text-sm text-primary font-mono" x-text="commandDialog.command"></code>
+          </div>
+          <div class="mb-4">
+            <label class="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-2 block"
+                   x-text="commandDialog.inputLabel"></label>
+            <input type="text"
+                   x-model="commandDialog.inputValue"
+                   x-ref="commandDialogInput"
+                   @keydown.enter="executeCommandDialog()"
+                   class="input-field w-full text-sm font-mono"
+                   :placeholder="commandDialog.placeholder"
+                   autocomplete="off">
+          </div>
+          <div x-show="commandDialog.error" class="mb-4 px-3 py-2 rounded-lg bg-error/10 text-error text-sm">
+            <span x-text="commandDialog.error"></span>
+          </div>
+          <div class="flex justify-end gap-3">
+            <button @click="commandDialog.open = false"
+                    class="px-4 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface transition-colors"
+                    x-text="t('web.common.cancel')"></button>
+            <button @click="executeCommandDialog()"
+                    :disabled="!commandDialog.inputValue.trim()"
+                    class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-primary-fixed
+                           hover:bg-primary-dim transition-colors disabled:opacity-40"
+                    x-text="t('widgets.execute')"></button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Chat input footer -->
+    <footer class="fixed bottom-0 left-0 md:left-64 md:right-72 right-0 px-8 pb-8 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent z-30">
+      <div class="max-w-4xl mx-auto">
+        <div class="relative group">
+          <!-- Ambient glow behind input -->
+          <div class="absolute -inset-1 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-25 group-focus-within:opacity-50 transition duration-500"></div>
+          <!-- Input container -->
+          <div class="relative bg-surface-container rounded-xl flex items-end p-2 transition-colors"
+               style="border: 1px solid rgba(70, 72, 77, 0.2);"
+               :style="{ borderColor: sending ? 'rgba(70, 72, 77, 0.2)' : undefined }"
+               @focus-within="$el.style.borderColor = 'rgba(106, 214, 255, 0.4)'"
+               @focusout="$el.style.borderColor = 'rgba(70, 72, 77, 0.2)'">
+            <!-- Attach file button -->
+            <button @click="$refs.fileInput.click()"
+                    :disabled="sending"
+                    aria-label="Attach file"
+                    class="p-2 text-on-surface-variant hover:text-primary transition-colors flex-shrink-0 self-end disabled:opacity-40">
+              <span class="material-symbols-outlined">add_circle</span>
+            </button>
+            <input type="file" x-ref="fileInput" class="hidden"
+                   accept=".pdf,.docx,.doc,.txt,.csv,.json,.md,.html,.png,.jpg,.jpeg,.gif,.webp"
+                   @change="handleFileUpload($event.target.files[0]); $event.target.value = ''">
+            <!-- Slash command autocomplete dropdown -->
+            <div x-show="slashSuggestions.length > 0" x-transition
+                 class="absolute bottom-full left-0 right-0 mb-1 mx-2 glass-card-strong rounded-xl py-1.5 z-50 max-h-64 overflow-y-auto"
+                 style="border: 1px solid rgba(70, 72, 77, 0.2);">
+              <template x-for="(cmd, idx) in slashSuggestions" :key="cmd.name">
+                <button @mousedown.prevent="selectSlashCommand(cmd.name)"
+                        class="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-[var(--surface-container)] transition-colors"
+                        :class="idx === slashSelectedIdx && 'bg-[var(--surface-container)] text-[var(--primary)]'">
+                  <code class="text-primary font-mono text-xs" x-text="cmd.name"></code>
+                  <span class="text-on-surface-variant text-xs truncate" x-text="cmd.desc"></span>
+                </button>
+              </template>
+            </div>
+            <!-- Auto-resizing textarea (hidden during recording) -->
+            <textarea x-show="!recording" x-model="input"
+                      :disabled="sending"
+                      aria-label="Message input"
+                      @input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 128) + 'px'; updateSlashSuggestions()"
+                      @keydown.enter.prevent="if (slashSuggestions.length > 0 && slashSelectedIdx >= 0) { selectSlashCommand(slashSuggestions[slashSelectedIdx].name); } else if (!$event.shiftKey) { sendMessage(); }"
+                      @keydown.arrow-up.prevent="if (slashSuggestions.length > 0) slashSelectedIdx = Math.max(0, slashSelectedIdx - 1)"
+                      @keydown.arrow-down.prevent="if (slashSuggestions.length > 0) slashSelectedIdx = Math.min(slashSuggestions.length - 1, slashSelectedIdx + 1)"
+                      @keydown.escape="slashSuggestions = []; slashSelectedIdx = 0"
+                      @keydown.tab.prevent="if (slashSuggestions.length > 0) selectSlashCommand(slashSuggestions[slashSelectedIdx].name)"
+                      @keydown.shift.enter="void 0"
+                      class="flex-1 bg-transparent border-none focus:ring-0 text-on-surface text-[15px] py-3 resize-none max-h-32 placeholder:text-on-surface-variant/40 disabled:opacity-50"
+                      :placeholder="t('chat.placeholder')"
+                      rows="1"></textarea>
+            <!-- Audio waveform visualizer (shown during recording) -->
+            <div x-show="recording" class="flex-1 flex items-center gap-3 py-3 px-2">
+              <span class="w-2 h-2 rounded-full bg-error animate-pulse flex-shrink-0"></span>
+              <canvas x-ref="waveform" height="32" class="flex-1 h-8 rounded"></canvas>
+              <span class="text-xs text-error font-label tabular-nums" x-text="recordingTime">0:00</span>
+            </div>
+            <div class="flex items-center gap-2 pr-1 flex-shrink-0 self-end">
+              <!-- Mic button (requires secure context: https, localhost, or 127.0.0.1) -->
+              <button @click="toggleRecording()"
+                      :disabled="sending || !window.isSecureContext"
+                      :title="window.isSecureContext ? (recording ? t('voice.stop_recording') : t('voice.voice_input')) : 'Microphone requires HTTPS or localhost'"
+                      :aria-label="recording ? t('voice.stop_recording') : t('voice.voice_input')"
+                      class="p-2 transition-colors"
+                      :class="!window.isSecureContext
+                        ? 'text-on-surface-variant/30 cursor-not-allowed'
+                        : recording
+                          ? 'text-error animate-pulse'
+                          : 'text-on-surface-variant hover:text-primary'">
+                <span class="material-symbols-outlined" x-text="recording ? 'stop_circle' : 'mic'">mic</span>
+              </button>
+              <!-- Send button -->
+              <button @click="sendMessage()"
+                      :disabled="sending || !input.trim()"
+                      aria-label="Send message"
+                      class="w-10 h-10 rounded-lg flex items-center justify-center active:scale-90 transition-all flex-shrink-0"
+                      :class="input.trim() && !sending
+                        ? 'bg-primary text-on-primary-fixed shadow-lg shadow-primary/20 cursor-pointer'
+                        : 'bg-surface-container-high text-on-surface-variant/40 cursor-not-allowed'">
+                <span class="material-symbols-outlined font-bold">arrow_upward</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Status hints -->
+        <div class="flex justify-center mt-3 gap-6">
+          <span class="text-[10px] text-on-surface-variant/60 flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm leading-none">auto_awesome</span>
+            <span x-text="modelUsed || t('chat.status_ready')"></span>
+          </span>
+          <span x-show="tokenCount > 0" class="text-[10px] text-on-surface-variant/60 flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm leading-none">token</span>
+            <span x-text="t('chat.status_tokens').replace('{count}', tokenCount)"></span>
+          </span>
+          <span class="text-[10px] text-on-surface-variant/60 flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm leading-none">dns</span>
+            <span x-text="t('chat.status_local')"></span>
+          </span>
+        </div>
+      </div>
+    </footer>
+
+    <!-- First-time Setup Dialog (shown when Mycelos has no credentials yet) -->
+    <div x-show="setupModal.open" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+         @keydown.escape.window="setupModal.open = false">
+      <div class="bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-lg p-6"
+           @click.outside="setupModal.open = false">
+        <h3 class="text-lg font-semibold text-on-surface mb-2">Welcome to Mycelos 🌱</h3>
+        <p class="text-sm text-on-surface-variant mb-4">
+          Paste an API key (Anthropic <code>sk-ant-…</code>, OpenAI <code>sk-…</code>)
+          or an Ollama URL to get started. Mycelos will auto-detect the provider,
+          store the credential securely, and register the right models for you.
+        </p>
+        <label class="block text-xs text-on-surface-variant mb-1">API Key</label>
+        <input type="password" x-model="setupModal.apiKey"
+               placeholder="sk-ant-… or sk-…"
+               class="w-full px-3 py-2 rounded-lg border border-[var(--outline)] bg-[var(--background)] text-on-surface mb-3"
+               @keydown.enter="submitSetup()" />
+        <label class="block text-xs text-on-surface-variant mb-1">…or Ollama URL</label>
+        <input type="text" x-model="setupModal.ollamaUrl"
+               placeholder="http://localhost:11434"
+               class="w-full px-3 py-2 rounded-lg border border-[var(--outline)] bg-[var(--background)] text-on-surface mb-3" />
+        <p x-show="setupModal.error" class="text-sm text-error mb-2" x-text="setupModal.error"></p>
+        <div class="flex gap-2 justify-end">
+          <button @click="setupModal.open = false"
+                  class="px-4 py-2 rounded-lg text-on-surface-variant hover:bg-white/5">Cancel</button>
+          <button @click="submitSetup()" :disabled="setupModal.loading"
+                  class="px-4 py-2 rounded-lg bg-primary text-on-primary font-medium disabled:opacity-50">
+            <span x-show="!setupModal.loading">Set up</span>
+            <span x-show="setupModal.loading">Setting up…</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Right panel: Agent Status (desktop only) -->
+  <aside class="fixed right-0 top-0 h-full w-72 bg-[var(--surface)] flex-col py-8 px-6 overflow-y-auto z-40 hidden md:flex"
+         style="border-left: 1px solid rgba(70, 72, 77, 0.15);"
+         x-data>
+    <header class="mb-8 pt-8">
+      <h3 class="text-secondary font-headline font-bold text-sm tracking-widest uppercase mb-1" x-text="t('panel.agent_status')"></h3>
+      <p class="text-on-surface/40 text-[10px] font-label tracking-widest uppercase" x-text="t('panel.session_activity')"></p>
+    </header>
+
+    <!-- Active agent display -->
+    <div class="space-y-4 mb-8">
+      <div class="flex items-center justify-between p-3 rounded-lg bg-surface-container">
+        <div class="flex items-center gap-3">
+          <span class="material-symbols-outlined text-primary">sensors</span>
+          <div>
+            <span class="text-[11px] font-label uppercase tracking-widest text-primary block"
+                  x-text="$store.chat.activeAgent">Mycelos</span>
+            <span class="text-[10px] text-on-surface-variant" x-text="t('panel.active_agent')"></span>
+          </div>
+        </div>
+        <div class="w-2 h-2 rounded-full bg-primary animate-pulse" style="box-shadow: 0 0 8px rgba(106, 214, 255, 0.8);"></div>
+      </div>
+
+      <div class="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container transition-colors">
+        <div class="flex items-center gap-3">
+          <span class="material-symbols-outlined text-on-surface-variant/40">psychology</span>
+          <span class="text-[11px] font-label uppercase tracking-widest text-on-surface-variant/40" x-text="t('panel.processing')"></span>
+        </div>
+        <span class="text-[10px] font-bold text-on-surface-variant/40"
+              x-text="$store.chat.sending ? t('panel.status_active') : t('panel.status_idle')"></span>
+      </div>
+    </div>
+
+    <!-- Session metrics -->
+    <div class="space-y-4 mb-8">
+      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.tokens_used')"></p>
+        <div class="flex items-end justify-between">
+          <span class="text-2xl font-headline font-bold text-on-surface"
+                x-text="$store.chat.tokenCount">0</span>
+          <span class="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded" x-text="t('panel.last_msg')"></span>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.model')"></p>
+        <div class="flex items-end justify-between">
+          <span class="text-sm font-headline font-bold text-on-surface truncate"
+                x-text="$store.chat.modelUsed || t('panel.model_awaiting')"></span>
+        </div>
+      </div>
+
+      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.session_cost')"></p>
+        <div class="flex items-end justify-between">
+          <span class="text-2xl font-headline font-bold text-on-surface"
+                x-text="'$' + ($store.chat.costTotal).toFixed(4)">$0.0000</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Messages count -->
+    <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+      <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.messages')"></p>
+      <div class="flex items-end justify-between">
+        <span class="text-2xl font-headline font-bold text-on-surface"
+              x-text="$store.chat.messageCount">0</span>
+        <span class="text-[10px] text-tertiary font-bold" x-text="t('panel.this_session')"></span>
+      </div>
+    </div>
+
+    <!-- Download session -->
+    <div class="mt-6" x-data="{ open: false }" @click.outside="open = false"
+         x-show="$store.chat.activeSessionId">
+      <div class="relative">
+        <button @click="open = !open"
+                class="w-full py-2.5 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-widest
+                       text-on-surface-variant hover:text-primary transition-all rounded-lg"
+                style="border: 1px solid rgba(70, 72, 77, 0.3);">
+          <span class="material-symbols-outlined text-sm">download</span>
+          <span x-text="t('panel.download_session')">Download</span>
+          <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
+        </button>
+        <div x-show="open" x-transition
+             class="absolute bottom-full left-0 right-0 mb-1 bg-[var(--surface-container-high)] rounded-lg shadow-lg py-1 z-10">
+          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=markdown'); open = false"
+                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">Markdown</button>
+          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=json'); open = false"
+                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">JSON</button>
+          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=jsonl'); open = false"
+                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">JSONL</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Flush / New session at bottom -->
+    <div class="mt-auto pt-6" style="border-top: 1px solid rgba(70, 72, 77, 0.1);">
+      <button @click="window.dispatchEvent(new CustomEvent('new-session'))"
+              class="w-full py-2.5 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-widest
+                     text-on-surface-variant hover:text-primary transition-all rounded-lg"
+              style="border: 1px solid rgba(70, 72, 77, 0.3);">
+        <span class="material-symbols-outlined text-sm">add_circle</span>
+        <span x-text="t('chat.new_session')">New Session</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+  <script>
+    /**
+     * Render Markdown content to sanitized HTML.
+     * Uses marked.js with safe defaults.
+     */
+    /**
+     * Known slash commands that should become clickable in chat messages.
+     */
+    const CLICKABLE_COMMANDS = /\/(connector|credential|agent|schedule|config|model|workflow|mount|restart)\b/;
+
+    /**
+     * Format agent label: show system name in parentheses when agent was renamed.
+     * e.g. "Fridolin (Mycelos)" when display_name differs from system name.
+     */
+    function formatAgentLabel(agentName, availableAgents) {
+      if (!agentName) return 'Mycelos';
+      const agent = (availableAgents || []).find(a =>
+        (a.display_name || a.name) === agentName
+      );
+      if (agent && agent.display_name && agent.display_name !== agent.name) {
+        return agent.display_name + ' (' + agent.name + ')';
+      }
+      return agentName;
+    }
+
+    function renderMarkdown(text) {
+      if (!text) return '';
+      let html;
+      if (typeof marked !== 'undefined') {
+        html = marked.parse(text);
+      } else {
+        html = text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\n/g, '<br>');
+      }
+      // Helper: decode HTML entities to plain text for data-cmd attribute
+      function _decodeHtml(html) {
+        const el = document.createElement('textarea');
+        el.innerHTML = html;
+        return el.value;
+      }
+      function _encodeAttr(text) {
+        return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      }
+
+      // Post-process: make slash commands clickable
+      // 1. Commands in <pre><code> blocks (fenced code blocks) — replace entire <pre>
+      html = html.replace(
+        /<pre><code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)\n?<\/code><\/pre>/g,
+        (_, rawCmd) => {
+          const cmd = _decodeHtml(rawCmd).replace(/\n$/, '').trim();
+          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+        }
+      );
+      // 2. Commands in inline <code> (backtick) — wrap with button
+      html = html.replace(
+        /<code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)<\/code>/g,
+        (_, rawCmd) => {
+          const cmd = _decodeHtml(rawCmd).trim();
+          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+        }
+      );
+
+      // Convert mermaid code blocks to renderable containers
+      html = html.replace(
+        /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
+        (_, code) => {
+          const id = 'mermaid-' + (++_mermaidCounter);
+          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+        }
+      );
+      if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
+        setTimeout(() => mermaid.run(), 50);
+      }
+
+      return html;
+    }
+
+    let _mermaidCounter = 0;
+
+    /**
+     * Connector form schemas — defines what fields each connector needs.
+     * Drives both the setup modal and CLI prompts from one definition.
+     */
+    const CONNECTOR_FORMS = {
+      email: {
+        title: t('connectors.email_title'),
+        icon: 'mail',
+        steps: [
+          {
+            fields: [
+              { id: 'email', label: t('connectors.email_address'), type: 'email', placeholder: 'you@gmail.com', required: true },
+            ],
+            onComplete: (values) => {
+              // Auto-detect provider from email domain
+              const domain = (values.email || '').split('@')[1]?.toLowerCase() || '';
+              const providers = {
+                gmail: { match: ['gmail', 'googlemail'], imap: 'imap.gmail.com', smtp: 'smtp.gmail.com', help: t('connectors.gmail_help') },
+                outlook: { match: ['outlook', 'hotmail', 'live.'], imap: 'outlook.office365.com', smtp: 'smtp.office365.com', help: t('connectors.outlook_help') },
+                icloud: { match: ['icloud', 'me.com', 'mac.com'], imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com', help: t('connectors.icloud_help') },
+                yahoo: { match: ['yahoo'], imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com', help: t('connectors.yahoo_help') },
+              };
+              for (const [name, p] of Object.entries(providers)) {
+                if (p.match.some(m => domain.includes(m))) {
+                  return { provider: name, imap_server: p.imap, smtp_server: p.smtp, help: p.help };
+                }
+              }
+              return { provider: null };
+            },
+          },
+          {
+            fields: [
+              { id: 'password', label: t('connectors.app_password'), type: 'password', placeholder: t('connectors.app_password_placeholder'), required: true, helpKey: 'help' },
+              { id: 'imap_server', label: t('connectors.imap_server'), type: 'text', placeholder: 'imap.example.com', advanced: true },
+              { id: 'smtp_server', label: t('connectors.smtp_server'), type: 'text', placeholder: 'smtp.example.com', advanced: true },
+            ],
+          },
+        ],
+        buildCredential: (values) => JSON.stringify({
+          email: values.email, password: values.password,
+          imap_server: values.imap_server, imap_port: 993,
+          smtp_server: values.smtp_server, smtp_port: 587,
+        }),
+      },
+      telegram: {
+        title: t('connectors.telegram_title'),
+        icon: 'smart_toy',
+        steps: [{
+          fields: [
+            { id: 'token', label: t('connectors.bot_token'), type: 'password', placeholder: '123456:ABC-DEF...', required: true,
+              help: t('connectors.bot_token_help') },
+          ],
+        }],
+        buildCredential: (values) => values.token,
+      },
+      github: {
+        title: t('connectors.github_title'),
+        icon: 'code',
+        steps: [{
+          fields: [
+            { id: 'token', label: t('connectors.personal_access_token'), type: 'password', placeholder: 'ghp_...', required: true,
+              help: t('connectors.github_token_help') },
+          ],
+        }],
+        buildCredential: (values) => values.token,
+      },
+    };
+
+    /**
+     * Delegated click handler for .cmd-link buttons in rendered markdown.
+     * Dispatches a custom event that the Alpine component listens for.
+     */
+    document.addEventListener('click', function(e) {
+      const btn = e.target.closest('.cmd-link');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cmd = btn.getAttribute('data-cmd');
+      if (!cmd) return;
+      // Decode HTML entities
+      const txt = document.createElement('textarea');
+      txt.innerHTML = cmd;
+      const decoded = txt.value;
+      // Dispatch custom event — Alpine component listens via @run-command.window
+      window.dispatchEvent(new CustomEvent('run-command', { detail: { command: decoded } }));
+    });
+
+    /**
+     * Chat page Alpine.js component.
+     * Manages sessions, messages, SSE streaming, and UI state.
+     */
+    function chatApp() {
+      return {
+        sessions: [],
+        activeSessionId: null,
+        messages: [],
+        input: '',
+        sending: false,
+        recording: false,
+        recordingTime: '0:00',
+        _mediaRecorder: null,
+        _audioChunks: [],
+        _audioCtx: null,
+        _analyser: null,
+        _animFrameId: null,
+        _timerInterval: null,
+        _recordStart: 0,
+        activeAgent: 'Mycelos',
+        tokenCount: 0,
+        modelUsed: '',
+        costTotal: 0,
+        commandDialog: { open: false, command: '', inputValue: '', inputLabel: 'Value', placeholder: '', error: '' },
+        availableAgents: [],
+        selectedAgentId: 'mycelos',
+        selectedAgentName: 'Mycelos',
+        dragOver: false,
+        uploadProgress: '',
+        slashSuggestions: [],
+        slashSelectedIdx: 0,
+        _slashCommands: [
+          { name: '/help', desc: 'Show available commands', subs: [] },
+          { name: '/memory', desc: 'Manage persistent memory', subs: ['list', 'search', 'delete', 'clear'] },
+          { name: '/cost', desc: 'Usage & cost tracking', subs: ['week', 'month', 'all'] },
+          { name: '/sessions', desc: 'Session management', subs: ['resume'] },
+          { name: '/mount', desc: 'Filesystem access', subs: ['list', 'add', 'revoke'] },
+          { name: '/config', desc: 'System configuration', subs: ['show', 'rollback'] },
+          { name: '/agent', desc: 'Agent management', subs: ['list'] },
+          { name: '/connector', desc: 'Connector management', subs: ['list', 'setup', 'add'] },
+          { name: '/schedule', desc: 'Cron jobs', subs: ['list', 'add'] },
+          { name: '/workflow', desc: 'Workflow management', subs: ['list', 'runs', 'show', 'delete'] },
+          { name: '/model', desc: 'LLM models', subs: ['list'] },
+          { name: '/credential', desc: 'Manage credentials', subs: [] },
+          { name: '/run', desc: 'Run a workflow', subs: [] },
+          { name: '/bg', desc: 'Background tasks', subs: ['list', 'cancel', 'approve', 'detail'] },
+          { name: '/inbox', desc: 'File inbox', subs: ['clear'] },
+          { name: '/reload', desc: 'Reload MCP connectors', subs: [] },
+          { name: '/restart', desc: 'Restart system', subs: [] },
+          { name: '/demo', desc: 'Feature demonstrations', subs: ['widget'] },
+        ],
+        connectorForm: {
+          open: false, connectorId: '', title: '', icon: 'extension',
+          step: 0, schema: null, values: {}, fieldHelp: {},
+          visibleFields: [], hasAdvanced: false, showAdvanced: false,
+          isLastStep: false, providerDetected: '', error: '', submitting: false,
+        },
+        setupModal: { open: false, apiKey: '', ollamaUrl: '', loading: false, error: '' },
+        pendingWorkflowRunId: null,
+        pendingHandoffAgentId: null,
+
+        async submitSetup() {
+          if (this.setupModal.loading) return;
+          const key = (this.setupModal.apiKey || '').trim();
+          const ollama = (this.setupModal.ollamaUrl || '').trim();
+          if (!key && !ollama) {
+            this.setupModal.error = 'Enter an API key or an Ollama URL.';
+            return;
+          }
+          this.setupModal.loading = true;
+          this.setupModal.error = '';
+          try {
+            const body = ollama ? { ollama_url: ollama } : { api_key: key };
+            const res = await MycelosAPI.post('/api/setup', body);
+            if (res && res.ok) {
+              this.setupModal.open = false;
+              this.messages.push({
+                role: 'system',
+                content: `✅ Setup complete — provider: ${res.provider}, models: ${(res.models || []).join(', ')}. You can chat now.`,
+              });
+              this.scrollToBottom();
+            } else {
+              this.setupModal.error = 'Setup failed: unexpected response.';
+            }
+          } catch (e) {
+            this.setupModal.error = (e && e.message) || 'Setup failed.';
+          } finally {
+            this.setupModal.loading = false;
+          }
+        },
+
+        /**
+         * Initialize: load sessions from the API.
+         */
+        async initChat() {
+          this.$watch('activeSessionId', (id) => { this.$store.chat.activeSessionId = id; });
+          try {
+            const data = await MycelosAPI.get('/api/sessions');
+            this.sessions = Array.isArray(data) ? data : (data.sessions || []);
+
+            // Check URL for ?session=<id> (e.g., from Dashboard click)
+            const params = new URLSearchParams(window.location.search);
+            const requestedSession = params.get('session');
+
+            if (requestedSession) {
+              this.activeSessionId = requestedSession;
+              await this.loadMessages();
+            } else if (this.sessions.length > 0) {
+              // Resume latest session
+              const sid = this.sessions[0].session_id || this.sessions[0].id;
+              this.activeSessionId = sid;
+              await this.loadMessages();
+            }
+          } catch (e) {
+            // Gateway may not be running — that is fine for static dev
+            console.warn('Could not load sessions:', e.message);
+          }
+
+          // Load available agents for the agent selector
+          try {
+            // Backend returns only agents the user can actually chat with.
+            const agentData = await MycelosAPI.get('/api/agents/conversational');
+            this.availableAgents = Array.isArray(agentData) ? agentData : [];
+            // Ensure Mycelos is always first — fetch real data to get display_name
+            if (!this.availableAgents.find(a => a.id === 'mycelos')) {
+              try {
+                const mcAgent = await MycelosAPI.get('/api/agents/mycelos');
+                this.availableAgents.unshift({ id: 'mycelos', name: mcAgent.name || 'Mycelos', display_name: mcAgent.display_name || null });
+              } catch (_) {
+                this.availableAgents.unshift({ id: 'mycelos', name: 'Mycelos', display_name: null });
+              }
+            }
+          } catch (e) {
+            try {
+              const mcAgent = await MycelosAPI.get('/api/agents/mycelos');
+              this.availableAgents = [{ id: 'mycelos', name: mcAgent.name || 'Mycelos', display_name: mcAgent.display_name || null }];
+            } catch (_) {
+              this.availableAgents = [{ id: 'mycelos', name: 'Mycelos', display_name: null }];
+            }
+          }
+
+          // Apply user-chosen display name for the primary chat agent
+          const mycelosAgent = this.availableAgents.find(a => a.id === 'mycelos');
+          if (mycelosAgent) {
+            const label = mycelosAgent.display_name || mycelosAgent.name || 'Mycelos';
+            this.activeAgent = label;
+            this.selectedAgentName = label;
+            this.$store.chat.activeAgent = label;
+          }
+
+          // Check URL for ?agent=<id> (e.g., from Agents page "Chat with" button)
+          const agentParam = new URLSearchParams(window.location.search).get('agent');
+          if (agentParam) {
+            const found = this.availableAgents.find(a => a.id === agentParam);
+            if (found) {
+              this.selectedAgentId = found.id;
+              this.selectedAgentName = found.display_name || found.name || found.id;
+              this.activeAgent = this.selectedAgentName;
+              this.$store.chat.activeAgent = this.selectedAgentName;
+              this.pendingHandoffAgentId = found.id;
+            }
+          }
+
+          // Check URL for ?prefill=<message> (e.g., from Agents/Workflows page buttons)
+          const params2 = new URLSearchParams(window.location.search);
+          const prefill = params2.get('prefill');
+          if (prefill || agentParam) {
+            // Clean URL to avoid re-prefill on reload
+            window.history.replaceState({}, '', '/pages/chat.html');
+          }
+          if (prefill) {
+            this.input = prefill;
+            this.$nextTick(() => {
+              const ta = this.$el.querySelector('textarea');
+              if (ta) { ta.focus(); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
+            });
+          }
+
+          // ?resume_run=<id> — sidebar click on an active workflow run
+          const resumeRun = params2.get('resume_run');
+          if (resumeRun) {
+            this.pendingWorkflowRunId = resumeRun;
+            window.history.replaceState({}, '', '/pages/chat.html');
+          }
+          // ?new=1 — start a fresh session (preserve any agent we just selected)
+          if (params2.get('new')) {
+            const keepAgentId = this.selectedAgentId;
+            const keepAgentName = this.selectedAgentName;
+            await this.newSession();
+            if (keepAgentId && keepAgentId !== 'mycelos') {
+              this.selectedAgentId = keepAgentId;
+              this.selectedAgentName = keepAgentName;
+              this.activeAgent = keepAgentName;
+              this.$store.chat.activeAgent = keepAgentName;
+              this.pendingHandoffAgentId = keepAgentId;
+            }
+            window.history.replaceState({}, '', '/pages/chat.html');
+          }
+
+          // Sidebar CustomEvents (same-page navigation from sidebar buttons)
+          window.addEventListener('mycelos:new-chat', async (ev) => {
+            await this.newSession();
+            const agentId = ev.detail && ev.detail.agentId;
+            if (agentId) {
+              const found = this.availableAgents.find(a => a.id === agentId);
+              if (found) {
+                this.selectedAgentId = found.id;
+                this.selectedAgentName = found.display_name || found.name || found.id;
+                this.activeAgent = this.selectedAgentName;
+                this.$store.chat.activeAgent = this.selectedAgentName;
+                this.pendingHandoffAgentId = found.id;
+              }
+            }
+          });
+          window.addEventListener('mycelos:resume-run', (ev) => {
+            const runId = ev.detail && ev.detail.runId;
+            if (runId) {
+              this.pendingWorkflowRunId = runId;
+              this.$nextTick(() => {
+                const ta = this.$el.querySelector('textarea');
+                if (ta) ta.focus();
+              });
+            }
+          });
+          window.addEventListener('mycelos:open-session', async (ev) => {
+            const sid = ev.detail && ev.detail.sessionId;
+            if (sid) await this.switchSession(sid);
+          });
+
+          // Poll for pending reminder notifications every 20s so the chat
+          // tab gets them live instead of only on the next user message.
+          this._pollPendingNotifications();
+          setInterval(() => this._pollPendingNotifications(), 20000);
+        },
+
+        /**
+         * Fetch any pending reminder from the server and inject it as a
+         * system message. The endpoint deletes the reminder on read, so
+         * calling this repeatedly is safe — at most one reminder per call.
+         */
+        async _pollPendingNotifications() {
+          try {
+            const data = await MycelosAPI.get('/api/notifications/pending');
+            if (data && data.reminder) {
+              this.messages.push({
+                role: 'system',
+                content: '⏰ ' + data.reminder,
+                agent: 'Reminder',
+              });
+              this.scrollToBottom();
+              this._playReminderBeep();
+            }
+          } catch (e) {
+            // Silent — polling must not spam the console
+          }
+        },
+
+        /**
+         * Two-tone beep via Web Audio API. No asset, no autoplay issues
+         * once the user has interacted with the page (which they always
+         * have by the time a reminder fires in chat).
+         */
+        _playReminderBeep() {
+          try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            const ctx = new Ctx();
+            const now = ctx.currentTime;
+            const tones = [
+              { freq: 880, start: 0,    dur: 0.15 },  // A5
+              { freq: 1320, start: 0.18, dur: 0.20 }, // E6
+            ];
+            for (const t of tones) {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'sine';
+              osc.frequency.value = t.freq;
+              gain.gain.setValueAtTime(0, now + t.start);
+              gain.gain.linearRampToValueAtTime(0.18, now + t.start + 0.01);
+              gain.gain.linearRampToValueAtTime(0, now + t.start + t.dur);
+              osc.connect(gain).connect(ctx.destination);
+              osc.start(now + t.start);
+              osc.stop(now + t.start + t.dur + 0.01);
+            }
+            // Close the context shortly after the last tone to free resources
+            setTimeout(() => ctx.close().catch(() => {}), 600);
+          } catch (e) {
+            // Audio is best-effort — never break the UI for it
+          }
+        },
+
+        /**
+         * Load messages for the active session.
+         */
+        async loadMessages() {
+          if (!this.activeSessionId) return;
+          try {
+            const data = await MycelosAPI.get('/api/sessions/' + this.activeSessionId + '/messages');
+            const msgs = data.messages || [];
+            this.messages = msgs
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .map(m => ({
+                role: m.role,
+                content: m.content || '',
+                agent: m.metadata?.agent || 'Mycelos',
+                type: '',
+              }));
+            this.$store.chat.messageCount = this.messages.length;
+            this.scrollToBottom();
+          } catch (e) {
+            // Session may not have messages yet — that's fine
+            console.warn('Could not load messages:', e.message);
+          }
+        },
+
+        /**
+         * Create a new chat session.
+         */
+        async newSession() {
+          try {
+            const data = await MycelosAPI.post('/api/sessions', {});
+            this.activeSessionId = data.session_id || data.id;
+            this.sessions.unshift({ id: this.activeSessionId, title: '' });
+            this.messages = [];
+            this.tokenCount = 0;
+            this.modelUsed = '';
+            this.costTotal = 0;
+            this.activeAgent = this.selectedAgentName;
+          } catch (e) {
+            console.warn('Could not create session:', e.message);
+            // Generate a local ID for offline dev
+            this.activeSessionId = 'local-' + Date.now();
+            this.messages = [];
+          }
+        },
+
+        /**
+         * Switch to a different session.
+         */
+        async switchSession(sessionId) {
+          this.activeSessionId = sessionId;
+          this.messages = [];
+          this.tokenCount = 0;
+          this.modelUsed = '';
+          this.activeAgent = this.selectedAgentName;
+          await this.loadMessages();
+        },
+
+        /**
+         * Dropdown click: start a fresh session with the chosen agent.
+         * A session is bound to one agent — switching mid-conversation
+         * is confusing, so we always open a new session.
+         */
+        async selectTargetAgent(agent) {
+          await this.newSession();
+          this.selectedAgentId = agent.id;
+          this.selectedAgentName = agent.display_name || agent.name || agent.id;
+          this.activeAgent = this.selectedAgentName;
+          this.$store.chat.activeAgent = this.selectedAgentName;
+          // For non-default agents, queue a handoff on the next send.
+          if (agent.id !== 'mycelos') {
+            this.pendingHandoffAgentId = agent.id;
+          } else {
+            this.pendingHandoffAgentId = null;
+          }
+          this.$nextTick(() => {
+            const ta = this.$el.querySelector('textarea');
+            if (ta) ta.focus();
+          });
+        },
+
+        /**
+         * Update slash command suggestions based on current input.
+         * Handles both top-level commands ("/co" → /config, /cost, /connector)
+         * and subcommands ("/memory " → list, search, delete, clear).
+         */
+        updateSlashSuggestions() {
+          const text = this.input;
+          if (!text.startsWith('/')) {
+            this.slashSuggestions = [];
+            this.slashSelectedIdx = 0;
+            return;
+          }
+
+          const parts = text.split(/\s+/);
+          if (parts.length === 1) {
+            // Top-level: filter commands by prefix
+            const query = parts[0].toLowerCase();
+            this.slashSuggestions = this._slashCommands.filter(c =>
+              c.name.startsWith(query)
+            );
+          } else if (parts.length === 2) {
+            // Subcommand: find parent command and filter subs
+            const cmd = this._slashCommands.find(c => c.name === parts[0]);
+            if (cmd && cmd.subs.length > 0) {
+              const subQuery = parts[1].toLowerCase();
+              this.slashSuggestions = cmd.subs
+                .filter(s => s.startsWith(subQuery))
+                .map(s => ({ name: s, desc: parts[0] + ' ' + s }));
+            } else {
+              this.slashSuggestions = [];
+            }
+          } else {
+            this.slashSuggestions = [];
+          }
+          this.slashSelectedIdx = 0;
+        },
+
+        /**
+         * Select a slash command or subcommand from the autocomplete dropdown.
+         */
+        selectSlashCommand(name) {
+          const parts = this.input.split(/\s+/);
+          if (parts.length >= 2 && !name.startsWith('/')) {
+            // Selecting a subcommand — append to parent command
+            this.input = parts[0] + ' ' + name;
+          } else {
+            // Selecting a top-level command
+            const cmd = this._slashCommands.find(c => c.name === name);
+            this.input = name + (cmd && cmd.subs.length > 0 ? ' ' : '');
+          }
+          this.slashSuggestions = [];
+          this.slashSelectedIdx = 0;
+          this.$nextTick(() => {
+            const ta = this.$el.querySelector('textarea');
+            if (ta) { ta.focus(); this.updateSlashSuggestions(); }
+          });
+        },
+
+        /**
+         * Send a message via SSE streaming.
+         */
+        async sendMessage() {
+          if (!this.input.trim() || this.sending) return;
+
+          // Pending handoff (from sidebar / URL agent selection) is sent as
+          // a structured field on the POST body — no slash command needed.
+          const message = this.input;
+          let handoffAgentId = null;
+          if (this.pendingHandoffAgentId && this.pendingHandoffAgentId !== 'mycelos') {
+            handoffAgentId = this.pendingHandoffAgentId;
+            this.pendingHandoffAgentId = null;
+          } else if (this.selectedAgentId !== 'mycelos' && this.activeAgent !== this.selectedAgentName) {
+            handoffAgentId = this.selectedAgentId;
+          }
+          this.input = '';
+          this.sending = true;
+          this.$store.chat.sending = true;
+
+          // Reset textarea height
+          const textarea = this.$el.querySelector('textarea');
+          if (textarea) textarea.style.height = 'auto';
+
+          // Push user message
+          this.messages.push({ role: 'user', content: message });
+          this.scrollToBottom();
+
+          // Reset tool progress tracking
+          this._toolProgress = { tools: [], active: '' };
+          // Remove any leftover step pill from previous message
+          this.messages = this.messages.filter(m => m.role !== 'step');
+
+          // Create assistant placeholder — track its index for reactive updates
+          const assistantIdx = this.messages.length;
+          this.messages.push({ role: 'assistant', content: '', agent: this.activeAgent });
+
+          try {
+            const payload = {
+              message: message,
+              session_id: this.activeSessionId,
+            };
+            if (this.pendingWorkflowRunId) {
+              payload.workflow_run_id = this.pendingWorkflowRunId;
+              this.pendingWorkflowRunId = null;
+            }
+            if (handoffAgentId) {
+              payload.target_agent_id = handoffAgentId;
+            }
+            await MycelosAPI.stream('/api/chat', payload, (type, data) => {
+              switch (type) {
+                case 'session':
+                  this.activeSessionId = data.session_id;
+                  // Add to sessions list if new — use first message as preview title
+                  if (!this.sessions.find(s => (s.session_id || s.id) === data.session_id)) {
+                    const preview = message.length > 40 ? message.slice(0, 40) + '…' : message;
+                    this.sessions.unshift({ session_id: data.session_id, title: preview });
+                  }
+                  break;
+
+                case 'agent':
+                  this.messages[assistantIdx] = { ...this.messages[assistantIdx], agent: data.agent };
+                  this.activeAgent = data.agent;
+                  this.$store.chat.activeAgent = data.agent;
+                  break;
+
+                case 'text':
+                  this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: data.content };
+                  this.scrollToBottom();
+                  break;
+
+                case 'system-response':
+                  // Onboarding: Mycelos has no credentials yet — open the setup modal
+                  if (data.widget === 'setup_required') {
+                    this.setupModal = { open: true, apiKey: '', ollamaUrl: '', loading: false, error: '' };
+                    if (this.messages[assistantIdx] && !this.messages[assistantIdx].content) {
+                      this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: data.content, agent: 'System' };
+                    } else {
+                      this.messages.push({ role: 'system', content: data.content });
+                    }
+                    this.scrollToBottom();
+                    break;
+                  }
+                  // For slash commands: fill the empty assistant placeholder instead of adding a new message
+                  if (this.messages[assistantIdx] && !this.messages[assistantIdx].content) {
+                    this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: data.content, agent: 'System' };
+                  } else {
+                    this.messages.push({ role: 'system', content: data.content });
+                  }
+                  this.scrollToBottom();
+                  break;
+
+                case 'step-progress': {
+                  const stepName = data.step_id || data.step || data.content || '';
+                  const stepStatus = data.status || '';
+                  // Update the single tool-progress pill instead of adding new ones
+                  if (!this._toolProgress) this._toolProgress = { tools: [], active: '' };
+                  if (stepStatus === 'running') {
+                    this._toolProgress.active = stepName;
+                  } else if (stepStatus === 'done' && stepName) {
+                    if (!this._toolProgress.tools.includes(stepName)) {
+                      this._toolProgress.tools.push(stepName);
+                    }
+                    this._toolProgress.active = '';
+                  }
+                  // Build pill text
+                  const parts = [];
+                  if (this._toolProgress.active) parts.push(this._toolProgress.active + '...');
+                  if (this._toolProgress.tools.length > 0) {
+                    parts.push(t('status.steps_done').replace('{count}', this._toolProgress.tools.length));
+                  }
+                  const pillText = parts.join(' · ') || t('status.processing');
+                  // Update existing step message or create one
+                  const existingStep = this.messages.findIndex(m => m.role === 'step');
+                  if (existingStep >= 0) {
+                    this.messages[existingStep] = { ...this.messages[existingStep], content: pillText };
+                  } else {
+                    this.messages.push({ role: 'step', content: pillText });
+                  }
+                  this.scrollToBottom();
+                  break;
+                }
+
+                case 'error':
+                  this.messages.push({ role: 'system', content: data.message, type: 'error' });
+                  this.scrollToBottom();
+                  break;
+
+                case 'suggested-actions':
+                  this.messages.push({ role: 'actions', content: '', actions: data.actions || [] });
+                  this.scrollToBottom();
+                  break;
+
+                case 'widget': {
+                  const w = data.widget || {};
+                  // Initialize reactive state flags so Alpine bindings start from a defined value
+                  w._loading = false;
+                  w._completed = false;
+                  this.messages.push({ role: 'widget', widgetType: w.type, widgetData: w });
+                  this.scrollToBottom();
+                  break;
+                }
+
+                case 'restart':
+                  // Gateway is restarting — auto-reconnect after delay
+                  const delay = (data.delay || 5) * 1000;
+                  this.messages.push({ role: 'system', content: t('status.gateway_restarting') });
+                  this.scrollToBottom();
+                  setTimeout(async () => {
+                    // Poll until gateway is back
+                    for (let i = 0; i < 10; i++) {
+                      try {
+                        await MycelosAPI.get('/api/health');
+                        this.messages.push({ role: 'system', content: t('status.gateway_restarted') });
+                        this.scrollToBottom();
+                        return;
+                      } catch { await new Promise(r => setTimeout(r, 1000)); }
+                    }
+                    this.messages.push({ role: 'system', content: t('status.gateway_restart_slow'), type: 'error' });
+                    this.scrollToBottom();
+                  }, delay);
+                  break;
+
+                case 'session-meta':
+                  // Agent set a session title — update sidebar
+                  if (data.title) {
+                    const sid = data.session_id || this.activeSessionId;
+                    const sess = this.sessions.find(s => (s.session_id || s.id) === sid);
+                    if (sess) {
+                      sess.title = data.title;
+                      if (data.topic) sess.topic = data.topic;
+                    }
+                  }
+                  break;
+
+                case 'done':
+                  // Remove step pill on completion
+                  this.messages = this.messages.filter(m => m.role !== 'step');
+                  this.tokenCount = data.tokens || 0;
+                  this.modelUsed = data.model || '';
+                  if (data.cost) this.costTotal += data.cost;
+                  this.sending = false;
+                  // Sync to store for right panel
+                  this.$store.chat.tokenCount = this.tokenCount;
+                  this.$store.chat.modelUsed = this.modelUsed;
+                  this.$store.chat.costTotal = this.costTotal;
+                  this.$store.chat.sending = false;
+                  this.$store.chat.messageCount = this.messages.length;
+                  this.scrollToBottom();
+                  break;
+              }
+            });
+          } catch (e) {
+            // Stream failed — clear placeholder and show error
+            if (this.messages[assistantIdx]) {
+              this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: '' };
+            }
+            this.messages.push({ role: 'system', content: t('status.connection_error').replace('{error}', e.message), type: 'error' });
+            this.sending = false;
+          }
+
+          // Ensure sending is reset even if no 'done' event arrived
+          this.sending = false;
+          this.$store.chat.sending = false;
+          this.$store.chat.messageCount = this.messages.length;
+          this.scrollToBottom();
+        },
+
+        /**
+         * Toggle voice input. Uses browser Speech Recognition API (no API key needed).
+         * Falls back to MediaRecorder + /api/transcribe if Speech Recognition unavailable.
+         */
+        async toggleRecording() {
+          if (this.recording) {
+            // Stop recording
+            if (this._speechRecognition) {
+              this._speechRecognition.stop();
+            } else if (this._mediaRecorder) {
+              this._stopVisualizer();
+              this._mediaRecorder.stop();
+            }
+            return;
+          }
+
+          // Prefer browser Speech Recognition (works without API key)
+          const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (SpeechRecognition) {
+            this._useBrowserSpeech(SpeechRecognition);
+            return;
+          }
+
+          // Fallback: record audio and send to /api/transcribe
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this._audioChunks = [];
+            this._mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+            this._mediaRecorder.ondataavailable = (e) => {
+              if (e.data.size > 0) this._audioChunks.push(e.data);
+            };
+
+            this._mediaRecorder.onstop = () => {
+              stream.getTracks().forEach(t => t.stop());
+              this._stopVisualizer();
+              this.recording = false;
+              const blob = new Blob(this._audioChunks, { type: 'audio/webm' });
+              if (blob.size > 0) this.sendAudio(blob);
+            };
+
+            this._mediaRecorder.start();
+            this.recording = true;
+
+            // Start timer
+            this._recordStart = Date.now();
+            this.recordingTime = '0:00';
+            this._timerInterval = setInterval(() => {
+              const sec = Math.floor((Date.now() - this._recordStart) / 1000);
+              const m = Math.floor(sec / 60);
+              const s = sec % 60;
+              this.recordingTime = m + ':' + String(s).padStart(2, '0');
+            }, 1000);
+
+            // Start waveform visualizer
+            this.$nextTick(() => this._startVisualizer(stream));
+          } catch (e) {
+            this.messages.push({ role: 'system', content: t('voice.mic_denied'), type: 'error' });
+            this.scrollToBottom();
+          }
+        },
+
+        /**
+         * Start the waveform visualizer using Web Audio API AnalyserNode.
+         */
+        _startVisualizer(stream) {
+          const canvas = this.$refs.waveform;
+          if (!canvas) return;
+
+          this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = this._audioCtx.createMediaStreamSource(stream);
+          this._analyser = this._audioCtx.createAnalyser();
+          this._analyser.fftSize = 128;
+          source.connect(this._analyser);
+
+          const bufferLength = this._analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+          const ctx = canvas.getContext('2d');
+
+          const draw = () => {
+            this._animFrameId = requestAnimationFrame(draw);
+            this._analyser.getByteFrequencyData(dataArray);
+
+            const w = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
+            const h = canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+            ctx.clearRect(0, 0, w, h);
+
+            // Draw frequency bars
+            const barCount = Math.min(bufferLength, 48);
+            const barWidth = w / barCount - 1;
+            const centerY = h / 2;
+
+            for (let i = 0; i < barCount; i++) {
+              const value = dataArray[i] / 255;
+              const barHeight = Math.max(2, value * centerY * 0.9);
+
+              // Gradient from primary to error color
+              const hue = 190 - value * 30;  // cyan to slightly warmer
+              ctx.fillStyle = `hsla(${hue}, 80%, 65%, ${0.4 + value * 0.6})`;
+
+              const x = i * (barWidth + 1);
+              // Mirror bars around center
+              ctx.fillRect(x, centerY - barHeight, barWidth, barHeight);
+              ctx.fillRect(x, centerY, barWidth, barHeight);
+            }
+          };
+
+          draw();
+        },
+
+        /**
+         * Stop the waveform visualizer and release audio resources.
+         */
+        _stopVisualizer() {
+          if (this._animFrameId) {
+            cancelAnimationFrame(this._animFrameId);
+            this._animFrameId = null;
+          }
+          if (this._audioCtx) {
+            this._audioCtx.close();
+            this._audioCtx = null;
+          }
+          this._analyser = null;
+          if (this._timerInterval) {
+            clearInterval(this._timerInterval);
+            this._timerInterval = null;
+          }
+        },
+
+        /**
+         * Use browser-native Speech Recognition API (no API key, no server).
+         * Works in Chrome, Edge, Safari. Text goes into the input field.
+         */
+        _useBrowserSpeech(SpeechRecognition) {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          // Use the user's configured language (from /api/i18n), default English
+          const lang = window._mycelos_lang || 'en';
+          const langMap = { de: 'de-DE', en: 'en-US', fr: 'fr-FR', es: 'es-ES', it: 'it-IT' };
+          recognition.lang = langMap[lang] || lang;
+
+          let finalTranscript = '';
+
+          recognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript;
+              } else {
+                interim += event.results[i][0].transcript;
+              }
+            }
+            // Show live transcription in input field
+            this.input = finalTranscript + interim;
+          };
+
+          recognition.onend = () => {
+            this.recording = false;
+            this._speechRecognition = null;
+            if (this._timerInterval) {
+              clearInterval(this._timerInterval);
+              this._timerInterval = null;
+            }
+            // Place final text in input for user to review
+            if (finalTranscript.trim()) {
+              this.input = finalTranscript.trim();
+              this.$nextTick(() => {
+                const ta = this.$el.querySelector('textarea');
+                if (ta) { ta.focus(); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
+              });
+            }
+          };
+
+          recognition.onerror = (event) => {
+            this.recording = false;
+            this._speechRecognition = null;
+            if (this._timerInterval) {
+              clearInterval(this._timerInterval);
+              this._timerInterval = null;
+            }
+            if (event.error === 'not-allowed') {
+              this.messages.push({ role: 'system', content: t('voice.mic_denied_detail'), type: 'error' });
+            } else {
+              this.messages.push({ role: 'system', content: t('voice.speech_error').replace('{error}', event.error), type: 'error' });
+            }
+            this.scrollToBottom();
+          };
+
+          recognition.start();
+          this._speechRecognition = recognition;
+          this.recording = true;
+
+          // Timer
+          this._recordStart = Date.now();
+          this.recordingTime = '0:00';
+          this._timerInterval = setInterval(() => {
+            const sec = Math.floor((Date.now() - this._recordStart) / 1000);
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            this.recordingTime = m + ':' + String(s).padStart(2, '0');
+          }, 1000);
+        },
+
+        /**
+         * Handle file upload — send to /api/upload and stream the response.
+         */
+        async submitConnectorWidget(data) {
+          const secret = data.needs_credential
+            ? document.getElementById('cred-' + data.connector_id)?.value || ''
+            : '';
+          data._loading = true;
+          try {
+            const res = await fetch('/api/connectors', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: data.connector_id,
+                command: data.command || '',
+                secret: secret || undefined,
+              }),
+            });
+            const result = await res.json();
+            if (result.error) {
+              data._completed = true;
+              data._status = 'error';
+              data._statusText = t('widgets.setup_failed').replace('{error}', result.error);
+            } else {
+              data._completed = true;
+              data._status = 'success';
+              data._statusText = t('widgets.connected_restart').replace('{name}', data.name || data.connector_id);
+            }
+          } catch (e) {
+            data._completed = true;
+            data._status = 'error';
+            data._statusText = t('widgets.connection_error').replace('{error}', e.message);
+          } finally {
+            data._loading = false;
+          }
+          this.scrollToBottom();
+        },
+
+        async submitCredentialWidget(data) {
+          const key = document.getElementById('key-' + data.service)?.value || '';
+          if (!key.trim()) {
+            this.messages.push({ role: 'system', content: t('widgets.enter_key'), type: 'error' });
+            return;
+          }
+          data._loading = true;
+          try {
+            const res = await fetch('/api/credentials', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service: data.service, secret: key }),
+            });
+            const result = await res.json();
+            if (result.error) {
+              data._completed = true;
+              data._status = 'error';
+              data._statusText = t('widgets.failed').replace('{error}', result.error);
+            } else {
+              data._completed = true;
+              data._status = 'success';
+              data._statusText = t('widgets.key_stored').replace('{service}', data.service);
+            }
+          } catch (e) {
+            data._completed = true;
+            data._status = 'error';
+            data._statusText = t('widgets.connection_error').replace('{error}', e.message);
+          } finally {
+            data._loading = false;
+          }
+          this.scrollToBottom();
+        },
+
+        async handleFileUpload(file) {
+          if (!file) return;
+
+          // Size check
+          if (file.size > 50 * 1024 * 1024) {
+            this.messages.push({ role: 'system', content: t('files.too_large'), type: 'error' });
+            this.scrollToBottom();
+            return;
+          }
+
+          // Show upload indicator
+          const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+          this.messages.push({ role: 'user', content: `📎 ${file.name} (${sizeMB} MB)` });
+          this.sending = true;
+          this.$store.chat.sending = true;
+          this.scrollToBottom();
+
+          const form = new FormData();
+          form.append('file', file);
+          form.append('session_id', this.activeSessionId || '');
+
+          try {
+            const res = await fetch('/api/upload', { method: 'POST', body: form });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              throw new Error(body.error || t('widgets.upload_failed'));
+            }
+
+            // Stream SSE response (same format as chat)
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            const assistantIdx = this.messages.length;
+            this.messages.push({ role: 'assistant', content: '', agent: this.activeAgent });
+
+            let buffer = '';
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    const eventLine = lines.find(l => l.startsWith('event: '));
+                    const eventType = eventLine ? eventLine.slice(7).trim() : '';
+                    if (eventType === 'text' || eventType === 'system-response') {
+                      this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: data.content };
+                      this.scrollToBottom();
+                    } else if (eventType === 'session') {
+                      this.activeSessionId = data.session_id;
+                    } else if (eventType === 'done') {
+                      this.tokenCount = data.tokens || 0;
+                      this.modelUsed = data.model || '';
+                      if (data.cost) this.costTotal += data.cost;
+                    }
+                  } catch {}
+                }
+              }
+            }
+          } catch (e) {
+            this.messages.push({ role: 'system', content: t('files.upload_error').replace('{error}', e.message), type: 'error' });
+            this.scrollToBottom();
+          }
+
+          this.sending = false;
+          this.$store.chat.sending = false;
+          this.$store.chat.messageCount = this.messages.length;
+          this.scrollToBottom();
+        },
+
+        /**
+         * Transcribe recorded audio and place the text in the input field
+         * so the user can review/edit before sending.
+         */
+        async sendAudio(blob) {
+          this.sending = true;
+          this.$store.chat.sending = true;
+
+          const form = new FormData();
+          form.append('audio', blob, 'recording.webm');
+
+          try {
+            const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({}));
+              throw new Error(body.error || t('widgets.transcription_failed'));
+            }
+            const data = await res.json();
+            if (data.text) {
+              this.input = data.text;
+              // Focus the textarea so the user can edit or press Enter to send
+              this.$nextTick(() => {
+                const ta = this.$el.querySelector('textarea');
+                if (ta) {
+                  ta.style.height = 'auto';
+                  ta.style.height = Math.min(ta.scrollHeight, 128) + 'px';
+                  ta.focus();
+                }
+              });
+            } else {
+              this.messages.push({ role: 'system', content: t('voice.audio_not_understood'), type: 'error' });
+              this.scrollToBottom();
+            }
+          } catch (e) {
+            const msg = e.message || '';
+            if (msg.includes('401') || msg.includes('credential') || msg.includes('Transcription failed')) {
+              this.messages.push({ role: 'system', content: t('voice.no_speech_provider'), type: 'error' });
+            } else {
+              this.messages.push({ role: 'system', content: t('voice.voice_error').replace('{error}', msg), type: 'error' });
+            }
+            this.scrollToBottom();
+          }
+
+          this.sending = false;
+          this.$store.chat.sending = false;
+        },
+
+        /**
+         * Scroll chat area to bottom.
+         */
+        scrollToBottom() {
+          this.$nextTick(() => {
+            const area = document.getElementById('chat-area');
+            if (area) area.scrollTop = area.scrollHeight;
+          });
+        },
+
+        /**
+         * Open command dialog for prefill actions.
+         * Routes to connector form if a schema exists, otherwise simple input.
+         */
+        openCommandDialog(action) {
+          const cmd = action.command.trim();
+
+          // Check if this is a connector with a multi-field form
+          const match = cmd.match(/\/connector\s+add\s+(\S+)/);
+          if (match && CONNECTOR_FORMS[match[1]]) {
+            this.openConnectorForm(match[1]);
+            return;
+          }
+
+          // Fallback: simple single-field dialog
+          let label = t('widgets.value_label'), placeholder = '';
+          if (cmd.includes('connector add')) {
+            label = t('widgets.token_api_key');
+            placeholder = t('widgets.paste_token');
+          } else if (cmd.includes('credential store')) {
+            label = t('widgets.api_key_label');
+            placeholder = t('widgets.paste_api_key');
+          }
+
+          this.commandDialog = {
+            open: true, command: cmd, inputValue: '',
+            inputLabel: label, placeholder, error: '',
+          };
+          this.$nextTick(() => this.$refs.commandDialogInput?.focus());
+        },
+
+        /**
+         * Execute the command from the simple dialog.
+         */
+        async executeCommandDialog() {
+          if (!this.commandDialog.inputValue.trim()) {
+            this.commandDialog.error = t('widgets.enter_value');
+            return;
+          }
+          this.commandDialog.error = '';
+          this.commandDialog.open = false;
+          this.input = this.commandDialog.command + this.commandDialog.inputValue.trim();
+          await this.sendMessage();
+        },
+
+        /**
+         * Handle a clicked slash command from rendered markdown.
+         * Opens the appropriate form or executes directly.
+         */
+        handleClickedCommand(cmd) {
+          // Connector add → open form
+          const connMatch = cmd.match(/\/connector\s+add\s+(\S+)/);
+          if (connMatch && CONNECTOR_FORMS[connMatch[1]]) {
+            this.openConnectorForm(connMatch[1]);
+            return;
+          }
+          // Connector add unknown → simple dialog
+          if (connMatch) {
+            this.openCommandDialog({ command: cmd + ' ', prefill: true });
+            return;
+          }
+          // All other commands: prefill the input so user can review before sending
+          this.input = cmd;
+          this.$nextTick(() => {
+            const ta = this.$el.querySelector('textarea');
+            if (ta) { ta.focus(); ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'; }
+          });
+        },
+
+        /**
+         * Open the multi-field connector setup form.
+         */
+        openConnectorForm(connectorId) {
+          const schema = CONNECTOR_FORMS[connectorId];
+          if (!schema) return;
+
+          const step0 = schema.steps[0];
+          this.connectorForm = {
+            open: true,
+            connectorId,
+            title: schema.title,
+            icon: schema.icon || 'extension',
+            step: 0,
+            schema,
+            values: {},
+            fieldHelp: {},
+            visibleFields: step0.fields,
+            hasAdvanced: step0.fields.some(f => f.advanced),
+            showAdvanced: false,
+            isLastStep: schema.steps.length === 1,
+            providerDetected: '',
+            error: '',
+            submitting: false,
+          };
+
+          // Pre-fill help text from field definitions
+          for (const f of step0.fields) {
+            if (f.help) this.connectorForm.fieldHelp[f.id] = f.help;
+          }
+
+          this.$nextTick(() => {
+            const first = this.$el.querySelector('.connectorForm input, [x-show="connectorForm.open"] input');
+            first?.focus();
+          });
+        },
+
+        /**
+         * Auto-detect email provider when email field changes.
+         */
+        detectProvider() {
+          const schema = this.connectorForm.schema;
+          if (!schema || this.connectorForm.step !== 0) return;
+
+          const step0 = schema.steps[0];
+          if (!step0.onComplete) return;
+
+          const result = step0.onComplete(this.connectorForm.values);
+          if (result?.provider) {
+            const name = result.provider.charAt(0).toUpperCase() + result.provider.slice(1);
+            this.connectorForm.providerDetected = t('widgets.provider_detected').replace('{provider}', name);
+            // Auto-fill server fields for next step
+            if (result.imap_server) this.connectorForm.values.imap_server = result.imap_server;
+            if (result.smtp_server) this.connectorForm.values.smtp_server = result.smtp_server;
+            if (result.help) this.connectorForm.fieldHelp.password = result.help;
+          } else {
+            this.connectorForm.providerDetected = '';
+            this.connectorForm.fieldHelp.password = '';
+          }
+        },
+
+        /**
+         * Submit the connector form — advance step or save.
+         */
+        async submitConnectorForm() {
+          const form = this.connectorForm;
+          const schema = form.schema;
+
+          // Validate required fields
+          for (const field of form.visibleFields) {
+            if (field.required && !form.values[field.id]?.trim()) {
+              form.error = t('widgets.field_required').replace('{field}', field.label);
+              return;
+            }
+          }
+          form.error = '';
+
+          // Run step onComplete (e.g., provider detection)
+          const currentStep = schema.steps[form.step];
+          if (currentStep.onComplete) {
+            const result = currentStep.onComplete(form.values);
+            Object.assign(form.values, result || {});
+          }
+
+          // Advance to next step if not last
+          if (form.step < schema.steps.length - 1) {
+            form.step++;
+            const nextStep = schema.steps[form.step];
+            form.visibleFields = nextStep.fields;
+            form.hasAdvanced = nextStep.fields.some(f => f.advanced);
+            form.isLastStep = form.step === schema.steps.length - 1;
+            // Apply help from detected provider
+            for (const f of nextStep.fields) {
+              if (f.helpKey && form.values[f.helpKey]) {
+                form.fieldHelp[f.id] = form.values[f.helpKey];
+              } else if (f.help) {
+                form.fieldHelp[f.id] = f.help;
+              }
+            }
+            return;
+          }
+
+          // Final step: build credential and send to backend
+          form.submitting = true;
+          try {
+            const credential = schema.buildCredential(form.values);
+            this.input = `/connector add ${form.connectorId} ${credential}`;
+            form.open = false;
+            await this.sendMessage();
+          } catch (e) {
+            form.error = t('widgets.setup_failed').replace('{error}', e.message);
+          } finally {
+            form.submitting = false;
+          }
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

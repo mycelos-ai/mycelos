@@ -1,0 +1,158 @@
+"""SecurityProxy client — synchronous HTTP client over Unix Domain Socket."""
+
+from __future__ import annotations
+
+import httpx
+
+
+class ProxyUnavailableError(Exception):
+    """Raised when the SecurityProxy is unreachable."""
+    pass
+
+
+class SecurityProxyClient:
+    """Gateway-side client for the SecurityProxy.
+
+    Synchronous — uses httpx.Client with Unix socket transport.
+    All external network access, MCP calls, and LLM completions flow
+    through the SecurityProxy over a Unix Domain Socket, keeping credentials
+    out of agent processes.
+    """
+
+    def __init__(self, socket_path: str, token: str) -> None:
+        self._socket_path = socket_path
+        self._token = token
+        self._client = httpx.Client(
+            transport=httpx.HTTPTransport(uds=socket_path),
+            base_url="http://proxy",  # arbitrary hostname, routed via socket
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=60.0,
+        )
+
+    def _request(self, method: str, path: str, **kwargs):
+        """Make request to proxy, raise ProxyUnavailableError on connection failure.
+
+        Also handles HTTP 500 errors gracefully — returns an error dict
+        instead of crashing on non-JSON responses.
+        """
+        try:
+            resp = self._client.request(method, path, **kwargs)
+            if resp.status_code >= 500:
+                try:
+                    return type("R", (), {"json": lambda self: resp.json(), "status_code": resp.status_code})()
+                except Exception:
+                    # Non-JSON error response — wrap it
+                    error_resp = {"error": f"Proxy error {resp.status_code}: {resp.text[:200]}"}
+                    return type("R", (), {"json": lambda self, e=error_resp: e, "status_code": resp.status_code})()
+            return resp
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            raise ProxyUnavailableError(f"SecurityProxy unreachable: {e}")
+
+    def http_get(self, url: str, headers: dict | None = None,
+                 credential: str | None = None, timeout: int = 30,
+                 user_id: str = "default", agent_id: str | None = None) -> dict:
+        """Proxy a GET request through the SecurityProxy."""
+        extra_headers: dict = {"X-User-Id": user_id}
+        if agent_id:
+            extra_headers["X-Agent-Id"] = agent_id
+        resp = self._request("POST", "/http", json={
+            "method": "GET",
+            "url": url,
+            "headers": headers or {},
+            "timeout": timeout,
+            "inject_credential": credential,
+        }, headers=extra_headers)
+        return resp.json()
+
+    def http_post(self, url: str, body=None, headers: dict | None = None,
+                  credential: str | None = None, timeout: int = 30,
+                  user_id: str = "default", agent_id: str | None = None) -> dict:
+        """Proxy a POST request through the SecurityProxy."""
+        extra_headers: dict = {"X-User-Id": user_id}
+        if agent_id:
+            extra_headers["X-Agent-Id"] = agent_id
+        resp = self._request("POST", "/http", json={
+            "method": "POST",
+            "url": url,
+            "headers": headers or {},
+            "body": body,
+            "timeout": timeout,
+            "inject_credential": credential,
+        }, headers=extra_headers)
+        return resp.json()
+
+    def mcp_start(self, connector_id: str, command: list[str],
+                  env_vars: dict, transport: str = "stdio",
+                  user_id: str = "default") -> dict:
+        """Start an MCP session via the SecurityProxy."""
+        resp = self._request("POST", "/mcp/start", json={
+            "connector_id": connector_id,
+            "command": command,
+            "env_vars": env_vars,
+            "transport": transport,
+        }, headers={"X-User-Id": user_id})
+        return resp.json()
+
+    def mcp_call(self, session_id: str, tool: str, arguments: dict,
+                 user_id: str = "default", agent_id: str | None = None) -> dict:
+        """Invoke a tool on an active MCP session."""
+        extra_headers: dict = {"X-User-Id": user_id}
+        if agent_id:
+            extra_headers["X-Agent-Id"] = agent_id
+        resp = self._request("POST", "/mcp/call", json={
+            "session_id": session_id,
+            "tool": tool,
+            "arguments": arguments,
+        }, headers=extra_headers)
+        return resp.json()
+
+    def mcp_stop(self, session_id: str) -> None:
+        """Terminate an active MCP session."""
+        self._request("POST", "/mcp/stop", json={"session_id": session_id})
+
+    def llm_complete(self, model: str, messages: list[dict],
+                     tools: list[dict] | None = None, stream: bool = False,
+                     user_id: str = "default", agent_id: str | None = None,
+                     purpose: str = "chat"):
+        """Request an LLM completion via the SecurityProxy.
+
+        Streaming (stream=True) is reserved for Task 4; currently non-streaming only.
+        """
+        extra_headers: dict = {"X-User-Id": user_id}
+        if agent_id:
+            extra_headers["X-Agent-Id"] = agent_id
+        resp = self._request("POST", "/llm/complete", json={
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "stream": stream,
+            "purpose": purpose,
+        }, headers=extra_headers)
+        return resp.json()
+
+    def stt_transcribe(self, audio: bytes, filename: str = "audio.ogg",
+                       language: str = "auto", model: str = "whisper-1",
+                       user_id: str = "default",
+                       provider: str | None = None) -> dict:
+        """Transcribe audio via SecurityProxy.
+
+        Returns: {"text": "...", "language": "...", "duration_seconds": N}
+        """
+        payload = {"language": language, "model": model}
+        if provider:
+            payload["provider"] = provider
+        resp = self._request("POST", "/stt/transcribe",
+            files={"audio": (filename, audio)},
+            data=payload,
+            headers={"X-User-Id": user_id},
+        )
+        return resp.json()
+
+    def health(self) -> dict:
+        """Check SecurityProxy health."""
+        resp = self._request("GET", "/health")
+        return resp.json()
+
+    def close(self) -> None:
+        """Close the underlying HTTP client."""
+        self._client.close()
