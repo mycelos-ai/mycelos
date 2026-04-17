@@ -2,6 +2,11 @@
 
 ## Week 16 (2026)
 
+### Settings — Editable Agent-Model Assignments
+- The Models settings page now groups assignments by agent and lets you change the model list and priority order directly, with Move-Up / Move-Down / Remove / Add Fallback controls and a Save button per agent.
+- `/api/models` joins `agents.name` so each assignment row carries a readable agent label (falls back to agent_id, then "System defaults" for the purpose-wide default chain).
+- New `PUT /api/models/assignments/{agent_id}` replaces the model chain for a given purpose, validating every model ID exists before writing (fail-closed).
+
 ### Security — MCP Credential Lookup Fail-Closed (Rule 3)
 - `MycelosMCPClient._resolve_token` no longer swallows exceptions from the credential proxy. Credential-store errors now surface to the caller instead of silently degrading to an unauthenticated request that produces a confusing 401 downstream.
 

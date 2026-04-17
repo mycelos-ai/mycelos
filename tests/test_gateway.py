@@ -539,6 +539,65 @@ class TestChatExplicitWorkflowResume:
             f"Expected explicit run to be resumed, got {called_with}"
 
 
+# --- Models endpoint ---
+
+
+def test_models_includes_agent_name(client: TestClient):
+    """/api/models must join agents.name so the UI can render a readable label.
+
+    After web_init the Mycelos agent has name 'Mycelos' in the agents table.
+    Assignments rows must carry that through as agent_name.
+    """
+    resp = client.get("/api/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "assignments" in data
+    for a in data["assignments"]:
+        assert "agent_name" in a
+        assert a["agent_name"], "agent_name must not be empty (falls back to agent_id)"
+
+
+def test_update_agent_assignments_replaces_priority_order(client: TestClient):
+    """PUT /api/models/assignments/:agent_id replaces the per-agent model chain."""
+    initial = client.get("/api/models").json()
+    # Pick any two real registered models to reorder
+    all_model_ids = [m["id"] for m in initial["models"]]
+    assert len(all_model_ids) >= 1, "test DB has no models after web_init"
+    # Use the mycelos agent (always present after web_init)
+    new_chain = all_model_ids[:2] if len(all_model_ids) >= 2 else all_model_ids
+    resp = client.put(
+        "/api/models/assignments/mycelos",
+        json={"purpose": "execution", "model_ids": new_chain},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["model_ids"] == new_chain
+    # Verify the server state reflects the new order
+    after = client.get("/api/models").json()
+    mycelos_assignments = [a for a in after["assignments"] if a["agent_id"] == "mycelos" and a["purpose"] == "execution"]
+    mycelos_assignments.sort(key=lambda a: a["priority"])
+    assert [a["model_id"] for a in mycelos_assignments] == new_chain
+
+
+def test_update_agent_assignments_rejects_unknown_model(client: TestClient):
+    """Validation: unknown model IDs must be rejected (fail-closed)."""
+    resp = client.put(
+        "/api/models/assignments/mycelos",
+        json={"purpose": "execution", "model_ids": ["provider/does-not-exist"]},
+    )
+    assert resp.status_code == 400
+    assert "not registered" in resp.json()["error"]
+
+
+def test_update_agent_assignments_rejects_unknown_agent(client: TestClient):
+    resp = client.put(
+        "/api/models/assignments/nosuch-agent",
+        json={"purpose": "execution", "model_ids": []},
+    )
+    assert resp.status_code == 404
+
+
 # --- Helper ---
 
 

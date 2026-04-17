@@ -134,6 +134,117 @@
           const d = new Date(ts);
           return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         },
+
+        // ── Agent-Model Assignments ──
+        // Local edit buffer keyed by `${agent_id}:${purpose}`
+        assignmentEdits: {},
+
+        agentGroups() {
+          // Group server assignments by (agent_id, purpose) and merge local edits.
+          const byKey = {};
+          for (const a of this.assignments) {
+            const key = a.agent_id + ':' + (a.purpose || 'execution');
+            if (!byKey[key]) {
+              byKey[key] = {
+                agent_id: a.agent_id,
+                agent_name: a.agent_name || a.agent_id,
+                purpose: a.purpose || 'execution',
+                server_model_ids: [],
+              };
+            }
+            byKey[key].server_model_ids.push(a.model_id);
+          }
+          const groups = [];
+          for (const key of Object.keys(byKey).sort()) {
+            const base = byKey[key];
+            const edit = this.assignmentEdits[key];
+            const model_ids = edit ? edit.model_ids : base.server_model_ids.slice();
+            const dirty = edit ? edit.dirty : false;
+            groups.push({
+              key,
+              agent_id: base.agent_id,
+              agent_name: base.agent_name,
+              purpose: base.purpose,
+              model_ids,
+              dirty,
+              saving: edit ? !!edit.saving : false,
+              error: edit ? edit.error : null,
+            });
+          }
+          return groups;
+        },
+
+        _edit(group) {
+          const existing = this.assignmentEdits[group.key];
+          if (existing) return existing;
+          const fresh = {
+            model_ids: group.model_ids.slice(),
+            dirty: false,
+            saving: false,
+            error: null,
+          };
+          this.assignmentEdits[group.key] = fresh;
+          return fresh;
+        },
+
+        setModelAt(group, idx, model_id) {
+          const edit = this._edit(group);
+          edit.model_ids[idx] = model_id;
+          edit.dirty = true;
+        },
+
+        moveModel(group, idx, delta) {
+          const edit = this._edit(group);
+          const next = idx + delta;
+          if (next < 0 || next >= edit.model_ids.length) return;
+          const tmp = edit.model_ids[idx];
+          edit.model_ids[idx] = edit.model_ids[next];
+          edit.model_ids[next] = tmp;
+          edit.dirty = true;
+        },
+
+        removeModel(group, idx) {
+          const edit = this._edit(group);
+          if (edit.model_ids.length <= 1) return;
+          edit.model_ids.splice(idx, 1);
+          edit.dirty = true;
+        },
+
+        addModel(group) {
+          const edit = this._edit(group);
+          const firstModel = this.models[0];
+          if (!firstModel) return;
+          edit.model_ids.push(firstModel.id);
+          edit.dirty = true;
+        },
+
+        resetAgentModels(agent_id, purpose) {
+          const key = agent_id + ':' + purpose;
+          delete this.assignmentEdits[key];
+        },
+
+        async saveAgentModels(agent_id, purpose) {
+          const key = agent_id + ':' + purpose;
+          const edit = this.assignmentEdits[key];
+          if (!edit) return;
+          edit.saving = true;
+          edit.error = null;
+          try {
+            await MycelosAPI.put('/api/models/assignments/' + encodeURIComponent(agent_id), {
+              purpose,
+              model_ids: edit.model_ids,
+            });
+            // Reload assignments from server so the table reflects committed state.
+            const modelsData = await MycelosAPI.get('/api/models');
+            this.models = modelsData.models || [];
+            this.assignments = modelsData.assignments || [];
+            delete this.assignmentEdits[key];
+          } catch (e) {
+            edit.error = e.message || 'Save failed';
+          } finally {
+            if (this.assignmentEdits[key]) this.assignmentEdits[key].saving = false;
+          }
+        },
       }"
     >
 
@@ -199,29 +310,58 @@
           </div>
 
           <!-- Agent Assignments -->
-          <div x-show="assignments.length > 0" class="mt-4">
+          <div x-show="agentGroups().length > 0" class="mt-4">
             <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">Agent Assignments</p>
-            <div class="card overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-[var(--on-surface-variant)] text-[10px] uppercase tracking-wider font-label">
-                    <th class="pb-3">Agent</th>
-                    <th class="pb-3">Model</th>
-                    <th class="pb-3">Priority</th>
-                    <th class="pb-3">Purpose</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="a in assignments" :key="a.agent_id + '-' + a.model_id">
-                    <tr class="border-b border-[var(--outline-variant)]/10">
-                      <td class="py-2.5 font-mono text-xs" x-text="a.agent_id"></td>
-                      <td class="py-2.5 font-mono text-xs text-[var(--primary)]" x-text="a.model_id"></td>
-                      <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="a.priority"></td>
-                      <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="a.purpose || '—'"></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
+            <div class="space-y-3">
+              <template x-for="group in agentGroups()" :key="group.agent_id + ':' + group.purpose">
+                <div class="card">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <div class="font-headline text-sm font-semibold" x-text="group.agent_name"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">
+                        <span x-text="group.agent_id"></span>
+                        <span x-show="group.purpose && group.purpose !== 'execution'"> • <span x-text="group.purpose"></span></span>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2" x-show="group.dirty">
+                      <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
+                      <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
+                        <span x-show="!group.saving">Save</span>
+                        <span x-show="group.saving">Saving…</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="space-y-1.5">
+                    <template x-for="(model_id, idx) in group.model_ids" :key="idx + ':' + model_id">
+                      <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono w-5 text-right" x-text="idx + 1"></span>
+                        <select
+                          class="input-field flex-1 font-mono text-xs"
+                          :value="model_id"
+                          @change="setModelAt(group, idx, $event.target.value)">
+                          <template x-for="m in models" :key="m.id">
+                            <option :value="m.id" x-text="m.id" :selected="m.id === model_id"></option>
+                          </template>
+                        </select>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === 0" @click="moveModel(group, idx, -1)" title="Move up">
+                          <span class="material-symbols-outlined text-sm">arrow_upward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === group.model_ids.length - 1" @click="moveModel(group, idx, 1)" title="Move down">
+                          <span class="material-symbols-outlined text-sm">arrow_downward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" @click="removeModel(group, idx)" title="Remove" :disabled="group.model_ids.length <= 1">
+                          <span class="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      </div>
+                    </template>
+                    <button class="btn-secondary text-xs mt-2" @click="addModel(group)">
+                      <span class="material-symbols-outlined text-sm">add</span>
+                      Add fallback model
+                    </button>
+                  </div>
+                  <div x-show="group.error" class="text-xs text-[var(--error)] mt-2" x-text="group.error"></div>
+                </div>
+              </template>
             </div>
           </div>
         </div>

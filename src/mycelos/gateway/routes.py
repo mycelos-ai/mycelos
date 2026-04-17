@@ -1750,16 +1750,45 @@ def setup_routes(api: FastAPI) -> None:
 
     @api.get("/api/models")
     async def list_models() -> dict[str, Any]:
-        """All models and agent assignments."""
+        """All models and agent assignments (with agent names joined in)."""
         mycelos = api.state.mycelos
         models = mycelos.storage.fetchall("SELECT * FROM llm_models ORDER BY provider, tier")
         assignments = mycelos.storage.fetchall(
-            "SELECT agent_id, model_id, priority, purpose FROM agent_llm_models ORDER BY agent_id, priority"
+            """
+            SELECT a.agent_id, a.model_id, a.priority, a.purpose,
+                   COALESCE(g.name, a.agent_id, 'System defaults') AS agent_name
+            FROM agent_llm_models a
+            LEFT JOIN agents g ON g.id = a.agent_id
+            ORDER BY COALESCE(a.agent_id, 'zzz'), a.priority
+            """
         )
         return {
             "models": [dict(m) for m in models],
             "assignments": [dict(a) for a in assignments],
         }
+
+    @api.put("/api/models/assignments/{agent_id}")
+    async def update_agent_assignments(agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Replace the model assignment list for one agent+purpose.
+
+        Body: {"purpose": "execution", "model_ids": ["provider/model-a", "provider/model-b"]}
+        Order is priority (first = highest).
+        """
+        mycelos = api.state.mycelos
+        if not mycelos.agent_registry.get(agent_id):
+            return JSONResponse({"error": f"Agent '{agent_id}' not found"}, status_code=404)
+        purpose = payload.get("purpose", "execution")
+        model_ids = payload.get("model_ids") or []
+        if not isinstance(model_ids, list) or not all(isinstance(m, str) for m in model_ids):
+            return JSONResponse({"error": "model_ids must be a list of strings"}, status_code=400)
+        # Validate every model exists in the registry (fail-closed).
+        for model_id in model_ids:
+            if not mycelos.model_registry.get_model(model_id):
+                return JSONResponse(
+                    {"error": f"Model '{model_id}' is not registered"}, status_code=400
+                )
+        mycelos.model_registry.set_agent_models(agent_id, model_ids, purpose=purpose)
+        return {"ok": True, "agent_id": agent_id, "purpose": purpose, "model_ids": model_ids}
 
     # ── Cost ───────────────────────────────────────────────────
 
