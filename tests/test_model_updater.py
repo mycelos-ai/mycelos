@@ -13,7 +13,11 @@ def handler(tmp_path: Path, monkeypatch):
     from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
     monkeypatch.setenv("MYCELOS_MASTER_KEY", "test-key-model-updater")
     app = MagicMock()
-    # Default: no new models discovered.
+    # Default: user has anthropic credentials only
+    app.credentials.list_credentials.return_value = [
+        {"service": "anthropic", "label": "default"},
+    ]
+    app.memory.get.return_value = None  # no ollama
     app.model_registry.sync_from_litellm.return_value = {
         "added": [], "updated": [], "total": 0,
     }
@@ -53,7 +57,42 @@ def test_handler_uses_prefer_remote(handler) -> None:
     get fresh-off-the-press models without a pip upgrade."""
     h, app = handler
     h.run("default")
-    app.model_registry.sync_from_litellm.assert_called_once_with(prefer_remote=True)
+    call = app.model_registry.sync_from_litellm.call_args
+    assert call.kwargs["prefer_remote"] is True
+
+
+def test_handler_restricts_to_configured_providers(handler) -> None:
+    """Only providers the user has credentials for should be synced.
+    Avoids flooding the registry with 200 Gemini models when only
+    Anthropic is configured."""
+    h, app = handler
+    app.credentials.list_credentials.return_value = [
+        {"service": "anthropic", "label": "default"},
+        {"service": "openai", "label": "default"},
+    ]
+    h.run("default")
+    call = app.model_registry.sync_from_litellm.call_args
+    assert sorted(call.kwargs["providers"]) == ["anthropic", "openai"]
+
+
+def test_handler_skips_sync_when_no_credentials(handler) -> None:
+    """No credentials → no sync. Nothing to discover that's actually usable."""
+    h, app = handler
+    app.credentials.list_credentials.return_value = []
+    app.memory.get.return_value = None
+    result = h.run("default")
+    assert result["total"] == 0
+    app.model_registry.sync_from_litellm.assert_not_called()
+
+
+def test_handler_includes_ollama_when_configured(handler) -> None:
+    """Ollama is credential-less. When the endpoint is stored, include it."""
+    h, app = handler
+    app.credentials.list_credentials.return_value = []
+    app.memory.get.return_value = "http://localhost:11434"
+    h.run("default")
+    call = app.model_registry.sync_from_litellm.call_args
+    assert "ollama" in call.kwargs["providers"]
 
 
 def test_handler_survives_sync_failure(handler) -> None:

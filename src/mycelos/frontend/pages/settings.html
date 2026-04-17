@@ -375,27 +375,42 @@
           <div x-show="refreshResult" class="mb-4">
             <div x-show="refreshResult &amp;&amp; refreshResult.added &amp;&amp; refreshResult.added.length > 0"
                  class="card border-l-2 border-l-[var(--primary)] bg-[var(--primary)]/5">
-              <div class="flex items-start gap-2">
-                <span class="material-symbols-outlined text-[var(--primary)] text-sm mt-0.5">auto_awesome</span>
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[var(--primary)] mt-0.5">auto_awesome</span>
                 <div class="flex-1 min-w-0">
-                  <div class="text-sm font-semibold" x-text="(refreshResult?.added?.length || 0) + ' new model' + ((refreshResult?.added?.length || 0) === 1 ? '' : 's') + ' discovered'"></div>
-                  <div class="text-[11px] text-[var(--on-surface-variant)] font-mono mt-1" x-text="(refreshResult?.added || []).join(', ')"></div>
-                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-1.5">
-                    Added to the registry. To use them, assign them below or in the System Defaults.
+                  <div class="font-headline text-sm font-semibold">
+                    <span x-text="refreshResult?.added?.length || 0"></span>
+                    <span>new</span>
+                    <span x-text="(refreshResult?.added?.length || 0) === 1 ? 'model' : 'models'"></span>
+                    <span>discovered</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5 mt-2">
+                    <template x-for="m in (refreshResult?.added || [])" :key="m">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono bg-[var(--primary)]/10 text-[var(--primary)]" x-text="m"></span>
+                    </template>
+                  </div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-2.5">
+                    Added to the registry. Assign them below or in the System Defaults to actually use them.
                   </div>
                 </div>
-                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null">
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null" title="Dismiss">
                   <span class="material-symbols-outlined text-sm">close</span>
                 </button>
               </div>
             </div>
             <div x-show="refreshResult &amp;&amp; (!refreshResult.added || refreshResult.added.length === 0) &amp;&amp; !refreshResult.error"
-                 class="text-[11px] text-[var(--on-surface-variant)] flex items-center gap-1.5">
-              <span class="material-symbols-outlined text-sm">check_circle</span>
-              <span>Registry is up to date — no new models found.</span>
-              <button class="underline ml-2" @click="refreshResult = null">dismiss</button>
+                 class="card py-2 px-3 flex items-center gap-2 text-[11px] text-[var(--on-surface-variant)]">
+              <span class="material-symbols-outlined text-[#48c78e] text-sm">check_circle</span>
+              <span>Registry is up to date.</span>
+              <span class="opacity-60">No new models for</span>
+              <template x-for="p in (refreshResult?.providers_checked || [])" :key="p">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--surface-container)]" x-text="p"></span>
+              </template>
+              <button class="ml-auto text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null">
+                <span class="material-symbols-outlined text-sm">close</span>
+              </button>
             </div>
-            <div x-show="refreshResult?.error" class="text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
+            <div x-show="refreshResult?.error" class="card py-2 px-3 text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
           </div>
 
           <!-- Models Table -->

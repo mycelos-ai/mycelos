@@ -8,6 +8,11 @@
 - Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
 - New `GET /api/tools` returns every registered built-in tool with its category and permission level.
 
+### Models — Auto-Refresh Scoped to Configured Providers
+- `ModelUpdaterHandler` now restricts the sync to providers the user has credentials for (plus Ollama when its endpoint is configured). No credentials = no sync. Stops the registry from flooding with 200 Gemini models after an Anthropic-only setup.
+- `ModelRegistry.sync_from_litellm` gained a `providers: list[str] | None` allow-list parameter.
+- Settings refresh result banner: new models are now shown as rounded chips, the "up to date" case lists the providers that were actually checked, and the dismiss button has a visible close icon. No more raw JSON / comma-separated strings.
+
 ### Models — Daily Auto-Refresh (deterministic, no LLM)
 - New `ModelUpdaterHandler` system handler. Runs once per day at 03:00 UTC via Huey, fetches LiteLLM's live model-cost JSON from GitHub, and adds freshly-released provider models to the registry (e.g. a new Opus or GPT version appears in Settings the day after the provider ships it — no `pip install --upgrade litellm` required).
 - Deliberately deterministic: zero LLM calls, zero tool loop. A concrete proof that Mycelos workflows don't always need a language model.

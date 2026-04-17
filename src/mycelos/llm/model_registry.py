@@ -180,7 +180,11 @@ class ModelRegistry:
         )
         return [r["model_id"] for r in rows]
 
-    def sync_from_litellm(self, prefer_remote: bool = False) -> dict[str, Any]:
+    def sync_from_litellm(
+        self,
+        prefer_remote: bool = False,
+        providers: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Import model metadata and costs from LiteLLM's database.
 
         Args:
@@ -189,6 +193,11 @@ class ModelRegistry:
                 error. This is the path the periodic model-update check
                 takes — freshly-released models (e.g. Opus 4.7 the day after
                 Anthropic ships it) show up without a litellm pip upgrade.
+            providers: Optional allow-list of provider IDs (e.g.
+                ``["anthropic", "openai"]``). When set, only models from these
+                providers are synced. Used by the periodic updater to stay
+                focused on providers the user actually has credentials for.
+                None (default) keeps the original behavior — all providers.
 
         Returns:
             ``{"added": [...], "updated": [...], "total": N}`` where
@@ -201,6 +210,7 @@ class ModelRegistry:
         existing_ids = {row["id"] for row in self._storage.fetchall("SELECT id FROM llm_models")}
         added: list[str] = []
         updated: list[str] = []
+        allow = set(providers) if providers else None
 
         for model_id, info in cost_map.items():
             # Filter out region-specific and third-party gateway variants
@@ -231,6 +241,9 @@ class ModelRegistry:
             # Must be a recognizable provider
             provider = self._guess_provider(model_id)
             if not provider:
+                continue
+            # Restrict to configured providers when an allow-list was given
+            if allow is not None and provider not in allow:
                 continue
             # Ensure provider prefix (litellm uses bare IDs for some providers)
             if "/" not in model_id:
