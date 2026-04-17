@@ -55,6 +55,156 @@ def require_anthropic_key():
 
 
 @pytest.fixture
+def require_ollama():
+    """Skip if OLLAMA_HOST not set or the endpoint isn't reachable."""
+    host = os.environ.get("OLLAMA_HOST", "").rstrip("/")
+    if not host:
+        pytest.skip("OLLAMA_HOST not set (add to .env.test)")
+    import httpx
+    try:
+        resp = httpx.get(f"{host}/api/tags", timeout=3)
+        if resp.status_code != 200:
+            pytest.skip(f"Ollama not reachable at {host} (status {resp.status_code})")
+        data = resp.json()
+        if not data.get("models"):
+            pytest.skip(f"Ollama at {host} has no models pulled")
+    except Exception as e:
+        pytest.skip(f"Ollama not reachable at {host}: {e}")
+    return host
+
+
+@pytest.fixture
+def require_lm_studio():
+    """Skip if LM_STUDIO_HOST not set or the endpoint isn't reachable."""
+    host = os.environ.get("LM_STUDIO_HOST", "").rstrip("/")
+    if not host:
+        pytest.skip("LM_STUDIO_HOST not set (add to .env.test)")
+    import httpx
+    try:
+        resp = httpx.get(f"{host}/models", timeout=3)
+        if resp.status_code != 200:
+            pytest.skip(f"LM Studio not reachable at {host} (status {resp.status_code})")
+        data = resp.json()
+        if not data.get("data"):
+            pytest.skip(f"LM Studio at {host} has no models loaded")
+    except Exception as e:
+        pytest.skip(f"LM Studio not reachable at {host}: {e}")
+    return host
+
+
+def _pick_ollama_chat_model(host: str) -> str | None:
+    """Return an Ollama chat model id (prefix-stripped), preferring gemma4."""
+    import httpx
+    try:
+        resp = httpx.get(f"{host}/api/tags", timeout=3)
+        models = resp.json().get("models", [])
+    except Exception:
+        return None
+    names = [m.get("name") for m in models if m.get("name")]
+    # Filter out embedding-only tags (heuristic: names containing "embed")
+    chat_names = [n for n in names if "embed" not in n.lower()]
+    for preferred in ("gemma4:latest", "gemma4", "gemma3:4b", "llama3:latest", "qwen3.5:9b"):
+        if preferred in chat_names:
+            return preferred
+    return chat_names[0] if chat_names else None
+
+
+def _pick_lm_studio_chat_model(host: str) -> str | None:
+    """Return an LM Studio loaded-model id, preferring gemma-4."""
+    import httpx
+    try:
+        resp = httpx.get(f"{host}/models", timeout=3)
+        ids = [m.get("id") for m in resp.json().get("data", []) if m.get("id")]
+    except Exception:
+        return None
+    # Skip embeddings
+    chat_ids = [i for i in ids if "embed" not in i.lower()]
+    for preferred in ("gemma-4-e4b-it", "gemma-4"):
+        for cid in chat_ids:
+            if cid.startswith(preferred):
+                return cid
+    return chat_ids[0] if chat_ids else None
+
+
+@pytest.fixture
+def integration_app_local(tmp_path, request, monkeypatch):
+    """Fully-initialized App wired to a local LLM backend.
+
+    Parametrize with indirect=True and values "ollama" or "lm_studio".
+    Skips cleanly when the requested backend is not reachable.
+    No cassette — local inference is free and deterministic-enough.
+    """
+    backend = getattr(request, "param", None) or "ollama"
+
+    if backend == "ollama":
+        host = os.environ.get("OLLAMA_HOST", "").rstrip("/")
+        if not host:
+            pytest.skip("OLLAMA_HOST not set (add to .env.test)")
+        model_name = _pick_ollama_chat_model(host)
+        if not model_name:
+            pytest.skip(f"No chat-capable Ollama model at {host}")
+        # LiteLLM id format for Ollama
+        default_model = f"ollama/{model_name}"
+        monkeypatch.setenv("OLLAMA_API_BASE", host)
+        # Warm up: first inference pages the model into RAM (can take 30s+ on
+        # an 8B). Do that here so the test's timeout covers only the response.
+        try:
+            import httpx as _httpx
+            _httpx.post(
+                f"{host}/api/chat",
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                    "options": {"num_predict": 1},
+                },
+                timeout=180,
+            )
+        except Exception:
+            pass
+    elif backend == "lm_studio":
+        host = os.environ.get("LM_STUDIO_HOST", "").rstrip("/")
+        if not host:
+            pytest.skip("LM_STUDIO_HOST not set (add to .env.test)")
+        model_name = _pick_lm_studio_chat_model(host)
+        if not model_name:
+            pytest.skip(f"No chat-capable LM Studio model at {host}")
+        # LiteLLM talks to LM Studio via the openai-compatible path. The
+        # lm_studio/ prefix in recent LiteLLM versions routes directly.
+        default_model = f"lm_studio/{model_name}"
+        monkeypatch.setenv("LM_STUDIO_API_BASE", host)
+        # Some LiteLLM versions still want OPENAI_API_BASE; set both.
+        monkeypatch.setenv("OPENAI_API_BASE", host)
+        monkeypatch.setenv("OPENAI_API_KEY", "lm-studio-dummy-key")
+    else:
+        pytest.skip(f"Unknown local LLM backend: {backend}")
+
+    from mycelos.app import App
+
+    data_dir = tmp_path / "mycelos-test-local"
+    os.environ["MYCELOS_MASTER_KEY"] = "integration-test-local-key-2026"
+
+    app = App(data_dir)
+    app.initialize_with_config(
+        default_model=default_model,
+        provider=backend,
+    )
+
+    # Seed the chosen model in the registry so resolve_models finds it.
+    app.model_registry.add_model(
+        model_id=default_model,
+        provider=backend,
+        tier="haiku",
+        input_cost_per_1k=0.0,
+        output_cost_per_1k=0.0,
+    )
+    app.model_registry.set_system_defaults({"execution": [default_model]})
+
+    # Annotate the fixture value so tests can log / assert against it.
+    yield app
+
+
+@pytest.fixture
 def require_brave_key():
     """Skip if BRAVE_API_KEY not set."""
     key = os.environ.get("BRAVE_API_KEY")

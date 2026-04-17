@@ -21,6 +21,7 @@ build/
 # Secrets (never commit!)
 .env*
 !.env.example
+!.env.test.example
 *.master_key
 .master_key
 secrets.yaml
