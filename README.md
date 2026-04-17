@@ -346,6 +346,29 @@ pytest --tb=short                 # Short tracebacks
 
 Security tests in `tests/security/` are treated as invariants. A failing security test is a blocking issue, not a warning.
 
+### Local-LLM integration tests
+
+A small integration suite proves the **"Build with Cloud. Run on Your Data."** promise end-to-end against a real local model — no cloud API keys, no outbound HTTP except to your own machine. It covers the workflows that route through `app.resolve_cheapest_model()` in production: the chat pipeline, the Knowledge Organizer classifier, the Reminder message generator, and session-summary extraction.
+
+Prereqs:
+
+- Ollama running locally with a chat model pulled (tested with `gemma4:latest`, an 8 B model ≈ 9.6 GB on disk)
+- Context window ≥ 8 k (we bump ours to 16 k)
+- `cp .env.test.example .env.test` and fill in `OLLAMA_HOST=http://localhost:11434`
+
+Run:
+
+```bash
+pytest -m integration \
+  tests/integration/test_local_llm_smoke.py \
+  tests/integration/test_chat_local.py \
+  tests/integration/test_organizer_local.py \
+  tests/integration/test_reminder_local.py \
+  tests/integration/test_session_summary_local.py -v
+```
+
+Each test is gated on `OLLAMA_HOST` being reachable and skips cleanly otherwise. LM Studio is supported as a second backend behind `LOCAL_LLM_BACKEND=lm_studio` — on a 16 GB machine you can only load one 8 B model at a time, so only one backend runs roundtrips by default.
+
 ### Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
