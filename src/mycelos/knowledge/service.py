@@ -262,16 +262,19 @@ class KnowledgeBase:
             slug = path.rsplit("/", 1)[-1]  # e.g. "rezepte" from "topics/rezepte"
             path = f"{note.parent_path}/{slug}"
 
-        # Handle duplicate paths by appending a counter
+        # Handle duplicate paths by appending a counter. Probe through
+        # _safe_path so a traversal-y title (e.g. "../../etc/passwd") cannot
+        # check for file existence outside the knowledge dir.
         base_path = path
         counter = 2
-        while (self._knowledge_dir / (path + ".md")).exists():
+        while self._safe_path(path).exists():
             path = f"{base_path}-{counter}"
             counter += 1
         note.path = path
 
-        # Write file
-        file_path = self._knowledge_dir / (path + ".md")
+        # Write file — _safe_path raises PathTraversalError if the resolved
+        # path escapes self._knowledge_dir.
+        file_path = self._safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(render_note(note), encoding="utf-8")
 
@@ -562,8 +565,16 @@ class KnowledgeBase:
 
         Append-only: never edits existing prose. Creates the heading if
         missing, otherwise appends a new bullet under it.
+
+        Both note_path and target_path are validated against the knowledge
+        dir — a traversal path (e.g. "../../etc/passwd") raises
+        PathTraversalError instead of writing outside.
         """
-        file_path = self._knowledge_dir / (note_path + ".md")
+        file_path = self._safe_path(note_path)
+        # Validate target_path too so we never embed a traversal string as a
+        # wikilink — the link is append-only but a traversal target in the
+        # body would be rendered as an active link.
+        self._safe_path(target_path)
         if not file_path.exists():
             return
         body = file_path.read_text(encoding="utf-8")

@@ -96,3 +96,41 @@ class TestPathTraversal:
         # This depends on Path resolution — /etc/passwd + .md won't be relative
         with pytest.raises(PathTraversalError):
             kb.read("/etc/passwd")
+
+    def test_write_traversal_blocked_via_title(self, kb, monkeypatch):
+        """A malicious title that generates a traversal path must be blocked.
+
+        This is the Jules/Sentinel CRITICAL finding. Note.generate_path() can
+        be steered by the title — a prompt-injected / malicious title can
+        produce "../../etc/passwd", so the write path must validate.
+        """
+        from mycelos.knowledge.note import Note
+
+        # Force Note.generate_path to return a traversal path
+        monkeypatch.setattr(
+            Note,
+            "generate_path",
+            lambda self: "../../etc/passwd",
+        )
+        # Stub bucket_note so it doesn't override our traversal path
+        monkeypatch.setattr(
+            "mycelos.knowledge.service.bucket_note",
+            lambda *a, **kw: None,
+        )
+        kb._indexer.index_note = MagicMock()
+
+        with pytest.raises(PathTraversalError):
+            kb.write(title="ignored", content="pwned", type="note")
+
+    def test_append_related_link_traversal_blocked(self, kb, tmp_path):
+        """append_related_link must reject a traversal note_path."""
+        with pytest.raises(PathTraversalError):
+            kb.append_related_link("../../etc/passwd", "legit-note")
+
+    def test_append_related_link_target_traversal_blocked(self, kb):
+        """append_related_link must reject a traversal target_path too.
+
+        A traversal target would leak into the note body as an active wikilink.
+        """
+        with pytest.raises(PathTraversalError):
+            kb.append_related_link("legit-note", "../../etc/passwd")

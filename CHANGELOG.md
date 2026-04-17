@@ -8,6 +8,11 @@
 - Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
 - New `GET /api/tools` returns every registered built-in tool with its category and permission level.
 
+### Security — Close Path Traversal in KnowledgeBase.write + append_related_link
+- `KnowledgeBase.write()` derived the file path from the note title via `Note.generate_path()` without running it through `_safe_path()`. A prompt-injected or malicious title (e.g. `../../etc/passwd`) could write outside `~/.mycelos/knowledge/`. Now validated — traversal raises `PathTraversalError` and logs `knowledge.traversal.blocked`.
+- `KnowledgeBase.append_related_link()` took both `note_path` and `target_path` without validation. Both now go through `_safe_path`. Previously a traversal-y target path would have been embedded as an active wikilink in the note body.
+- Three new tests in `tests/security/test_knowledge_traversal.py` cover `write` via title, `append_related_link` via note_path, and `append_related_link` via target_path.
+
 ### Doctor — Activity Panel with Suspicious / Noteworthy / All tabs
 - System Doctor page gained an Activity section that shows the recent audit feed classified in real time. Three tabs:
   - **Suspicious** — only security-relevant events (tamper detection, tool/policy denials, credential rotations, capability expiry, security-gate blocks, `*.flood_blocked`, `*.denied`, `*.tamper_detected`). Empty state = green "Clean" banner.
