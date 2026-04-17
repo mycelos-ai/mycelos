@@ -137,37 +137,10 @@ def credentials_cmd(data_dir: Path) -> None:
     console.print(table)
 
 
-# Event patterns that indicate something noteworthy: security hits,
-# policy denials, tamper detection, unexpected agent behavior, rate-limits.
-# Keep this list narrow — broader events (workflow.registered, model.added, …)
-# are not suspicious on their own and would drown the signal.
-SUSPICIOUS_EVENT_PATTERNS: tuple[str, ...] = (
-    "config.tamper_detected",
-    "tool.blocked",
-    "policy.denied",
-    "credential.rotate",
-    "credential.bootstrap_failed",
-    "agent.denied",
-    "sandbox.escape_attempt",
-    "ssrf.blocked",
-    "telegram.user_bootstrapped",
-    "capability.expired",
-    "chat.security_gate.blocked",
-)
-
-# Trailing wildcards — must end with ".flood_blocked" or similar.
-SUSPICIOUS_EVENT_SUFFIXES: tuple[str, ...] = (
-    ".flood_blocked",
-    ".denied",
-    ".tamper_detected",
-)
-
-# High-volume, low-information events hidden by --quiet.
-NOISY_EVENT_TYPES: tuple[str, ...] = (
-    "reminder.tick",
-    "scheduler.tick",
-    "session.heartbeat",
-    "llm.usage",
+from mycelos.audit_patterns import (
+    NOISY_EVENT_TYPES,
+    SUSPICIOUS_EVENT_SUFFIXES,
+    SUSPICIOUS_EVENT_TYPES as SUSPICIOUS_EVENT_PATTERNS,
 )
 
 

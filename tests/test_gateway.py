@@ -565,6 +565,57 @@ def test_models_includes_agent_name_and_agents_list(client: TestClient):
             assert a["agent_name"], f"agent_name must be set for {a['agent_id']}"
 
 
+def test_audit_activity_returns_classified_events(client: TestClient):
+    """/api/audit/activity classifies events as suspicious/noteworthy/noisy and
+    returns counts for all three buckets."""
+    # Seed a mix of event types on the underlying app
+    app = client.app.state.mycelos
+    app.audit.log("tool.blocked", details={"tool": "github.write"})
+    app.audit.log("policy.denied", details={"policy": "http.post"})
+    app.audit.log("workflow.registered", details={"id": "x"})
+    app.audit.log("reminder.tick", details={"tasks_found": 0})
+    app.audit.log("gen.flood_blocked", details={"count": 42})
+
+    resp = client.get("/api/audit/activity?level=suspicious&since=24h&limit=100")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "events" in data and "counts" in data
+    types = {e["event_type"] for e in data["events"]}
+    assert "tool.blocked" in types
+    assert "policy.denied" in types
+    assert "gen.flood_blocked" in types  # suspicious by suffix
+    assert "reminder.tick" not in types  # noise
+    assert "workflow.registered" not in types  # not suspicious
+    assert data["counts"]["suspicious"] >= 3
+
+
+def test_audit_activity_noteworthy_filters_noise(client: TestClient):
+    app = client.app.state.mycelos
+    app.audit.log("reminder.tick", details={})
+    app.audit.log("workflow.registered", details={"id": "y"})
+
+    resp = client.get("/api/audit/activity?level=noteworthy&since=24h&limit=100")
+    assert resp.status_code == 200
+    types = {e["event_type"] for e in resp.json()["events"]}
+    assert "reminder.tick" not in types
+    assert "workflow.registered" in types
+
+
+def test_audit_activity_all_includes_noise(client: TestClient):
+    app = client.app.state.mycelos
+    app.audit.log("reminder.tick", details={"tasks_found": 0})
+
+    resp = client.get("/api/audit/activity?level=all&since=24h&limit=200")
+    assert resp.status_code == 200
+    types = {e["event_type"] for e in resp.json()["events"]}
+    assert "reminder.tick" in types
+
+
+def test_audit_activity_rejects_bad_since(client: TestClient):
+    resp = client.get("/api/audit/activity?since=yesterday")
+    assert resp.status_code == 400
+
+
 def test_api_tools_returns_grouped_tools(client: TestClient):
     """/api/tools returns every registered built-in tool with category + permission."""
     resp = client.get("/api/tools")
