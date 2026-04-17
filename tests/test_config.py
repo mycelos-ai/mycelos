@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from mycelos.config import ConfigGenerationManager
-from mycelos.config.generations import GenerationNotFoundError, NoActiveGenerationError
+from mycelos.config.generations import (
+    ConfigTamperError,
+    GenerationNotFoundError,
+    NoActiveGenerationError,
+)
 from mycelos.storage.database import SQLiteStorage
 
 
@@ -192,3 +196,73 @@ def test_no_active_generation_raises(db_path: Path) -> None:
 
     with pytest.raises(NoActiveGenerationError):
         manager.get_active_config()
+
+
+# ---------------------------------------------------------------------------
+# SEC09 — Config snapshot tamper detection
+# ---------------------------------------------------------------------------
+
+
+def test_sec09_tamper_detection_on_get_active_config(db_path: Path) -> None:
+    """get_active_config() must detect tampered config_snapshot via hash mismatch."""
+    manager = make_manager(db_path)
+    gen_id = manager.apply({"key": "original"})
+
+    # Tamper: swap the snapshot without updating config_hash
+    storage = SQLiteStorage(db_path)
+    storage.initialize()
+    storage.execute(
+        "UPDATE config_generations SET config_snapshot = ? WHERE id = ?",
+        ('{"key":"malicious"}', gen_id),
+    )
+
+    with pytest.raises(ConfigTamperError) as exc_info:
+        manager.get_active_config()
+    assert exc_info.value.generation_id == gen_id
+
+
+def test_sec09_tamper_detection_on_load_config(db_path: Path) -> None:
+    """diff() (which uses _load_config) must also detect tampering."""
+    manager = make_manager(db_path)
+    id_a = manager.apply({"a": 1})
+    id_b = manager.apply({"a": 2})
+
+    storage = SQLiteStorage(db_path)
+    storage.initialize()
+    storage.execute(
+        "UPDATE config_generations SET config_snapshot = ? WHERE id = ?",
+        ('{"a":999}', id_a),
+    )
+
+    with pytest.raises(ConfigTamperError):
+        manager.diff(id_a, id_b)
+
+
+def test_sec09_untampered_config_passes(db_path: Path) -> None:
+    """An untouched generation must load cleanly."""
+    manager = make_manager(db_path)
+    manager.apply({"key": "value", "nested": {"x": 1}})
+    config = manager.get_active_config()
+    assert config == {"key": "value", "nested": {"x": 1}}
+
+
+def test_sec09_tamper_emits_audit_event(db_path: Path) -> None:
+    """When an audit logger is wired in, a tamper detection must be logged."""
+    from mycelos.audit import SQLiteAuditLogger
+
+    storage = SQLiteStorage(db_path)
+    storage.initialize()
+    audit = SQLiteAuditLogger(storage)
+    manager = ConfigGenerationManager(storage, audit=audit)
+
+    gen_id = manager.apply({"key": "original"})
+    storage.execute(
+        "UPDATE config_generations SET config_snapshot = ? WHERE id = ?",
+        ('{"key":"malicious"}', gen_id),
+    )
+
+    with pytest.raises(ConfigTamperError):
+        manager.get_active_config()
+
+    events = audit.query(event_type="config.tamper_detected")
+    assert len(events) == 1

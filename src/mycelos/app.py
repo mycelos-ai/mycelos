@@ -80,7 +80,7 @@ class App:
     @property
     def config(self) -> ConfigGenerationManager:
         if self._config_mgr is None:
-            self._config_mgr = ConfigGenerationManager(self.storage)
+            self._config_mgr = ConfigGenerationManager(self.storage, audit=self.audit)
         return self._config_mgr
 
     @property

@@ -70,6 +70,23 @@ class NoActiveGenerationError(ConfigError):
     """Raised when no generation has been activated yet."""
 
 
+class ConfigTamperError(ConfigError):
+    """Raised when a loaded config snapshot's hash does not match its stored hash.
+
+    Protects SEC09: a write to the `config_generations` table from outside the
+    manager (DB compromise, manual UPDATE, bug) must not be silently accepted.
+    """
+
+    def __init__(self, generation_id: int, expected: str, actual: str) -> None:
+        super().__init__(
+            f"Config tamper detected on generation {generation_id}: "
+            f"expected hash {expected[:12]}…, got {actual[:12]}…"
+        )
+        self.generation_id = generation_id
+        self.expected = expected
+        self.actual = actual
+
+
 # ---------------------------------------------------------------------------
 # Manager
 # ---------------------------------------------------------------------------
@@ -86,8 +103,9 @@ class ConfigGenerationManager:
         storage: Any object that satisfies the ``StorageBackend`` protocol.
     """
 
-    def __init__(self, storage: StorageBackend) -> None:
+    def __init__(self, storage: StorageBackend, audit: Any = None) -> None:
         self._storage = storage
+        self._audit = audit
 
     # ------------------------------------------------------------------
     # Public API
@@ -218,15 +236,11 @@ class ConfigGenerationManager:
 
         Raises:
             NoActiveGenerationError: If no generation is active.
+            GenerationNotFoundError: If the active generation row is missing.
+            ConfigTamperError: If the stored snapshot's hash does not match.
         """
         active_id = self._require_active_id()
-        row = self._storage.fetchone(
-            "SELECT config_snapshot FROM config_generations WHERE id = ?",
-            (active_id,),
-        )
-        if row is None:
-            raise GenerationNotFoundError(active_id)
-        return json.loads(row["config_snapshot"])
+        return self._load_config(active_id)
 
     def list_generations(self, limit: int = 50) -> list[GenerationInfo]:
         """Return recent generations, newest first, with active marker.
@@ -341,10 +355,30 @@ class ConfigGenerationManager:
             raise GenerationNotFoundError(generation_id)
 
     def _load_config(self, generation_id: int) -> dict[str, Any]:
+        """Load a generation's config and verify its stored hash (SEC09)."""
         row = self._storage.fetchone(
-            "SELECT config_snapshot FROM config_generations WHERE id = ?",
+            "SELECT config_snapshot, config_hash FROM config_generations WHERE id = ?",
             (generation_id,),
         )
         if row is None:
             raise GenerationNotFoundError(generation_id)
-        return json.loads(row["config_snapshot"])
+        snapshot_json = row["config_snapshot"]
+        expected_hash = row["config_hash"]
+
+        snapshot = json.loads(snapshot_json)
+        actual_hash = self._sha256(self._canonical_json(snapshot))
+        if actual_hash != expected_hash:
+            if self._audit is not None:
+                try:
+                    self._audit.log(
+                        "config.tamper_detected",
+                        details={
+                            "generation_id": generation_id,
+                            "expected_hash": expected_hash,
+                            "actual_hash": actual_hash,
+                        },
+                    )
+                except Exception:
+                    pass
+            raise ConfigTamperError(generation_id, expected_hash, actual_hash)
+        return snapshot

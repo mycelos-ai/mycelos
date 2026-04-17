@@ -2,6 +2,13 @@
 
 ## Week 16 (2026)
 
+### Security — Config Tamper Detection (SEC09)
+- `ConfigGenerationManager.get_active_config()` and `_load_config()` now re-compute the SHA-256 of the stored snapshot and compare to `config_hash`. On mismatch they raise `ConfigTamperError` and emit a `config.tamper_detected` audit event when an audit logger is wired in. Previously a direct DB write to `config_generations.config_snapshot` was silently loaded as truth.
+
+### Security — Automatic Audit Trail for Registry Mutations (Rule 1)
+- `ConfigNotifier.notify_change()` now emits a `{trigger}.applied` audit event with the change description every time it is called. Credential rotations, policy changes, agent status updates, workflow deprecation, schedule add/pause/resume/delete, mount add/revoke, model registry changes, and connector registry changes — all now leave a trace without needing each caller to remember.
+- The audit event is emitted even when the config generation insert itself fails, so a DB degradation cannot silently hide a state change.
+
 ### Security — Agent Subprocess Env Hardening
 - `agent_runner._safe_env()` now strips `*_API_KEY` and `*APIKEY` variables from subprocess environments (previously only matched SECRET/TOKEN/PASSWORD/CREDENTIAL/MASTER_KEY substrings — ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY etc. leaked through)
 - Added SEC05 tests in `tests/security/test_sandbox_boundaries.py` covering the denylist

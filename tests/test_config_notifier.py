@@ -56,6 +56,40 @@ class TestConfigNotifier:
         notifier.log("some.event")
         mock_audit.log.assert_called_once_with("some.event", details=None)
 
+    def test_notify_change_auto_emits_audit_event(self):
+        """Constitution Rule 1: every state mutation must log an audit event.
+
+        notify_change() is the common entry point for registries, so auto-logging
+        here covers credential-rotation, policy-change, agent-status, workflow-
+        deprecate and all other mutations without touching each caller.
+        """
+        mock_config = MagicMock()
+        mock_state = MagicMock()
+        mock_audit = MagicMock()
+        notifier = ConfigNotifier(mock_config, mock_state, mock_audit)
+        notifier.notify_change("Credential rotated: github", "credential_rotate")
+        mock_audit.log.assert_called_once_with(
+            "credential_rotate.applied",
+            details={"description": "Credential rotated: github"},
+        )
+
+    def test_notify_change_audit_still_fires_when_apply_fails(self):
+        """Audit trail must survive a DB failure in the generation insert.
+
+        A silent degradation here is what lets state mutate without a trace.
+        """
+        mock_config = MagicMock()
+        mock_config.apply_from_state.side_effect = Exception("DB error")
+        mock_state = MagicMock()
+        mock_audit = MagicMock()
+        notifier = ConfigNotifier(mock_config, mock_state, mock_audit)
+        notifier.notify_change("Policy set", "policy_set")
+        # Even though apply failed, the audit event must be logged
+        mock_audit.log.assert_called_once_with(
+            "policy_set.applied",
+            details={"description": "Policy set"},
+        )
+
 
 class TestRegistryNotification:
     def test_agent_registry_triggers_config(self):
