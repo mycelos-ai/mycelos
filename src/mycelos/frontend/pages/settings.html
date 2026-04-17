@@ -173,7 +173,7 @@
         },
 
         // Per-agent groups: one row per registered agent, for execution only.
-        // Agents without an explicit assignment get an "inherited" row so the
+        // Agents without an explicit assignment get an inherited row so the
         // user can optionally override.
         agentGroups() {
           const byKey = this._assignmentsByKey();
@@ -236,7 +236,7 @@
         moveModel(group, idx, delta) {
           const edit = this._edit(group);
           const next = idx + delta;
-          if (next < 0 || next >= edit.model_ids.length) return;
+          if (next &lt; 0 || next &gt;= edit.model_ids.length) return;
           const tmp = edit.model_ids[idx];
           edit.model_ids[idx] = edit.model_ids[next];
           edit.model_ids[next] = tmp;
@@ -245,7 +245,7 @@
 
         removeModel(group, idx) {
           const edit = this._edit(group);
-          if (edit.model_ids.length <= 1) return;
+          if (edit.model_ids.length &lt;= 1) return;
           edit.model_ids.splice(idx, 1);
           edit.dirty = true;
         },
