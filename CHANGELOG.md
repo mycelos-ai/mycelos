@@ -8,6 +8,15 @@
 - Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
 - New `GET /api/tools` returns every registered built-in tool with its category and permission level.
 
+### Updates — Daily Mycelos Release Check
+- `ModelUpdaterHandler` now also checks GitHub's releases/latest once per day for a newer Mycelos version. The check rides on the existing daily task — no extra scheduler slot, one extra unauthenticated request per day.
+- Update state persists in system memory so the UI can render the banner without re-querying GitHub.
+- Doctor page shows a "Mycelos X.Y.Z is available" banner when an update exists, with the `docker compose pull && docker compose up -d` command and a link to the release notes.
+- Settings → Updates section shows current version, latest version (if available), and a "Check daily" toggle to opt out.
+- `mycelos.update_available` audit event (Noteworthy tier) fires once per new release tag — not once per daily poll.
+- New endpoints `GET /api/system/update-status` (read cached state, no network) and `PUT /api/system/update-check-enabled`.
+- README gained an "Updating" section with the upgrade command and a transparency note: no telemetry, only an unauthenticated GitHub request, opt-out available.
+
 ### Models — Skip Previous-Generation Models on Sync
 - The periodic model-registry sync no longer imports previous-generation models (Claude 3.x, GPT-3 / GPT-4-turbo, Gemini 1.x / 2.0, …). The registry stays focused on what a user would sensibly pick today.
 - Existing legacy entries are never deleted by the sync — the filter only applies to fresh additions. A model you manually added for compatibility stays.

@@ -108,6 +108,18 @@ docker compose build
 docker compose up -d
 ```
 
+### Updating
+
+When a new Mycelos release is available:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Your data in `~/.mycelos/` stays untouched — only the container image is replaced.
+
+Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page (`/pages/doctor.html`) and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+
 ### Network access & security
 
 The Docker image binds to `0.0.0.0` so it's reachable from other devices on your network. That's convenient, but also means **anyone on your network can access Mycelos** unless you protect it.

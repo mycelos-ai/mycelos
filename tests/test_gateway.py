@@ -729,6 +729,23 @@ def test_update_system_defaults_replaces_chain(client: TestClient):
     assert [a["model_id"] for a in class_after] == class_before
 
 
+def test_system_update_status_defaults(client: TestClient):
+    """Fresh install has no cached release info and check is enabled."""
+    resp = client.get("/api/system/update-status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["checks_enabled"] is True
+
+
+def test_system_update_check_toggle(client: TestClient):
+    resp = client.put("/api/system/update-check-enabled", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+    # Now status reflects the disabled flag
+    state = client.get("/api/system/update-status").json()
+    assert state["checks_enabled"] is False
+
+
 def test_refresh_models_endpoint_runs_handler(client: TestClient):
     """POST /api/models/refresh runs the deterministic handler and returns
     its result shape. We don't assert exact numbers because what's in

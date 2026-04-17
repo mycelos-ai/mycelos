@@ -17,7 +17,8 @@ def handler(tmp_path: Path, monkeypatch):
     app.credentials.list_credentials.return_value = [
         {"service": "anthropic", "label": "default"},
     ]
-    app.memory.get.return_value = None  # no ollama
+    # memory.get must accept keyword args (user_id=, scope=, key=)
+    app.memory.get.return_value = None  # no ollama, no opt-out, no cache
     app.model_registry.sync_from_litellm.return_value = {
         "added": [], "updated": [], "total": 0,
     }
@@ -115,3 +116,116 @@ def test_handler_is_pure_python_no_llm(handler) -> None:
     h.run("default")
     app.llm.complete.assert_not_called()
     app.llm.assert_not_called()
+
+
+# ── App update check ───────────────────────────────────────────
+
+@pytest.fixture
+def update_handler(handler, monkeypatch):
+    """Handler with a stubbed httpx so we can inject release responses."""
+    from mycelos.agents.handlers import model_updater_handler as mod
+    h, app = handler
+    # No prior cached update state
+    app.memory.get.side_effect = lambda key, scope=None: None
+    return h, app, mod
+
+
+def _fake_response(status: int, payload: dict | None = None):
+    class R:
+        status_code = status
+        def raise_for_status(self):
+            if status >= 400:
+                import httpx
+                raise httpx.HTTPStatusError("boom", request=None, response=None)
+        def json(self):
+            return payload or {}
+    return R()
+
+
+def test_update_check_reports_newer_version(update_handler, monkeypatch):
+    h, app, mod = update_handler
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"))
+    import httpx
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kw: _fake_response(
+            200,
+            {"tag_name": "v0.2.0", "html_url": "https://github.com/x/y/releases/tag/v0.2.0", "published_at": "2026-04-20T10:00:00Z"},
+        ),
+    )
+    result = h.run("default")
+    assert result["update_available"] is True
+    assert result["latest_version"] == "0.2.0"
+    # Audit fired once
+    audited = [c for c in app.audit.log.call_args_list if c.args and c.args[0] == "mycelos.update_available"]
+    assert len(audited) == 1
+
+
+def test_update_check_same_version_no_alert(update_handler, monkeypatch):
+    h, app, mod = update_handler
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.2.0"))
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: _fake_response(200, {"tag_name": "v0.2.0"}))
+    result = h.run("default")
+    assert result["update_available"] is False
+    audited = [c for c in app.audit.log.call_args_list if c.args and c.args[0] == "mycelos.update_available"]
+    assert audited == []
+
+
+def test_update_check_opt_out(update_handler, monkeypatch):
+    h, app, mod = update_handler
+    # User has opted out
+    def fake_get(*a, **kw):
+        key = kw.get("key") or (a[2] if len(a) >= 3 else None)
+        return "false" if key == "system.check_for_updates" else None
+    app.memory.get.side_effect = fake_get
+    import httpx
+    called = []
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: called.append(url) or _fake_response(200, {}))
+    h.run("default")
+    # httpx.get never called
+    assert called == []
+
+
+def test_update_check_survives_network_error(update_handler, monkeypatch):
+    h, app, mod = update_handler
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"))
+    import httpx
+    def boom(*a, **kw):
+        raise httpx.RequestError("offline")
+    monkeypatch.setattr(httpx, "get", boom)
+    # Must not raise, run must still complete
+    result = h.run("default")
+    assert "update_available" in result
+
+
+def test_update_check_audits_only_once_per_new_tag(update_handler, monkeypatch):
+    """Running the handler twice on the same latest-tag should only log
+    one audit event, not spam it daily."""
+    h, app, mod = update_handler
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"))
+    import httpx, json
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: _fake_response(200, {"tag_name": "v0.2.0"}))
+
+    # First call: nothing cached
+    memory_store: dict = {}
+    def _get(*a, **kw):
+        key = kw.get("key") or (a[2] if len(a) >= 3 else None)
+        return memory_store.get(key)
+    def _set(*a, **kw):
+        key = kw.get("key") or (a[2] if len(a) >= 3 else None)
+        value = kw.get("value")
+        memory_store[key] = value
+    app.memory.get.side_effect = _get
+    app.memory.set.side_effect = _set
+
+    h.run("default")
+    h.run("default")
+
+    audited = [c for c in app.audit.log.call_args_list if c.args and c.args[0] == "mycelos.update_available"]
+    assert len(audited) == 1, "update audit must fire only once per new tag"

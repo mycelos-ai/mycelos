@@ -46,6 +46,30 @@
         <!-- Separator -->
         <div class="mycelium-line mb-6"></div>
 
+        <!-- Update available banner -->
+        <div x-show="updateStatus?.update_available" class="card mb-6 border-l-2 border-l-[var(--primary)] bg-[var(--primary)]/5">
+          <div class="flex items-start gap-3">
+            <span class="material-symbols-outlined text-[var(--primary)] mt-0.5">cloud_download</span>
+            <div class="flex-1 min-w-0">
+              <div class="font-headline text-sm font-semibold">
+                Mycelos
+                <span class="font-mono text-[var(--primary)]" x-text="updateStatus?.latest_version"></span>
+                is available
+              </div>
+              <div class="text-[11px] text-[var(--on-surface-variant)] mt-1">
+                You are running
+                <span class="font-mono" x-text="updateStatus?.current_version"></span>.
+                Run <code class="font-mono px-1.5 py-0.5 rounded bg-[var(--surface-container)]">docker compose pull &amp;&amp; docker compose up -d</code> to update.
+              </div>
+            </div>
+            <a x-show="updateStatus?.release_url" :href="updateStatus?.release_url" target="_blank" rel="noopener"
+               class="btn-secondary text-xs flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">open_in_new</span>
+              Release notes
+            </a>
+          </div>
+        </div>
+
         <!-- Summary strip -->
         <div x-show="!loading && checks.length > 0" class="grid grid-cols-4 gap-3 mb-6">
           <div class="card px-4 py-3">
@@ -233,8 +257,23 @@
         activityLoading: false,
         activityError: '',
 
+        // Mycelos release check
+        updateStatus: null,
+
         async init() {
-          await Promise.all([this.loadChecks(), this.loadActivity()]);
+          await Promise.all([
+            this.loadChecks(),
+            this.loadActivity(),
+            this.loadUpdateStatus(),
+          ]);
+        },
+
+        async loadUpdateStatus() {
+          try {
+            this.updateStatus = await MycelosAPI.get('/api/system/update-status');
+          } catch (e) {
+            this.updateStatus = null;
+          }
         },
 
         async loadActivity() {

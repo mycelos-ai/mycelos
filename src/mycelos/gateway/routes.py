@@ -1904,6 +1904,57 @@ def setup_routes(api: FastAPI) -> None:
             })
         return {"tools": tools}
 
+    @api.get("/api/system/update-status")
+    async def system_update_status() -> dict[str, Any]:
+        """Return the cached Mycelos release-check state.
+
+        Cheap read: never hits GitHub. The background ModelUpdaterHandler
+        refreshes the cache once a day; this endpoint serves whatever is
+        stored in memory so the Doctor banner and Settings toggle can
+        render without an extra network call.
+        """
+        import json as _json
+        mycelos = api.state.mycelos
+        try:
+            raw = mycelos.memory.get(
+                user_id="default", scope="system", key="system.update.latest"
+            )
+        except Exception:
+            raw = None
+        state: dict[str, Any] = {}
+        if raw:
+            if isinstance(raw, dict):
+                state = raw
+            else:
+                try:
+                    state = _json.loads(raw)
+                except Exception:
+                    state = {}
+        try:
+            opt = mycelos.memory.get(
+                user_id="default", scope="system", key="system.check_for_updates"
+            )
+        except Exception:
+            opt = None
+        checks_enabled = True
+        if opt is not None:
+            checks_enabled = str(opt).lower() not in {"0", "false", "off", "no"}
+        state["checks_enabled"] = checks_enabled
+        return state
+
+    @api.put("/api/system/update-check-enabled")
+    async def set_update_check_enabled(payload: dict[str, Any]) -> dict[str, Any]:
+        """Enable/disable the daily GitHub release check."""
+        mycelos = api.state.mycelos
+        enabled = bool(payload.get("enabled", True))
+        mycelos.memory.set(
+            user_id="default",
+            scope="system",
+            key="system.check_for_updates",
+            value="true" if enabled else "false",
+        )
+        return {"ok": True, "enabled": enabled}
+
     @api.post("/api/models/refresh")
     async def refresh_models() -> dict[str, Any]:
         """Trigger an on-demand refresh of the LLM model registry.
