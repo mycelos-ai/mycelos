@@ -2,6 +2,13 @@
 
 ## Week 16 (2026)
 
+### Security — MCP Credential Lookup Fail-Closed (Rule 3)
+- `MycelosMCPClient._resolve_token` no longer swallows exceptions from the credential proxy. Credential-store errors now surface to the caller instead of silently degrading to an unauthenticated request that produces a confusing 401 downstream.
+
+### Security — HTTP Tool Error Sanitization (Rule 4)
+- `http_get` / `http_post` now run exception messages through `ResponseSanitizer` before returning them to agents. Inline URL credentials (`https://user:pass@host`) and reflected tokens (Bearer, API-keys, …) no longer leak into agent-visible error responses.
+- `ResponseSanitizer` gained a new pattern that redacts userinfo in URLs.
+
 ### Security — Config Tamper Detection (SEC09)
 - `ConfigGenerationManager.get_active_config()` and `_load_config()` now re-compute the SHA-256 of the stored snapshot and compare to `config_hash`. On mismatch they raise `ConfigTamperError` and emit a `config.tamper_detected` audit event when an audit logger is wired in. Previously a direct DB write to `config_generations.config_snapshot` was silently loaded as truth.
 

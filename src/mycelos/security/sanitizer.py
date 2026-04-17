@@ -30,6 +30,8 @@ CREDENTIAL_PATTERNS: list[tuple[str, str]] = [
     (r"sk_live_[a-zA-Z0-9]{24,}", "[REDACTED]"),           # Stripe Live Key
     (r"Bearer\s+[a-zA-Z0-9\-_.~+/]+=*", "Bearer [REDACTED]"),
     (r"(?:api[_-]?key|apikey|api_secret|secret_key)\s*[=:]\s*\S{10,}", "[REDACTED]"),
+    # URL inline credentials: https://user:pass@host -> https://[REDACTED]@host
+    (r"(https?://)[^/\s:@]+:[^/\s@]+@", r"\1[REDACTED]@"),
 ]
 
 SENSITIVE_PATH_PATTERNS: list[tuple[str, str]] = [

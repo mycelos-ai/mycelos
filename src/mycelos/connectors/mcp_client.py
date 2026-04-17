@@ -108,18 +108,20 @@ class MycelosMCPClient:
         logger.info("MCP server '%s' connected (http: %s)", self.connector_id, url)
 
     def _resolve_token(self) -> str | None:
-        """Resolve the API token from credential proxy."""
+        """Resolve the API token from credential proxy.
+
+        Fail-closed (Constitution Rule 3): credential lookup errors propagate
+        so the caller sees an explicit failure instead of an unauthenticated
+        request with a confusing downstream 401.
+        """
         if not self._credential_proxy:
             return None
         for env_var, source in self._env_vars.items():
             if source.startswith("credential:"):
                 service = source[11:]
-                try:
-                    cred = self._credential_proxy.get_credential(service)
-                    if cred and "api_key" in cred:
-                        return cred["api_key"]
-                except Exception:
-                    pass
+                cred = self._credential_proxy.get_credential(service)
+                if cred and "api_key" in cred:
+                    return cred["api_key"]
         return None
 
     async def disconnect(self) -> None:

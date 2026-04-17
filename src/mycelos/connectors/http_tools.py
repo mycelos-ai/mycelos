@@ -27,7 +27,15 @@ def set_proxy_client(client) -> None:
     _proxy_client = client
 
 
+from mycelos.security.sanitizer import ResponseSanitizer
 from mycelos.security.ssrf import validate_url as _validate_url  # Single source of truth
+
+_sanitizer = ResponseSanitizer()
+
+
+def _scrub(text: str) -> str:
+    """Strip credentials from error messages before returning to agents (Rule 4)."""
+    return _sanitizer.sanitize_text(text)
 
 
 def http_get(
@@ -50,11 +58,11 @@ def http_get(
             "url": str(response.url),
         }
     except ValueError as e:
-        return {"error": f"URL blocked: {e}", "status": 0}
+        return {"error": _scrub(f"URL blocked: {e}"), "status": 0}
     except httpx.TimeoutException:
         return {"error": f"Request timed out after {timeout}s", "status": 0}
     except httpx.RequestError as e:
-        return {"error": str(e), "status": 0}
+        return {"error": _scrub(str(e)), "status": 0}
 
 
 def http_post(
@@ -85,8 +93,8 @@ def http_post(
             "url": str(response.url),
         }
     except ValueError as e:
-        return {"error": f"URL blocked: {e}", "status": 0}
+        return {"error": _scrub(f"URL blocked: {e}"), "status": 0}
     except httpx.TimeoutException:
         return {"error": f"Request timed out after {timeout}s", "status": 0}
     except httpx.RequestError as e:
-        return {"error": str(e), "status": 0}
+        return {"error": _scrub(str(e)), "status": 0}

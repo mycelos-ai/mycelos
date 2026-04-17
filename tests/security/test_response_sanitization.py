@@ -312,3 +312,21 @@ def test_normal_text_with_token_word(sanitizer: ResponseSanitizer) -> None:
     text = "The authentication token type is JWT. Each session lasts 30 minutes."
     result = sanitizer.sanitize_text(text)
     assert result == text
+
+
+def test_redact_url_inline_userinfo(sanitizer: ResponseSanitizer) -> None:
+    """URLs with user:pass@host credentials must have the userinfo redacted."""
+    text = "Connection failed to https://admin:s3cret!@api.example.com/v1/data"
+    result = sanitizer.sanitize_text(text)
+    assert "admin" not in result
+    assert "s3cret!" not in result
+    assert "[REDACTED]@api.example.com" in result
+
+
+def test_redact_url_inline_token_only(sanitizer: ResponseSanitizer) -> None:
+    """URLs of the form https://token@host must also be redacted (token in userinfo)."""
+    # httpx-style: token passed as userinfo
+    text = "DNS lookup failed: https://ghp_verylongtokenvalue123456789012345678@github.com/api"
+    result = sanitizer.sanitize_text(text)
+    # Two patterns fire: github token + url userinfo. Both acceptable, neither must leak.
+    assert "ghp_verylongtokenvalue" not in result
