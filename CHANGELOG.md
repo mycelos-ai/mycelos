@@ -16,6 +16,8 @@
 - `tests/integration/test_local_llm_smoke.py` — endpoint discovery tests always run when the host is set. Ollama inference roundtrip runs by default; LM Studio is gated behind `LOCAL_LLM_BACKEND=lm_studio` so 16 GB machines can't accidentally double-load two 8B models and trip a "Compute error".
 - `tests/integration/test_chat_local.py` — the chat pipeline (session → message → response) runs end-to-end against Ollama. Live counterpart to the "Run on Your Data." promise.
 - `tests/integration/test_organizer_local.py`, `test_reminder_local.py`, `test_session_summary_local.py` — three background-LLM workloads (knowledge classification, reminder message generation, session memory extraction) run against the local model the user has configured as the cheapest-model chain. Proves the "build with cloud, run locally" story for the daily background work, not just the chat roundtrip.
+- `tests/integration/test_intent_classification_local.py` — `ChatOrchestrator.classify()` against gemma4. Greeting → CONVERSATION/TASK_REQUEST, explicit agent-creation request → CREATE_AGENT/TASK_REQUEST. Pure classification, no tool loop, very reliable on small models.
+- `tests/integration/test_chat_memory_local.py` — Chat pipeline with tool calls. Verifies the tool-loop works on a local model that advertises native tool-calling (gemma4). Lax acceptance: either `memory_write` was invoked OR the model acknowledged the preference in text.
 
 ### Updates — Daily Mycelos Release Check
 - `ModelUpdaterHandler` now also checks GitHub's releases/latest once per day for a newer Mycelos version. The check rides on the existing daily task — no extra scheduler slot, one extra unauthenticated request per day.
