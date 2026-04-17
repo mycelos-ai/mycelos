@@ -28,6 +28,61 @@ We know Mycelos is still early. There are areas to improve — sandbox isolation
 
 ---
 
+## See it in action
+
+A 60-second tour, then deep dives on the parts that matter.
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=ha8IWEAJO18">
+    <img src="https://img.youtube.com/vi/ha8IWEAJO18/maxresdefault.jpg" alt="Mycelos pitch video" width="640">
+  </a>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="https://www.youtube.com/watch?v=CWUZQ-OyJZc">
+        <img src="https://img.youtube.com/vi/CWUZQ-OyJZc/maxresdefault.jpg" alt="Your AI That Remembers Everything" width="100%">
+      </a>
+      <br>
+      <strong>Your AI That Remembers Everything</strong>
+      <br>
+      <sub>Your first day with Mycelos — chat, notes, knowledge, workflows.</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="https://www.youtube.com/watch?v=G3Bo6hVMqW0">
+        <img src="https://img.youtube.com/vi/G3Bo6hVMqW0/maxresdefault.jpg" alt="From Notes to Knowledge Graph" width="100%">
+      </a>
+      <br>
+      <strong>From Notes to Knowledge Graph</strong>
+      <br>
+      <sub>Scattered notes become an interactive graph — automatically.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="https://www.youtube.com/watch?v=DIREJXTkWPA">
+        <img src="https://img.youtube.com/vi/DIREJXTkWPA/maxresdefault.jpg" alt="Fail-closed by Design" width="100%">
+      </a>
+      <br>
+      <strong>Fail-closed by Design</strong>
+      <br>
+      <sub>AES-256, SecurityProxy, capability scoping, tamper-evident audit.</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="https://www.youtube.com/watch?v=Tt7N6QfnLkI">
+        <img src="https://img.youtube.com/vi/Tt7N6QfnLkI/maxresdefault.jpg" alt="Build with Cloud. Run on Your Data." width="100%">
+      </a>
+      <br>
+      <strong>Build with Cloud. Run on Your Data.</strong>
+      <br>
+      <sub>Design with frontier models, run local — per agent, per task.</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Quick Start
 
 ### With Docker (recommended)
