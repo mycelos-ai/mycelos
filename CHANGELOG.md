@@ -13,7 +13,8 @@
 - `.env.test` gained `OLLAMA_HOST` and `LM_STUDIO_HOST` entries (your copy — not committed).
 - `require_ollama` and `require_lm_studio` pytest fixtures: skip cleanly if the endpoint isn't reachable or has no models loaded, with specific reasons.
 - `integration_app_local` indirect-parameterized fixture: boots a full App wired to either backend, auto-picks the best available chat model (prefers `gemma4`/`gemma-4-e4b-it`), warms Ollama up so the test timeout only covers the response.
-- `tests/integration/test_local_llm_smoke.py` — endpoint discovery tests always run when the host is set; inference roundtrips are gated on `LOCAL_LLM_BACKEND=ollama|lm_studio` so 16 GB machines can't accidentally double-load two 8B models and trip a "Compute error".
+- `tests/integration/test_local_llm_smoke.py` — endpoint discovery tests always run when the host is set. Ollama inference roundtrip runs by default; LM Studio is gated behind `LOCAL_LLM_BACKEND=lm_studio` so 16 GB machines can't accidentally double-load two 8B models and trip a "Compute error".
+- `tests/integration/test_chat_local.py` — the chat pipeline (session → message → response) runs end-to-end against Ollama. Live counterpart to the "Run on Your Data." promise.
 
 ### Updates — Daily Mycelos Release Check
 - `ModelUpdaterHandler` now also checks GitHub's releases/latest once per day for a newer Mycelos version. The check rides on the existing daily task — no extra scheduler slot, one extra unauthenticated request per day.

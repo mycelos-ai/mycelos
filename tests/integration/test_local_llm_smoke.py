@@ -9,15 +9,16 @@ Skipped unless:
   - LM_STUDIO_HOST is set and reachable.
 
 NOTE: Running both inference roundtrips at once requires >=16 GB VRAM/RAM
-because both backends page an 8B model in parallel. To avoid the
-"Compute error" from whichever backend loses the race, each inference
-roundtrip is gated on LOCAL_LLM_BACKEND. Run them one at a time:
+because both backends page an 8B model in parallel. The Ollama test is
+the default active roundtrip; LM Studio is gated behind
+LOCAL_LLM_BACKEND=lm_studio so it only runs when you explicitly stop
+Ollama and want to verify the LM Studio path.
 
-    LOCAL_LLM_BACKEND=ollama    pytest -m integration tests/integration/test_local_llm_smoke.py -v
-    LOCAL_LLM_BACKEND=lm_studio pytest -m integration tests/integration/test_local_llm_smoke.py -v
+    pytest -m integration tests/integration/test_local_llm_smoke.py
+    LOCAL_LLM_BACKEND=lm_studio pytest -m integration ...
 
-Leaving LOCAL_LLM_BACKEND unset runs the cheap `/tags` and `/models`
-endpoint checks for both, which is safe to run anywhere.
+The cheap `/tags` and `/models` endpoint probes always run when the
+host env vars are set.
 """
 from __future__ import annotations
 
@@ -31,19 +32,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 
 
 def _skip_if_not_selected(backend: str):
-    """Skip inference roundtrips unless this backend was explicitly requested.
+    """Skip inference roundtrips for backends other than the selected one.
 
     Protects machines that can only hold one 8B model in RAM at a time.
-    Default (no env var) = run neither roundtrip; the /tags and /models
-    endpoint probes still run.
+    Default (no env var) = Ollama runs, LM Studio is skipped — matches
+    the current supported-backend roster. Set LOCAL_LLM_BACKEND=lm_studio
+    to flip the gate the other way.
     """
-    selected = os.environ.get("LOCAL_LLM_BACKEND", "").strip().lower()
-    if not selected:
-        pytest.skip(
-            "LOCAL_LLM_BACKEND not set — set to 'ollama' or 'lm_studio' to run "
-            "inference roundtrips one at a time (avoids double-loading 8B "
-            "models on the same machine)."
-        )
+    selected = os.environ.get("LOCAL_LLM_BACKEND", "ollama").strip().lower()
     if selected != backend:
         pytest.skip(f"LOCAL_LLM_BACKEND={selected!r}, skipping {backend} roundtrip")
 
