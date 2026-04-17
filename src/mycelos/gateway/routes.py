@@ -1750,13 +1750,21 @@ def setup_routes(api: FastAPI) -> None:
 
     @api.get("/api/models")
     async def list_models() -> dict[str, Any]:
-        """All models and agent assignments (with agent names joined in)."""
+        """All models, registered agents, and agent assignments.
+
+        `agents` lists every registered agent (name + id) so the UI can show
+        an explicit row for agents that currently inherit system defaults.
+        `assignments` rows carry `agent_name` for labeling.
+        """
         mycelos = api.state.mycelos
         models = mycelos.storage.fetchall("SELECT * FROM llm_models ORDER BY provider, tier")
+        agents = mycelos.storage.fetchall(
+            "SELECT id, name FROM agents ORDER BY id"
+        )
         assignments = mycelos.storage.fetchall(
             """
             SELECT a.agent_id, a.model_id, a.priority, a.purpose,
-                   COALESCE(g.name, a.agent_id, 'System defaults') AS agent_name
+                   COALESCE(g.name, a.agent_id) AS agent_name
             FROM agent_llm_models a
             LEFT JOIN agents g ON g.id = a.agent_id
             ORDER BY COALESCE(a.agent_id, 'zzz'), a.priority
@@ -1764,8 +1772,42 @@ def setup_routes(api: FastAPI) -> None:
         )
         return {
             "models": [dict(m) for m in models],
+            "agents": [dict(r) for r in agents],
             "assignments": [dict(a) for a in assignments],
         }
+
+    @api.put("/api/models/system-defaults")
+    async def update_system_defaults(payload: dict[str, Any]) -> dict[str, Any]:
+        """Replace the system-wide default model chain for a given purpose.
+
+        Body: {"purpose": "execution" | "classification", "model_ids": [...]}
+        System defaults are used when an agent has no explicit assignment
+        (execution) or for background/cheapest-model calls (classification).
+        """
+        mycelos = api.state.mycelos
+        purpose = payload.get("purpose")
+        if purpose not in ("execution", "classification"):
+            return JSONResponse(
+                {"error": "purpose must be 'execution' or 'classification'"},
+                status_code=400,
+            )
+        model_ids = payload.get("model_ids") or []
+        if not isinstance(model_ids, list) or not all(isinstance(m, str) for m in model_ids):
+            return JSONResponse({"error": "model_ids must be a list of strings"}, status_code=400)
+        for model_id in model_ids:
+            if not mycelos.model_registry.get_model(model_id):
+                return JSONResponse(
+                    {"error": f"Model '{model_id}' is not registered"}, status_code=400
+                )
+        # set_system_defaults rewrites ALL system-default purposes at once, so
+        # we need to preserve the other purpose's chain alongside this update.
+        other = "classification" if purpose == "execution" else "execution"
+        other_chain = mycelos.model_registry.resolve_models(None, other)
+        by_purpose = {purpose: model_ids}
+        if other_chain:
+            by_purpose[other] = other_chain
+        mycelos.model_registry.set_system_defaults(by_purpose)
+        return {"ok": True, "purpose": purpose, "model_ids": model_ids}
 
     @api.put("/api/models/assignments/{agent_id}")
     async def update_agent_assignments(agent_id: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -542,19 +542,41 @@ class TestChatExplicitWorkflowResume:
 # --- Models endpoint ---
 
 
-def test_models_includes_agent_name(client: TestClient):
-    """/api/models must join agents.name so the UI can render a readable label.
+def test_models_includes_agent_name_and_agents_list(client: TestClient):
+    """/api/models must include an `agents` list and agent_name on assignments.
 
-    After web_init the Mycelos agent has name 'Mycelos' in the agents table.
-    Assignments rows must carry that through as agent_name.
+    The UI uses the agents list to render explicit rows for registered agents
+    even when they have no custom model assignment yet (inherit system default).
     """
     resp = client.get("/api/models")
     assert resp.status_code == 200
     data = resp.json()
     assert "assignments" in data
+    assert "agents" in data
+    agent_ids = {a["id"] for a in data["agents"]}
+    # After web_init the Mycelos agent must be registered and named.
+    assert "mycelos" in agent_ids
+    mycelos = next(a for a in data["agents"] if a["id"] == "mycelos")
+    assert mycelos["name"] == "Mycelos"
+    # Agent-scoped assignment rows carry agent_name; system-default rows
+    # (agent_id=NULL) may have agent_name=None.
     for a in data["assignments"]:
-        assert "agent_name" in a
-        assert a["agent_name"], "agent_name must not be empty (falls back to agent_id)"
+        if a["agent_id"] is not None:
+            assert a["agent_name"], f"agent_name must be set for {a['agent_id']}"
+
+
+def test_web_init_assigns_mycelos_agent(client: TestClient):
+    """After web_init the mycelos agent must have an execution assignment.
+
+    Previously the mycelos chat agent inherited system defaults silently,
+    which made it invisible in the Settings UI. It now has its own row.
+    """
+    data = client.get("/api/models").json()
+    mycelos_assigns = [
+        a for a in data["assignments"]
+        if a["agent_id"] == "mycelos" and a["purpose"] == "execution"
+    ]
+    assert mycelos_assigns, "mycelos agent should have its own execution assignment after web_init"
 
 
 def test_update_agent_assignments_replaces_priority_order(client: TestClient):
@@ -596,6 +618,47 @@ def test_update_agent_assignments_rejects_unknown_agent(client: TestClient):
         json={"purpose": "execution", "model_ids": []},
     )
     assert resp.status_code == 404
+
+
+def test_update_system_defaults_replaces_chain(client: TestClient):
+    """PUT /api/models/system-defaults replaces a purpose's default chain
+    without touching the other purpose's chain."""
+    initial = client.get("/api/models").json()
+    model_ids = [m["id"] for m in initial["models"]][:2]
+    # Capture classification chain before we change execution.
+    initial_class = [
+        a for a in initial["assignments"]
+        if a["agent_id"] is None and a["purpose"] == "classification"
+    ]
+    initial_class.sort(key=lambda a: a["priority"])
+    class_before = [a["model_id"] for a in initial_class]
+
+    resp = client.put(
+        "/api/models/system-defaults",
+        json={"purpose": "execution", "model_ids": model_ids},
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = client.get("/api/models").json()
+    exec_after = sorted(
+        [a for a in after["assignments"] if a["agent_id"] is None and a["purpose"] == "execution"],
+        key=lambda a: a["priority"],
+    )
+    assert [a["model_id"] for a in exec_after] == model_ids
+    # Classification chain must be preserved.
+    class_after = sorted(
+        [a for a in after["assignments"] if a["agent_id"] is None and a["purpose"] == "classification"],
+        key=lambda a: a["priority"],
+    )
+    assert [a["model_id"] for a in class_after] == class_before
+
+
+def test_update_system_defaults_rejects_invalid_purpose(client: TestClient):
+    resp = client.put(
+        "/api/models/system-defaults",
+        json={"purpose": "nonsense", "model_ids": []},
+    )
+    assert resp.status_code == 400
 
 
 # --- Helper ---

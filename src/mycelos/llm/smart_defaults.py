@@ -12,8 +12,9 @@ from mycelos.llm.providers import ModelInfo
 
 # Agent roles and their ideal tier.
 AGENT_ROLES: dict[str, dict[str, str]] = {
-    "system:execution": {"tier": "sonnet", "description": "System default for all agents"},
-    "system:classification": {"tier": "haiku", "description": "Intent classification (cheap + fast)"},
+    "system:execution": {"tier": "sonnet", "description": "Default execution chain for agents without an explicit assignment"},
+    "system:classification": {"tier": "haiku", "description": "Background tasks: knowledge classification, reminders, session summaries"},
+    "mycelos:execution": {"tier": "sonnet", "description": "Primary chat agent — balanced reasoning and cost"},
     "builder:execution": {"tier": "opus", "description": "Workflow + agent creation needs the strongest model"},
     "workflow-agent:execution": {"tier": "haiku", "description": "Workflow default (overridden per workflow)"},
     "auditor-agent:execution": {"tier": "opus", "description": "Security review must be thorough"},

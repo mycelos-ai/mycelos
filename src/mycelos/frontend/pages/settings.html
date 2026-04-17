@@ -33,6 +33,7 @@
       class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
       x-data="{
         models: [],
+        agents: [],
         assignments: [],
         credentials: [],
         config: {},
@@ -65,6 +66,7 @@
 
           if (modelsData) {
             this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
             this.assignments = modelsData.assignments || [];
           }
           if (creds) {
@@ -139,37 +141,75 @@
         // Local edit buffer keyed by `${agent_id}:${purpose}`
         assignmentEdits: {},
 
-        agentGroups() {
-          // Group server assignments by (agent_id, purpose) and merge local edits.
+        // Server-assignments bucketed by `${agent_id}:${purpose}`.
+        _assignmentsByKey() {
           const byKey = {};
           for (const a of this.assignments) {
-            const key = a.agent_id + ':' + (a.purpose || 'execution');
-            if (!byKey[key]) {
-              byKey[key] = {
-                agent_id: a.agent_id,
-                agent_name: a.agent_name || a.agent_id,
-                purpose: a.purpose || 'execution',
-                server_model_ids: [],
-              };
-            }
-            byKey[key].server_model_ids.push(a.model_id);
+            const agent_id = a.agent_id;  // may be null for system defaults
+            const purpose = a.purpose || 'execution';
+            const key = (agent_id || '__system__') + ':' + purpose;
+            if (!byKey[key]) byKey[key] = [];
+            byKey[key].push(a.model_id);
           }
+          return byKey;
+        },
+
+        _buildGroup(agent_id, agent_name, purpose, server_model_ids, label) {
+          const key = (agent_id || '__system__') + ':' + purpose;
+          const edit = this.assignmentEdits[key];
+          const model_ids = edit ? edit.model_ids : server_model_ids.slice();
+          return {
+            key,
+            agent_id,
+            agent_name,
+            purpose,
+            label,
+            model_ids,
+            inherited: !edit && server_model_ids.length === 0,
+            dirty: edit ? edit.dirty : false,
+            saving: edit ? !!edit.saving : false,
+            error: edit ? edit.error : null,
+          };
+        },
+
+        // Per-agent groups: one row per registered agent, for execution only.
+        // Agents without an explicit assignment get an "inherited" row so the
+        // user can optionally override.
+        agentGroups() {
+          const byKey = this._assignmentsByKey();
           const groups = [];
-          for (const key of Object.keys(byKey).sort()) {
-            const base = byKey[key];
-            const edit = this.assignmentEdits[key];
-            const model_ids = edit ? edit.model_ids : base.server_model_ids.slice();
-            const dirty = edit ? edit.dirty : false;
-            groups.push({
-              key,
-              agent_id: base.agent_id,
-              agent_name: base.agent_name,
-              purpose: base.purpose,
-              model_ids,
-              dirty,
-              saving: edit ? !!edit.saving : false,
-              error: edit ? edit.error : null,
-            });
+          for (const agent of this.agents) {
+            const key = agent.id + ':execution';
+            const server_model_ids = byKey[key] || [];
+            groups.push(this._buildGroup(
+              agent.id,
+              agent.name || agent.id,
+              'execution',
+              server_model_ids,
+              null,
+            ));
+          }
+          return groups;
+        },
+
+        // System-default groups: one entry per purpose (execution + classification).
+        systemGroups() {
+          const byKey = this._assignmentsByKey();
+          const PURPOSES = [
+            {purpose: 'execution', label: 'Default execution chain', hint: 'Fallback for agents without their own assignment.'},
+            {purpose: 'classification', label: 'Background tasks', hint: 'Cheapest model — knowledge classification, reminders, session summaries.'},
+          ];
+          const groups = [];
+          for (const {purpose, label, hint} of PURPOSES) {
+            const key = '__system__:' + purpose;
+            const server_model_ids = byKey[key] || [];
+            if (server_model_ids.length === 0 && !this.assignmentEdits[key]) {
+              // Don't show an empty system default the user hasn't configured.
+              continue;
+            }
+            const g = this._buildGroup(null, label, purpose, server_model_ids, label);
+            g.hint = hint;
+            groups.push(g);
           }
           return groups;
         },
@@ -219,24 +259,48 @@
         },
 
         resetAgentModels(agent_id, purpose) {
-          const key = agent_id + ':' + purpose;
+          const key = (agent_id || '__system__') + ':' + purpose;
           delete this.assignmentEdits[key];
         },
 
+        startOverride(group) {
+          // Seed the edit buffer from the current system-default chain so the
+          // user starts with a sensible list of models instead of an empty one.
+          const sysDefault = this.assignments
+            .filter(a => a.agent_id === null && a.purpose === group.purpose)
+            .sort((a, b) => a.priority - b.priority)
+            .map(a => a.model_id);
+          const seed = sysDefault.length ? sysDefault : (this.models[0] ? [this.models[0].id] : []);
+          this.assignmentEdits[group.key] = {
+            model_ids: seed,
+            dirty: true,
+            saving: false,
+            error: null,
+          };
+        },
+
         async saveAgentModels(agent_id, purpose) {
-          const key = agent_id + ':' + purpose;
+          const key = (agent_id || '__system__') + ':' + purpose;
           const edit = this.assignmentEdits[key];
           if (!edit) return;
           edit.saving = true;
           edit.error = null;
           try {
-            await MycelosAPI.put('/api/models/assignments/' + encodeURIComponent(agent_id), {
-              purpose,
-              model_ids: edit.model_ids,
-            });
+            if (agent_id === null) {
+              await MycelosAPI.put('/api/models/system-defaults', {
+                purpose,
+                model_ids: edit.model_ids,
+              });
+            } else {
+              await MycelosAPI.put('/api/models/assignments/' + encodeURIComponent(agent_id), {
+                purpose,
+                model_ids: edit.model_ids,
+              });
+            }
             // Reload assignments from server so the table reflects committed state.
             const modelsData = await MycelosAPI.get('/api/models');
             this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
             this.assignments = modelsData.assignments || [];
             delete this.assignmentEdits[key];
           } catch (e) {
@@ -313,15 +377,74 @@
           <div x-show="agentGroups().length > 0" class="mt-4">
             <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">Agent Assignments</p>
             <div class="space-y-3">
-              <template x-for="group in agentGroups()" :key="group.agent_id + ':' + group.purpose">
+              <template x-for="group in agentGroups()" :key="group.key">
                 <div class="card">
                   <div class="flex items-center justify-between mb-3">
                     <div>
                       <div class="font-headline text-sm font-semibold" x-text="group.agent_name"></div>
-                      <div class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">
-                        <span x-text="group.agent_id"></span>
-                        <span x-show="group.purpose && group.purpose !== 'execution'"> • <span x-text="group.purpose"></span></span>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label" x-text="group.agent_id"></div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span x-show="group.inherited" class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Inherits default</span>
+                      <button x-show="group.inherited" class="btn-secondary text-xs" @click="startOverride(group)">
+                        <span class="material-symbols-outlined text-sm">edit</span>
+                        Override
+                      </button>
+                      <template x-if="group.dirty">
+                        <div class="flex items-center gap-2">
+                          <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
+                          <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
+                            <span x-show="!group.saving">Save</span>
+                            <span x-show="group.saving">Saving…</span>
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="space-y-1.5" x-show="!group.inherited">
+                    <template x-for="(model_id, idx) in group.model_ids" :key="idx + ':' + model_id">
+                      <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono w-5 text-right" x-text="idx + 1"></span>
+                        <select
+                          class="input-field flex-1 font-mono text-xs"
+                          :value="model_id"
+                          @change="setModelAt(group, idx, $event.target.value)">
+                          <template x-for="m in models" :key="m.id">
+                            <option :value="m.id" x-text="m.id" :selected="m.id === model_id"></option>
+                          </template>
+                        </select>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === 0" @click="moveModel(group, idx, -1)" title="Move up">
+                          <span class="material-symbols-outlined text-sm">arrow_upward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === group.model_ids.length - 1" @click="moveModel(group, idx, 1)" title="Move down">
+                          <span class="material-symbols-outlined text-sm">arrow_downward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" @click="removeModel(group, idx)" title="Remove" :disabled="group.model_ids.length <= 1">
+                          <span class="material-symbols-outlined text-sm">close</span>
+                        </button>
                       </div>
+                    </template>
+                    <button class="btn-secondary text-xs mt-2" @click="addModel(group)">
+                      <span class="material-symbols-outlined text-sm">add</span>
+                      Add fallback model
+                    </button>
+                  </div>
+                  <div x-show="group.error" class="text-xs text-[var(--error)] mt-2" x-text="group.error"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- System Defaults -->
+          <div x-show="systemGroups().length > 0" class="mt-6">
+            <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">System Defaults</p>
+            <div class="space-y-3">
+              <template x-for="group in systemGroups()" :key="group.key">
+                <div class="card">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <div class="font-headline text-sm font-semibold" x-text="group.label"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] font-label" x-text="group.hint"></div>
                     </div>
                     <div class="flex items-center gap-2" x-show="group.dirty">
                       <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
