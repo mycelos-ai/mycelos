@@ -92,6 +92,25 @@ def register_periodic_jobs(huey: Any, app: Any) -> None:
         """Dispatch any reminders that have become due since the last tick."""
         reminder_tick_check(app)
 
+    @huey.periodic_task(crontab(hour="3", minute="0"))  # Daily at 03:00 UTC
+    def model_update_check() -> None:
+        """Refresh the LLM model registry once per day.
+
+        Deterministic handler — no LLM calls. Fetches LiteLLM's remote
+        model-cost JSON so newly-released provider models appear in
+        Settings without a litellm pip upgrade.
+        """
+        try:
+            result = app.model_updater.run("default")
+            if result.get("added"):
+                logger.info(
+                    "Model update: %d new models discovered (%s)",
+                    len(result["added"]),
+                    ", ".join(result["added"][:5]),
+                )
+        except Exception as e:
+            logger.error("Model update check FAILED: %s", e, exc_info=True)
+
     @huey.periodic_task(crontab(minute="*/5"))  # Every 5 minutes
     def knowledge_organizer_periodic() -> None:
         """Run the lazy organizer if there are pending notes.

@@ -68,6 +68,7 @@ class App:
         self._proxy_client: Any | None = None
         self._knowledge_base: Any | None = None
         self._knowledge_organizer: Any | None = None
+        self._model_updater: Any | None = None
         self._config_notifier: Any | None = None
         self._mount_registry: Any | None = None
 
@@ -355,6 +356,14 @@ class App:
             from mycelos.agents.handlers.knowledge_organizer_handler import KnowledgeOrganizerHandler
             self._knowledge_organizer = KnowledgeOrganizerHandler(self)
         return self._knowledge_organizer
+
+    @property
+    def model_updater(self):
+        """Model Updater system handler — lazily initialized, no LLM."""
+        if self._model_updater is None:
+            from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+            self._model_updater = ModelUpdaterHandler(self)
+        return self._model_updater
 
     def get_agent_handlers(self) -> dict:
         """Get all registered agent handlers, including persona agents from DB."""

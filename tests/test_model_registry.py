@@ -131,11 +131,35 @@ def test_resolve_empty_when_nothing_configured(
 
 def test_sync_from_litellm_populates_models(registry: ModelRegistry) -> None:
     """sync_from_litellm should populate llm_models table."""
-    count = registry.sync_from_litellm()
-    assert count > 0
+    result = registry.sync_from_litellm()
+    assert result["total"] > 0
+    assert len(result["added"]) > 0
     # Should have some Claude models
     models = registry.list_models(provider="anthropic")
     assert len(models) > 0
+
+
+def test_sync_from_litellm_reports_added_vs_updated(registry: ModelRegistry) -> None:
+    """Second call reports zero added and all models as updated."""
+    first = registry.sync_from_litellm()
+    assert len(first["added"]) > 0
+    second = registry.sync_from_litellm()
+    assert second["added"] == []  # nothing new
+    assert len(second["updated"]) == len(first["added"])
+
+
+def test_sync_from_litellm_prefer_remote_falls_back_on_error(
+    registry: ModelRegistry, monkeypatch
+) -> None:
+    """When the remote fetch fails, fall back to bundled map and still sync."""
+    # Make httpx.get raise so the remote path fails
+    import httpx
+    def boom(*a, **kw):
+        raise httpx.RequestError("no network")
+    monkeypatch.setattr(httpx, "get", boom)
+    result = registry.sync_from_litellm(prefer_remote=True)
+    # Fallback still works; we get models from the bundled litellm.model_cost
+    assert result["total"] > 0
 
 
 def test_setup_smart_defaults_anthropic(

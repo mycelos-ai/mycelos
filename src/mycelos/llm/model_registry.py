@@ -180,19 +180,29 @@ class ModelRegistry:
         )
         return [r["model_id"] for r in rows]
 
-    def sync_from_litellm(self) -> int:
-        """Import model metadata and costs from LiteLLM's built-in database.
+    def sync_from_litellm(self, prefer_remote: bool = False) -> dict[str, Any]:
+        """Import model metadata and costs from LiteLLM's database.
+
+        Args:
+            prefer_remote: When True, fetch the latest model-cost JSON from
+                LiteLLM's GitHub first; fall back to the bundled map on any
+                error. This is the path the periodic model-update check
+                takes — freshly-released models (e.g. Opus 4.7 the day after
+                Anthropic ships it) show up without a litellm pip upgrade.
 
         Returns:
-            Number of models synced.
+            ``{"added": [...], "updated": [...], "total": N}`` where
+            ``added`` / ``updated`` are lists of model_ids.
         """
-        try:
-            import litellm
-        except ImportError:
-            return 0
+        cost_map = self._fetch_cost_map(prefer_remote=prefer_remote)
+        if not cost_map:
+            return {"added": [], "updated": [], "total": 0}
 
-        count = 0
-        for model_id, info in litellm.model_cost.items():
+        existing_ids = {row["id"] for row in self._storage.fetchall("SELECT id FROM llm_models")}
+        added: list[str] = []
+        updated: list[str] = []
+
+        for model_id, info in cost_map.items():
             # Filter out region-specific and third-party gateway variants
             if any(
                 prefix in model_id
@@ -226,16 +236,52 @@ class ModelRegistry:
             if "/" not in model_id:
                 model_id = f"{provider}/{model_id}"
             tier = self._classify_tier(model_id)
+            # add_model uses INSERT OR REPLACE so we have to classify
+            # added vs updated ourselves up front.
+            was_present = model_id in existing_ids
             self.add_model(
                 model_id=model_id,
                 provider=provider,
                 tier=tier,
-                input_cost_per_1k=info.get("input_cost_per_token", 0) * 1000,
-                output_cost_per_1k=info.get("output_cost_per_token", 0) * 1000,
+                input_cost_per_1k=(info.get("input_cost_per_token") or 0) * 1000,
+                output_cost_per_1k=(info.get("output_cost_per_token") or 0) * 1000,
                 max_context=info.get("max_input_tokens"),
             )
-            count += 1
-        return count
+            if was_present:
+                updated.append(model_id)
+            else:
+                added.append(model_id)
+
+        return {"added": added, "updated": updated, "total": len(added) + len(updated)}
+
+    def _fetch_cost_map(self, prefer_remote: bool) -> dict[str, Any]:
+        """Return the LiteLLM model_cost map, optionally refreshed from GitHub.
+
+        The remote JSON is at
+        https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+        — tagged to main and tagesaktuell. If the fetch fails (no network,
+        timeout, parse error), we fall back silently to the bundled map,
+        so the worst case is the same behavior as before.
+        """
+        if prefer_remote:
+            try:
+                import httpx
+                resp = httpx.get(
+                    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, dict) and data:
+                    return data
+            except Exception:
+                # Fall through to local fallback — never raise.
+                pass
+        try:
+            import litellm
+            return dict(litellm.model_cost)
+        except ImportError:
+            return {}
 
     def setup_smart_defaults(self, provider: str) -> None:
         """Set up smart default model assignments for a provider.

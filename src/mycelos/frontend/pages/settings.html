@@ -263,6 +263,28 @@
           delete this.assignmentEdits[key];
         },
 
+        // ── Model refresh ──
+        refreshingModels: false,
+        refreshResult: null,
+
+        async refreshModels() {
+          this.refreshingModels = true;
+          this.refreshResult = null;
+          try {
+            const result = await MycelosAPI.post('/api/models/refresh', {});
+            this.refreshResult = result;
+            // Reload the models list so any additions show up.
+            const modelsData = await MycelosAPI.get('/api/models');
+            this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
+            this.assignments = modelsData.assignments || [];
+          } catch (e) {
+            this.refreshResult = { error: e.message || 'Refresh failed' };
+          } finally {
+            this.refreshingModels = false;
+          }
+        },
+
         startOverride(group) {
           // Seed the edit buffer from the current system-default chain so the
           // user starts with a sensible list of models instead of an empty one.
@@ -335,8 +357,46 @@
         <!-- Section 1: Models -->
         <!-- ============================================================ -->
         <div>
-          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Models</h2>
-          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">LLM Configuration</p>
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Models</h2>
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">LLM Configuration</p>
+            </div>
+            <button class="btn-secondary text-xs flex items-center gap-1.5"
+                    :disabled="refreshingModels"
+                    @click="refreshModels()">
+              <span class="material-symbols-outlined text-sm" :class="refreshingModels &amp;&amp; 'animate-spin'">cloud_sync</span>
+              <span x-show="!refreshingModels">Check for new models</span>
+              <span x-show="refreshingModels">Checking…</span>
+            </button>
+          </div>
+
+          <!-- Refresh result banner -->
+          <div x-show="refreshResult" class="mb-4">
+            <div x-show="refreshResult &amp;&amp; refreshResult.added &amp;&amp; refreshResult.added.length > 0"
+                 class="card border-l-2 border-l-[var(--primary)] bg-[var(--primary)]/5">
+              <div class="flex items-start gap-2">
+                <span class="material-symbols-outlined text-[var(--primary)] text-sm mt-0.5">auto_awesome</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-semibold" x-text="(refreshResult?.added?.length || 0) + ' new model' + ((refreshResult?.added?.length || 0) === 1 ? '' : 's') + ' discovered'"></div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] font-mono mt-1" x-text="(refreshResult?.added || []).join(', ')"></div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-1.5">
+                    Added to the registry. To use them, assign them below or in the System Defaults.
+                  </div>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            </div>
+            <div x-show="refreshResult &amp;&amp; (!refreshResult.added || refreshResult.added.length === 0) &amp;&amp; !refreshResult.error"
+                 class="text-[11px] text-[var(--on-surface-variant)] flex items-center gap-1.5">
+              <span class="material-symbols-outlined text-sm">check_circle</span>
+              <span>Registry is up to date — no new models found.</span>
+              <button class="underline ml-2" @click="refreshResult = null">dismiss</button>
+            </div>
+            <div x-show="refreshResult?.error" class="text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
+          </div>
 
           <!-- Models Table -->
           <div class="card overflow-x-auto">

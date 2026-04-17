@@ -1904,6 +1904,17 @@ def setup_routes(api: FastAPI) -> None:
             })
         return {"tools": tools}
 
+    @api.post("/api/models/refresh")
+    async def refresh_models() -> dict[str, Any]:
+        """Trigger an on-demand refresh of the LLM model registry.
+
+        Delegates to the ModelUpdaterHandler (deterministic — no LLM call).
+        Returns ``{"added": [...], "updated_count": N, "total": N}``.
+        """
+        mycelos = api.state.mycelos
+        result = mycelos.model_updater.run("default")
+        return result
+
     @api.put("/api/models/system-defaults")
     async def update_system_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         """Replace the system-wide default model chain for a given purpose.

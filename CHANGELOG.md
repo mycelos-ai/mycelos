@@ -8,6 +8,14 @@
 - Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
 - New `GET /api/tools` returns every registered built-in tool with its category and permission level.
 
+### Models — Daily Auto-Refresh (deterministic, no LLM)
+- New `ModelUpdaterHandler` system handler. Runs once per day at 03:00 UTC via Huey, fetches LiteLLM's live model-cost JSON from GitHub, and adds freshly-released provider models to the registry (e.g. a new Opus or GPT version appears in Settings the day after the provider ships it — no `pip install --upgrade litellm` required).
+- Deliberately deterministic: zero LLM calls, zero tool loop. A concrete proof that Mycelos workflows don't always need a language model.
+- New `POST /api/models/refresh` for on-demand checks from the Settings UI.
+- Settings page gained a "Check for new models" button next to the Models heading. Surfaces a banner listing newly-discovered models with guidance to assign them in System Defaults.
+- `ModelRegistry.sync_from_litellm(prefer_remote=True)` now returns `{"added": [...], "updated": [...], "total": N}` instead of a bare count. On remote-fetch failure it silently falls back to the bundled map, so the worst case is unchanged behavior.
+- New `models.discovered` audit event (Noteworthy tier) surfaces in the Doctor Activity panel when new models are found.
+
 ### Security — Close Path Traversal in KnowledgeBase.write + append_related_link
 - `KnowledgeBase.write()` derived the file path from the note title via `Note.generate_path()` without running it through `_safe_path()`. A prompt-injected or malicious title (e.g. `../../etc/passwd`) could write outside `~/.mycelos/knowledge/`. Now validated — traversal raises `PathTraversalError` and logs `knowledge.traversal.blocked`.
 - `KnowledgeBase.append_related_link()` took both `note_path` and `target_path` without validation. Both now go through `_safe_path`. Previously a traversal-y target path would have been embedded as an active wikilink in the note body.

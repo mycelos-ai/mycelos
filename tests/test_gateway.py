@@ -729,6 +729,17 @@ def test_update_system_defaults_replaces_chain(client: TestClient):
     assert [a["model_id"] for a in class_after] == class_before
 
 
+def test_refresh_models_endpoint_runs_handler(client: TestClient):
+    """POST /api/models/refresh runs the deterministic handler and returns
+    its result shape. We don't assert exact numbers because what's in
+    litellm.model_cost depends on the installed version."""
+    resp = client.post("/api/models/refresh")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "added" in data
+    assert "total" in data
+
+
 def test_update_system_defaults_rejects_invalid_purpose(client: TestClient):
     resp = client.put(
         "/api/models/system-defaults",
