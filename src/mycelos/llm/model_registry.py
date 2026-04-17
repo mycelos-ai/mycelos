@@ -184,6 +184,7 @@ class ModelRegistry:
         self,
         prefer_remote: bool = False,
         providers: list[str] | None = None,
+        include_legacy: bool = False,
     ) -> dict[str, Any]:
         """Import model metadata and costs from LiteLLM's database.
 
@@ -198,18 +199,27 @@ class ModelRegistry:
                 providers are synced. Used by the periodic updater to stay
                 focused on providers the user actually has credentials for.
                 None (default) keeps the original behavior — all providers.
+            include_legacy: When False (default), models from previous
+                generations are skipped during add (e.g. Claude 3.x / 4.0
+                when 4.5+ exists). Existing registry entries are never
+                removed — this flag only governs fresh additions. Set to
+                True if you explicitly want to seed the registry with older
+                models for testing or compatibility.
 
         Returns:
-            ``{"added": [...], "updated": [...], "total": N}`` where
-            ``added`` / ``updated`` are lists of model_ids.
+            ``{"added": [...], "updated": [...], "skipped_legacy": [...],
+               "total": N}``.
         """
+        from mycelos.llm.providers import is_legacy_model
+
         cost_map = self._fetch_cost_map(prefer_remote=prefer_remote)
         if not cost_map:
-            return {"added": [], "updated": [], "total": 0}
+            return {"added": [], "updated": [], "skipped_legacy": [], "total": 0}
 
         existing_ids = {row["id"] for row in self._storage.fetchall("SELECT id FROM llm_models")}
         added: list[str] = []
         updated: list[str] = []
+        skipped_legacy: list[str] = []
         allow = set(providers) if providers else None
 
         for model_id, info in cost_map.items():
@@ -248,10 +258,13 @@ class ModelRegistry:
             # Ensure provider prefix (litellm uses bare IDs for some providers)
             if "/" not in model_id:
                 model_id = f"{provider}/{model_id}"
-            tier = self._classify_tier(model_id)
-            # add_model uses INSERT OR REPLACE so we have to classify
-            # added vs updated ourselves up front.
+            # Skip previous-generation models on additions; never touch an
+            # entry that's already in the registry (user may have assigned it).
             was_present = model_id in existing_ids
+            if not include_legacy and not was_present and is_legacy_model(model_id, provider):
+                skipped_legacy.append(model_id)
+                continue
+            tier = self._classify_tier(model_id)
             self.add_model(
                 model_id=model_id,
                 provider=provider,
@@ -265,7 +278,12 @@ class ModelRegistry:
             else:
                 added.append(model_id)
 
-        return {"added": added, "updated": updated, "total": len(added) + len(updated)}
+        return {
+            "added": added,
+            "updated": updated,
+            "skipped_legacy": skipped_legacy,
+            "total": len(added) + len(updated),
+        }
 
     def _fetch_cost_map(self, prefer_remote: bool) -> dict[str, Any]:
         """Return the LiteLLM model_cost map, optionally refreshed from GitHub.

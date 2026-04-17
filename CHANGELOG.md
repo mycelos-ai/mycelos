@@ -8,6 +8,13 @@
 - Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
 - New `GET /api/tools` returns every registered built-in tool with its category and permission level.
 
+### Models — Skip Previous-Generation Models on Sync
+- The periodic model-registry sync no longer imports previous-generation models (Claude 3.x, GPT-3 / GPT-4-turbo, Gemini 1.x / 2.0, …). The registry stays focused on what a user would sensibly pick today.
+- Existing legacy entries are never deleted by the sync — the filter only applies to fresh additions. A model you manually added for compatibility stays.
+- `include_legacy=True` kwarg as explicit escape hatch.
+- `sync_from_litellm` now returns `skipped_legacy: [...]` alongside added/updated. The Settings refresh banner shows "Skipped N older-generation models" as a small opacity-70 hint.
+- Extracted `is_legacy_model(model_id, provider)` and `LEGACY_PATTERNS` in `mycelos.llm.providers` so the CLI listing and the registry sync share one definition of "current generation".
+
 ### Models — Auto-Refresh Scoped to Configured Providers
 - `ModelUpdaterHandler` now restricts the sync to providers the user has credentials for (plus Ollama when its endpoint is configured). No credentials = no sync. Stops the registry from flooding with 200 Gemini models after an Anthropic-only setup.
 - `ModelRegistry.sync_from_litellm` gained a `providers: list[str] | None` allow-list parameter.

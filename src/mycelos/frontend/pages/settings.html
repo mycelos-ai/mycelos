@@ -392,6 +392,9 @@
                   <div class="text-[11px] text-[var(--on-surface-variant)] mt-2.5">
                     Added to the registry. Assign them below or in the System Defaults to actually use them.
                   </div>
+                  <div x-show="refreshResult?.skipped_legacy?.length" class="text-[10px] text-[var(--on-surface-variant)] mt-1 opacity-70">
+                    <span x-text="'Skipped ' + (refreshResult?.skipped_legacy?.length || 0) + ' older-generation model' + ((refreshResult?.skipped_legacy?.length || 0) === 1 ? '' : 's')"></span>
+                  </div>
                 </div>
                 <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null" title="Dismiss">
                   <span class="material-symbols-outlined text-sm">close</span>

@@ -73,6 +73,7 @@ class ModelUpdaterHandler:
         return {
             "added": added,
             "updated_count": len(updated),
+            "skipped_legacy": result.get("skipped_legacy", []),
             "total": result.get("total", 0),
             "providers_checked": providers,
         }

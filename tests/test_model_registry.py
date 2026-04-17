@@ -148,6 +148,43 @@ def test_sync_from_litellm_reports_added_vs_updated(registry: ModelRegistry) -> 
     assert len(second["updated"]) == len(first["added"])
 
 
+def test_sync_from_litellm_skips_legacy_generations(registry: ModelRegistry) -> None:
+    """Previous-generation models (Claude 3.x, GPT-3, Gemini 1/2.0) must NOT
+    be added on a fresh sync — they would clutter the registry without
+    being something a user would sensibly pick today."""
+    result = registry.sync_from_litellm()
+    # Nothing matching Claude 3 / 3.5 / 3.7 / 4.0 / 4.1 should be in the
+    # registry after the sync.
+    anthropic_ids = {m["id"] for m in registry.list_models(provider="anthropic")}
+    for legacy in ("anthropic/claude-3-opus-20240229", "anthropic/claude-3-7-sonnet-20250219"):
+        assert legacy not in anthropic_ids
+    # But skipped_legacy should report what was filtered.
+    assert len(result["skipped_legacy"]) > 0
+
+
+def test_sync_from_litellm_include_legacy_escape_hatch(registry: ModelRegistry) -> None:
+    """include_legacy=True still adds old models for explicit use."""
+    result = registry.sync_from_litellm(include_legacy=True)
+    # Legacy models now appear
+    assert result["skipped_legacy"] == []
+
+
+def test_sync_from_litellm_preserves_existing_legacy_entry(registry: ModelRegistry) -> None:
+    """If a legacy model is ALREADY in the registry (user added it manually
+    or an older sync seeded it), the default sync must leave it alone —
+    the skip only applies to fresh additions."""
+    # Seed with a legacy id
+    registry.add_model(
+        model_id="anthropic/claude-3-opus-20240229",
+        provider="anthropic",
+        tier="opus",
+    )
+    assert registry.get_model("anthropic/claude-3-opus-20240229") is not None
+    registry.sync_from_litellm()
+    # Still there — not deleted by the sync
+    assert registry.get_model("anthropic/claude-3-opus-20240229") is not None
+
+
 def test_sync_from_litellm_prefer_remote_falls_back_on_error(
     registry: ModelRegistry, monkeypatch
 ) -> None:

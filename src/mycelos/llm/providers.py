@@ -243,6 +243,39 @@ def _get_litellm_models(provider: str) -> list[ModelInfo]:
     return deduped
 
 
+# Provider-specific legacy patterns. Models whose id matches are considered
+# outdated enough that they would clutter the UI without giving the user
+# anything they'd sensibly pick. Shared between provider listing and the
+# periodic model-registry sync so both paths agree on "current".
+#
+# Keep the regexes conservative: if in doubt, let a model through — a stray
+# older model is better than accidentally hiding a fresh one.
+LEGACY_PATTERNS: dict[str, re.Pattern] = {
+    "anthropic": re.compile(
+        r"claude-(3|3\.5|3\.7|4-|4\.1|opus-4-1|opus-4-20|sonnet-4-20|4-opus|4-sonnet)"
+    ),
+    "openai": re.compile(
+        r"(gpt-3|gpt-4-|gpt-4o-2024|chatgpt|gpt-4\.5)"
+    ),
+    "gemini": re.compile(
+        r"gemini-(1|2\.0|pro$|ultra)"
+    ),
+}
+
+
+def is_legacy_model(model_id: str, provider: str) -> bool:
+    """Return True if this model is from a previous generation.
+
+    Used to filter out outdated models from the registry. Unknown providers
+    get a permissive default (nothing is legacy) so we don't accidentally
+    drop models from providers we don't have a pattern for yet.
+    """
+    pattern = LEGACY_PATTERNS.get(provider)
+    if pattern is None:
+        return False
+    return bool(pattern.search(model_id))
+
+
 def _filter_current_generation(models: list[ModelInfo], provider: str) -> list[ModelInfo]:
     """Keep only current-generation models, filtering out legacy versions.
 
@@ -250,24 +283,7 @@ def _filter_current_generation(models: list[ModelInfo], provider: str) -> list[M
     For OpenAI: only GPT-4o+ and o-series (skip GPT-3.5, GPT-4-turbo, etc.)
     For Gemini: only 2.5+ (skip 1.0, 1.5, 2.0)
     """
-    # Provider-specific legacy patterns to EXCLUDE
-    _LEGACY_PATTERNS: dict[str, re.Pattern] = {
-        "anthropic": re.compile(
-            r"claude-(3|3\.5|3\.7|4-|4\.1|opus-4-1|opus-4-20|sonnet-4-20|4-opus|4-sonnet)"
-        ),
-        "openai": re.compile(
-            r"(gpt-3|gpt-4-|gpt-4o-2024|chatgpt|gpt-4\.5)"
-        ),
-        "gemini": re.compile(
-            r"gemini-(1|2\.0|pro$|ultra)"
-        ),
-    }
-
-    pattern = _LEGACY_PATTERNS.get(provider)
-    if pattern is None:
-        return models  # No filter for unknown providers
-
-    return [m for m in models if not pattern.search(m.id)]
+    return [m for m in models if not is_legacy_model(m.id, provider)]
 
 
 def _deduplicate_models(models: list[ModelInfo]) -> list[ModelInfo]:
