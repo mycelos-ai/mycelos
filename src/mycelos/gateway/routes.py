@@ -746,7 +746,7 @@ def setup_routes(api: FastAPI) -> None:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": content[:4000]},
                 ],
-                model="anthropic/claude-haiku-4-5",
+                model=mycelos.resolve_cheapest_model(),
             )
             return {"content": response.content, "tokens": response.total_tokens, "cost": response.cost}
         except Exception as e:

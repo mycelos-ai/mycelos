@@ -78,6 +78,12 @@ class _FakeApp:
         self.audit = _FakeAudit()
         self.knowledge_base = kb
 
+    def resolve_cheapest_model(self) -> str | None:
+        return "test-cheapest"
+
+    def resolve_strongest_model(self) -> str | None:
+        return "test-strongest"
+
 
 @pytest.fixture
 def storage(tmp_path: Path) -> SQLiteStorage:

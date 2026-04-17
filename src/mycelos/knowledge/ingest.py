@@ -80,7 +80,7 @@ def _summarize(app: Any, text: str, filename: str) -> str:
                     "Summarize this document. Include key points and any action items."
                 )},
             ],
-            model="claude-haiku-4-5",
+            model=app.resolve_cheapest_model(),
         )
         return response.content
     except Exception as e:
@@ -98,7 +98,7 @@ def _extract_tags(app: Any, text: str) -> list[str]:
                 )},
                 {"role": "user", "content": text[:3000]},
             ],
-            model="claude-haiku-4-5",
+            model=app.resolve_cheapest_model(),
         )
         import json
         raw = response.content.strip()
@@ -150,7 +150,7 @@ def vision_analyze(app: Any, note_path: str) -> dict[str, Any]:
     try:
         response = app.llm.complete(
             [{"role": "user", "content": image_content}],
-            model="anthropic/claude-sonnet-4-5",
+            model=app.resolve_strongest_model(),
         )
         extracted_text = response.content
     except Exception as e:

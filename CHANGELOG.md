@@ -2,7 +2,11 @@
 
 ## Week 16 (2026)
 
-### Settings — Editable Agent-Model Assignments
+### Models — Hardcoded Model IDs Replaced with Registry Lookups
+- Background LLM calls (knowledge summary, tag extraction, vision analysis for scanned PDFs, knowledge organizer classification, note-split helpers, knowledge UI "improve" action, chat compaction summarization) now resolve the model through `app.resolve_cheapest_model()` / `resolve_strongest_model()` instead of pinning `claude-haiku-4-5` or `claude-sonnet-4-5` in the source. Users who change the Background or Default execution chain in Settings now actually see those choices honored everywhere.
+- `create_persona_agent` tool resolves short tier names (`haiku`/`sonnet`/`opus`) against the live model registry instead of the previous hardcoded 4.5/4.6 IDs.
+- `compact_conversation` accepts a `summary_model` kwarg; the chat service now passes the cheapest registered model.
+- The Agents detail page (`/pages/agents.html`) replaces the free-text Model input with a dropdown populated from `/api/models`, plus an explicit "Use system default" option.
 - Every registered agent (including the Mycelos primary chat agent) now has an explicit row in the Settings page. Agents without a custom model chain show an "Inherits default" badge plus an Override button that seeds the edit buffer with the current system default. Dropdown + Up/Down + Remove + Add-Fallback controls per row. Save is per-agent.
 - System defaults are shown as a separate "System Defaults" section with human-readable labels: "Default execution chain" (fallback for agents without their own assignment) and "Background tasks" (cheapest model for knowledge classification, reminders, session summaries).
 - Onboarding now assigns the Mycelos primary chat agent its own execution chain (previously it silently inherited system defaults and was invisible in the UI).

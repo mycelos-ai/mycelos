@@ -149,16 +149,23 @@ def _create_persona_agent(args: dict, app: Any) -> dict:
     description = args.get("description", "")
     system_prompt = args["system_prompt"]
     allowed_tools = args.get("allowed_tools", [])
-    model = args.get("model", "anthropic/claude-haiku-4-5")
+    model = args.get("model")
     can_chat = args.get("can_chat", True)
 
-    # Resolve short model names
+    # Resolve short tier names (haiku/sonnet/opus) to the cheapest registered
+    # model of that tier. Unknown / missing → cheapest background model.
+    def _tier_model(tier: str) -> str | None:
+        candidates = app.model_registry.list_models(tier=tier)
+        return candidates[0]["id"] if candidates else None
+
     if model in ("haiku", "claude-haiku"):
-        model = "anthropic/claude-haiku-4-5"
+        model = _tier_model("haiku") or app.resolve_cheapest_model()
     elif model in ("sonnet", "claude-sonnet"):
-        model = "anthropic/claude-sonnet-4-6"
+        model = _tier_model("sonnet") or app.resolve_cheapest_model()
     elif model in ("opus", "claude-opus"):
-        model = "anthropic/claude-opus-4-6"
+        model = _tier_model("opus") or app.resolve_strongest_model()
+    elif not model:
+        model = app.resolve_cheapest_model()
 
     # Register agent
     existing = app.agent_registry.get(agent_id)

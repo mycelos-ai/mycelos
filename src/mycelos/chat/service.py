@@ -767,7 +767,12 @@ class ChatService:
             from mycelos.chat.compaction import needs_compaction, compact_conversation
             if needs_compaction(conversation, model=agent_model or ""):
                 _perf.info("Auto-compacting conversation (%d messages)", len(conversation))
-                conversation = compact_conversation(conversation, self._app.llm, model=agent_model or "")
+                conversation = compact_conversation(
+                    conversation,
+                    self._app.llm,
+                    model=agent_model or "",
+                    summary_model=self._app.resolve_cheapest_model(),
+                )
                 events.append(step_progress_event("auto-compact", "done"))
 
             self._conversations[session_id] = conversation

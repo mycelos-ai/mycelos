@@ -295,7 +295,7 @@ class KnowledgeOrganizerHandler:
                     {"role": "system", "content": PromptLoader().load("knowledge-organizer")},
                     {"role": "user", "content": prompt},
                 ],
-                model="claude-haiku-4-5",
+                model=self._app.resolve_cheapest_model(),
             )
         except Exception as e:
             logger.warning("organizer LLM classification failed: %s", e)

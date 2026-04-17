@@ -74,11 +74,17 @@ def compact_conversation(
     messages: list[dict],
     llm: Any,
     model: str = "",
+    summary_model: str | None = None,
 ) -> list[dict]:
     """Compact a conversation by summarizing old messages.
 
     Keeps: system prompt (index 0) + recent messages.
     Summarizes: everything in between.
+
+    Args:
+        summary_model: optional model override. When None, the caller's LLM
+            broker picks a default — but prefer passing the registry's
+            cheapest model so this respects user configuration.
 
     Returns the compacted message list, or the original if compaction fails.
     """
@@ -111,15 +117,6 @@ def compact_conversation(
     old_text = _format_messages_for_summary(old_messages)
 
     try:
-        # Use cheapest model for summarization
-        summary_model = None
-        for cheap in ("anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-4-6"):
-            try:
-                summary_model = cheap
-                break
-            except Exception:
-                continue
-
         response = llm.complete(
             [
                 {"role": "system", "content": COMPACT_PROMPT},

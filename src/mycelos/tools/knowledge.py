@@ -838,7 +838,7 @@ def _propose_sections(app: Any, title: str, content: str) -> list[dict]:
                 "content": f"Note title: {title}\n\nContent:\n{content}",
             },
         ],
-        model="claude-haiku-4-5",
+        model=app.resolve_cheapest_model(),
     )
     raw = response.content.strip()
     # Strip code fences if present
@@ -872,7 +872,7 @@ def _assign_to_sections(app: Any, content: str, section_titles: list[str]) -> li
                 "content": f"Sections:\n{titles_str}\n\nContent:\n{content}",
             },
         ],
-        model="claude-haiku-4-5",
+        model=app.resolve_cheapest_model(),
     )
     raw = response.content.strip()
     if raw.startswith("```"):
