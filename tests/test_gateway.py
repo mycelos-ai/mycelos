@@ -565,6 +565,31 @@ def test_models_includes_agent_name_and_agents_list(client: TestClient):
             assert a["agent_name"], f"agent_name must be set for {a['agent_id']}"
 
 
+def test_api_tools_returns_grouped_tools(client: TestClient):
+    """/api/tools returns every registered built-in tool with category + permission."""
+    resp = client.get("/api/tools")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tools" in data
+    tools = data["tools"]
+    assert len(tools) >= 10, f"expected plenty of tools, got {len(tools)}"
+    # Every entry has the required fields
+    for t in tools:
+        assert "name" in t and t["name"]
+        assert "category" in t
+        assert "permission" in t
+        assert t["permission"] in {"open", "standard", "privileged", "builder", "system"}
+    # Well-known tools should be present
+    names = {t["name"] for t in tools}
+    assert "note_write" in names
+    assert "http_get" in names
+    assert "connector_call" in names
+    # Tools are grouped by category
+    categories = {t["category"] for t in tools}
+    assert "knowledge_write" in categories
+    assert "connectors" in categories
+
+
 def test_web_init_assigns_mycelos_agent(client: TestClient):
     """After web_init the mycelos agent must have an execution assignment.
 

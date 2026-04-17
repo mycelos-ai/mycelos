@@ -1776,6 +1776,32 @@ def setup_routes(api: FastAPI) -> None:
             "assignments": [dict(a) for a in assignments],
         }
 
+    @api.get("/api/tools")
+    async def list_tools() -> dict[str, Any]:
+        """Return all registered built-in tools with category + permission.
+
+        Used by the Agents detail page to render tool checkboxes grouped by
+        category. Custom/persona agents see a writable matrix; system agents
+        see the same list as a read-only reference.
+
+        Does NOT expose dynamic MCP tools — those are reached via the
+        ``connector_call`` meta-tool.
+        """
+        from mycelos.tools.registry import ToolRegistry
+
+        ToolRegistry._ensure_initialized()
+        tools: list[dict[str, Any]] = []
+        for name, entry in sorted(ToolRegistry._tools.items()):
+            schema = entry.get("schema", {})
+            func = schema.get("function", {}) if isinstance(schema, dict) else {}
+            tools.append({
+                "name": name,
+                "category": entry.get("category") or "uncategorized",
+                "permission": entry["permission"].value,
+                "description": func.get("description", ""),
+            })
+        return {"tools": tools}
+
     @api.put("/api/models/system-defaults")
     async def update_system_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         """Replace the system-wide default model chain for a given purpose.

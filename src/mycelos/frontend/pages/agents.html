@@ -400,11 +400,49 @@
                     Pins this persona to a specific model. Leave empty to inherit the chain configured in Settings.
                   </p>
                 </div>
-                <div>
-                  <label class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1 block">Allowed Tools (comma-separated)</label>
-                  <input type="text" x-model="editAllowedTools"
-                         placeholder="note_write, note_search, memory_read"
-                         class="w-full px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--outline)] text-on-surface text-sm font-mono" />
+                <div x-show="isCustomAgent()">
+                  <label class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1 block">Allowed Tools</label>
+                  <p class="text-[11px] text-[var(--on-surface-variant)] mb-2">
+                    Select the built-in tools this agent may call. <code class="font-mono">connector_call</code> enables all active MCP connectors — use tool-name prefixes like <code class="font-mono">playwright.navigate</code> in the raw list below to narrow further.
+                  </p>
+                  <div class="space-y-3 max-h-80 overflow-y-auto rounded-lg border border-[var(--outline)] p-3 bg-[var(--background)]">
+                    <template x-for="(entries, cat) in toolsByCategory()" :key="cat">
+                      <div>
+                        <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1.5" x-text="cat"></div>
+                        <div class="grid grid-cols-2 gap-y-1 gap-x-3">
+                          <template x-for="t in entries" :key="t.name">
+                            <label class="flex items-center gap-2 cursor-pointer text-xs hover:text-[var(--primary)]">
+                              <input type="checkbox"
+                                     :checked="hasTool(t.name)"
+                                     @change="toggleTool(t.name)"
+                                     class="rounded border-[var(--outline)] bg-[var(--background)]" />
+                              <span class="font-mono truncate" x-text="t.name"></span>
+                            </label>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                  <details class="mt-2">
+                    <summary class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] cursor-pointer hover:text-[var(--primary)]">Raw (comma-separated, supports prefixes like <code>playwright.*</code>)</summary>
+                    <input type="text" x-model="editAllowedTools"
+                           placeholder="note_write, note_search, memory_read"
+                           class="mt-2 w-full px-3 py-2 rounded-lg bg-[var(--background)] border border-[var(--outline)] text-on-surface text-sm font-mono" />
+                  </details>
+                </div>
+                <div x-show="!isCustomAgent()">
+                  <label class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1 block">Tool Capabilities (system-managed)</label>
+                  <p class="text-[11px] text-[var(--on-surface-variant)] mb-2">
+                    System agents have a fixed tool set defined by their role. Removing tools would break the agent's purpose (e.g. Builder needs workflow and agent creation tools). Custom personas give you the checkbox matrix.
+                  </p>
+                  <div class="rounded-lg border border-[var(--outline)] p-3 bg-[var(--background)] text-[11px] text-[var(--on-surface-variant)] max-h-48 overflow-y-auto">
+                    <template x-for="(entries, cat) in toolsByCategory()" :key="cat">
+                      <div class="mb-2">
+                        <span class="font-label uppercase tracking-widest text-[9px]" x-text="cat"></span>:
+                        <span class="font-mono" x-text="entries.map(e =&gt; e.name).join(', ')"></span>
+                      </div>
+                    </template>
+                  </div>
                 </div>
                 <p x-show="advError" class="text-sm text-error" x-text="advError"></p>
                 <div class="flex gap-2 justify-end">
@@ -491,6 +529,7 @@
       return {
         agents: [],
         models: [],
+        tools: [],
         selectedAgent: null,
         detailData: null,
         detailLoading: false,
@@ -568,19 +607,73 @@
          */
         async init() {
           try {
-            const [data, modelsData] = await Promise.all([
+            const [data, modelsData, toolsData] = await Promise.all([
               MycelosAPI.get('/api/agents'),
               MycelosAPI.get('/api/models').catch(() => ({ models: [] })),
+              MycelosAPI.get('/api/tools').catch(() => ({ tools: [] })),
             ]);
             this.agents = Array.isArray(data) ? data : (data.agents || []);
             this.models = modelsData.models || [];
+            this.tools = toolsData.tools || [];
           } catch (e) {
             console.warn('Could not load agents:', e.message);
             this.agents = [];
             this.models = [];
+            this.tools = [];
           } finally {
             this.loading = false;
           }
+        },
+
+        /**
+         * True for user-created personas / deterministic agents. These get a
+         * full tool checkbox matrix. System agents (mycelos, builder, …)
+         * have their tool set defined by the system — the UI shows their
+         * capabilities read-only.
+         */
+        isCustomAgent() {
+          const t = this.detailData?.agent_type;
+          return t === 'persona' || t === 'deterministic';
+        },
+
+        /**
+         * Group tools by category for the checkbox grid.
+         */
+        toolsByCategory() {
+          const groups = {};
+          for (const t of this.tools) {
+            const cat = t.category || 'uncategorized';
+            (groups[cat] ||= []).push(t);
+          }
+          // Stable ordering: core first, then alphabetical.
+          const ordered = {};
+          const keys = Object.keys(groups).sort((a, b) => {
+            if (a === 'core') return -1;
+            if (b === 'core') return 1;
+            return a.localeCompare(b);
+          });
+          for (const k of keys) ordered[k] = groups[k];
+          return ordered;
+        },
+
+        /** Toggle a tool in the editAllowedTools set. */
+        toggleTool(name) {
+          const tools = this._toolsList();
+          const idx = tools.indexOf(name);
+          if (idx >= 0) tools.splice(idx, 1);
+          else tools.push(name);
+          this.editAllowedTools = tools.join(', ');
+        },
+
+        /** Parse editAllowedTools string into an array. */
+        _toolsList() {
+          return (this.editAllowedTools || '')
+            .split(',').map(s => s.trim()).filter(Boolean);
+        },
+
+        /** Check if a tool name is currently in allowed_tools. */
+        hasTool(name) {
+          return this._toolsList().includes(name);
         },
 
         /**

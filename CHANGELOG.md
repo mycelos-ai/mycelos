@@ -2,6 +2,12 @@
 
 ## Week 16 (2026)
 
+### Agents Page — Tool Capabilities View
+- Agent detail panel now shows tool capabilities grouped by category (core, connectors, email, knowledge_read, knowledge_write, knowledge_manage, system, workflows, …).
+- System agents (mycelos, builder, workflow-agent, evaluator-agent, auditor-agent) see the capability list in read-only mode with an explanation that their tool set is role-defined — stripping tools would break the agent's purpose.
+- Custom agents (persona / deterministic types) get a live checkbox matrix over the same categories, plus a collapsible raw textarea for prefix matches like `playwright.*`.
+- New `GET /api/tools` returns every registered built-in tool with its category and permission level.
+
 ### Audit CLI — Suspicious / Quiet / Time Filters
 - `mycelos db audit` gained `--suspicious` (only security-relevant events: tamper detection, tool/policy denials, credential rotations, capability expiry, security-gate blocks, *.flood_blocked, *.denied), `--quiet` (hides high-volume noise: reminder.tick, scheduler.tick, session.heartbeat, llm.usage), `--since 30m|1h|24h|7d` (time-range filter), `--agent <id>` (per-agent), and comma-separated `--type a,b,c`.
 - Examples in the command help: `mycelos db audit --suspicious --since 24h`, `mycelos db audit --quiet --since 1h`, `mycelos db audit --agent mycelos --since 1h`.
