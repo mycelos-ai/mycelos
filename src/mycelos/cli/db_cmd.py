@@ -137,24 +137,132 @@ def credentials_cmd(data_dir: Path) -> None:
     console.print(table)
 
 
+# Event patterns that indicate something noteworthy: security hits,
+# policy denials, tamper detection, unexpected agent behavior, rate-limits.
+# Keep this list narrow — broader events (workflow.registered, model.added, …)
+# are not suspicious on their own and would drown the signal.
+SUSPICIOUS_EVENT_PATTERNS: tuple[str, ...] = (
+    "config.tamper_detected",
+    "tool.blocked",
+    "policy.denied",
+    "credential.rotate",
+    "credential.bootstrap_failed",
+    "agent.denied",
+    "sandbox.escape_attempt",
+    "ssrf.blocked",
+    "telegram.user_bootstrapped",
+    "capability.expired",
+    "chat.security_gate.blocked",
+)
+
+# Trailing wildcards — must end with ".flood_blocked" or similar.
+SUSPICIOUS_EVENT_SUFFIXES: tuple[str, ...] = (
+    ".flood_blocked",
+    ".denied",
+    ".tamper_detected",
+)
+
+# High-volume, low-information events hidden by --quiet.
+NOISY_EVENT_TYPES: tuple[str, ...] = (
+    "reminder.tick",
+    "scheduler.tick",
+    "session.heartbeat",
+    "llm.usage",
+)
+
+
+def _parse_since(value: str | None) -> str | None:
+    """Parse --since shorthand (1h, 24h, 7d, 30m) into an ISO UTC cutoff."""
+    if not value:
+        return None
+    from datetime import datetime, timedelta, timezone
+    import re as _re
+    match = _re.match(r"^(\d+)([smhd])$", value.strip().lower())
+    if not match:
+        raise click.BadParameter(f"--since must look like '15m', '1h', '24h', '7d' (got {value!r})")
+    amount = int(match.group(1))
+    unit = match.group(2)
+    delta = {
+        "s": timedelta(seconds=amount),
+        "m": timedelta(minutes=amount),
+        "h": timedelta(hours=amount),
+        "d": timedelta(days=amount),
+    }[unit]
+    return (datetime.now(timezone.utc) - delta).strftime("%Y-%m-%dT%H:%M:%fZ")
+
+
 @db_cmd.command("audit")
 @click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
-@click.option("--type", "event_type", default=None, help="Filter by event type")
+@click.option("--type", "event_type", default=None, help="Filter by event type (comma-separated for multiple)")
+@click.option("--agent", "agent_id", default=None, help="Filter by agent_id")
+@click.option("--since", default=None, help="Filter events newer than e.g. 30m, 1h, 24h, 7d")
+@click.option("--suspicious", is_flag=True, help="Only show security-relevant events (tamper, blocks, denies, rotates, …)")
+@click.option("--quiet", is_flag=True, help="Hide high-volume noise events (reminder.tick, scheduler.tick, llm.usage, session.heartbeat)")
 @click.option("--limit", "max_rows", default=20, help="Max rows to show")
-def audit_cmd(data_dir: Path, event_type: str | None, max_rows: int) -> None:
-    """Show recent audit events."""
+def audit_cmd(
+    data_dir: Path,
+    event_type: str | None,
+    agent_id: str | None,
+    since: str | None,
+    suspicious: bool,
+    quiet: bool,
+    max_rows: int,
+) -> None:
+    """Show recent audit events with filters.
+
+    Examples:
+      mycelos db audit --suspicious --since 24h
+      mycelos db audit --quiet --since 1h
+      mycelos db audit --type tool.blocked,policy.denied --limit 50
+      mycelos db audit --agent mycelos --since 1h
+    """
     app = _get_app(data_dir)
+
+    conditions: list[str] = []
+    params: list = []
+
+    if suspicious:
+        placeholders = ",".join("?" * len(SUSPICIOUS_EVENT_PATTERNS))
+        like_clauses = " OR ".join(["event_type LIKE ?"] * len(SUSPICIOUS_EVENT_SUFFIXES))
+        conditions.append(
+            f"(event_type IN ({placeholders}) OR {like_clauses})"
+        )
+        params.extend(SUSPICIOUS_EVENT_PATTERNS)
+        params.extend(f"%{suffix}" for suffix in SUSPICIOUS_EVENT_SUFFIXES)
+
     if event_type:
-        rows = app.storage.fetchall(
-            "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?",
-            (event_type, max_rows),
-        )
-    else:
-        rows = app.storage.fetchall(
-            "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?",
-            (max_rows,),
-        )
-    table = Table(title=f"Audit Events (last {max_rows})")
+        types = [t.strip() for t in event_type.split(",") if t.strip()]
+        if types:
+            placeholders = ",".join("?" * len(types))
+            conditions.append(f"event_type IN ({placeholders})")
+            params.extend(types)
+
+    if agent_id:
+        conditions.append("agent_id = ?")
+        params.append(agent_id)
+
+    if quiet:
+        placeholders = ",".join("?" * len(NOISY_EVENT_TYPES))
+        conditions.append(f"event_type NOT IN ({placeholders})")
+        params.extend(NOISY_EVENT_TYPES)
+
+    cutoff = _parse_since(since)
+    if cutoff:
+        conditions.append("created_at >= ?")
+        params.append(cutoff)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.append(max_rows)
+    rows = app.storage.fetchall(
+        f"SELECT * FROM audit_events {where} ORDER BY created_at DESC LIMIT ?",
+        tuple(params),
+    )
+
+    title = f"Audit Events (last {max_rows})"
+    if suspicious:
+        title = f"Suspicious Audit Events (last {max_rows})"
+
+    table = Table(title=title)
     table.add_column("Time", style="dim")
     table.add_column("Type", style="bold")
     table.add_column("Agent")
@@ -169,7 +277,10 @@ def audit_cmd(data_dir: Path, event_type: str | None, max_rows: int) -> None:
             r["agent_id"] or "",
             details,
         )
-    console.print(table)
+    if not rows:
+        console.print(f"[dim]No matching events.[/dim]")
+    else:
+        console.print(table)
 
 
 @db_cmd.command("memory")

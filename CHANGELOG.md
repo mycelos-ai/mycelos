@@ -2,6 +2,10 @@
 
 ## Week 16 (2026)
 
+### Audit CLI — Suspicious / Quiet / Time Filters
+- `mycelos db audit` gained `--suspicious` (only security-relevant events: tamper detection, tool/policy denials, credential rotations, capability expiry, security-gate blocks, *.flood_blocked, *.denied), `--quiet` (hides high-volume noise: reminder.tick, scheduler.tick, session.heartbeat, llm.usage), `--since 30m|1h|24h|7d` (time-range filter), `--agent <id>` (per-agent), and comma-separated `--type a,b,c`.
+- Examples in the command help: `mycelos db audit --suspicious --since 24h`, `mycelos db audit --quiet --since 1h`, `mycelos db audit --agent mycelos --since 1h`.
+
 ### Models — Hardcoded Model IDs Replaced with Registry Lookups
 - Background LLM calls (knowledge summary, tag extraction, vision analysis for scanned PDFs, knowledge organizer classification, note-split helpers, knowledge UI "improve" action, chat compaction summarization) now resolve the model through `app.resolve_cheapest_model()` / `resolve_strongest_model()` instead of pinning `claude-haiku-4-5` or `claude-sonnet-4-5` in the source. Users who change the Background or Default execution chain in Settings now actually see those choices honored everywhere.
 - `create_persona_agent` tool resolves short tier names (`haiku`/`sonnet`/`opus`) against the live model registry instead of the previous hardcoded 4.5/4.6 IDs.
