@@ -167,12 +167,35 @@ class TestHealthCheck:
 class TestWhyMode:
     """--why uses LLM agent with AGENT.md context."""
 
-    def test_why_builds_context(self, app):
+    def test_why_builds_context(self, app, monkeypatch):
+        """build_context must include AGENT.md when it exists.
+
+        CI runners don't have AGENT.md checked in (it's gitignored), so we
+        stub _load_agent_md to return a fake doc instead of relying on the
+        developer's working directory.
+        """
         from mycelos.doctor.agent import DoctorAgent
+        monkeypatch.setattr(
+            DoctorAgent,
+            "_load_agent_md",
+            lambda self: "# AGENT.md\n\nConstitution: fail-closed everywhere.",
+        )
         agent = DoctorAgent(app)
         context = agent.build_context("my reminder didn't fire")
         assert "AGENT.md" in context or "Constitution" in context
         assert "reminder" in context.lower()
+
+    def test_why_builds_context_without_agent_md(self, app, monkeypatch):
+        """When AGENT.md is absent, context still builds (audit + config sections)."""
+        from mycelos.doctor.agent import DoctorAgent
+        monkeypatch.setattr(DoctorAgent, "_load_agent_md", lambda self: None)
+        agent = DoctorAgent(app)
+        context = agent.build_context("my reminder didn't fire")
+        # Must not crash, must still carry the core sections
+        assert "Audit Events" in context
+        assert "Config Generations" in context
+        # Question-specific block still fires
+        assert "Reminder State" in context
 
     def test_why_includes_audit_data(self, app):
         from mycelos.doctor.agent import DoctorAgent
