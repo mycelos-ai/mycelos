@@ -104,5 +104,25 @@ if [ -f "$DATA_DIR/mycelos.db" ]; then
     fi
 fi
 
-# Run the provided command (default: mycelos serve)
-exec "$@"
+# Role selection: same image, two container modes.
+ROLE="${MYCELOS_ROLE:-gateway}"
+
+case "$ROLE" in
+    proxy)
+        # SecurityProxy on TCP. Master key comes from $DATA_DIR/.master_key
+        # (bind-mounted read-only), token from MYCELOS_PROXY_TOKEN.
+        exec mycelos serve \
+            --role proxy \
+            --proxy-host 0.0.0.0 \
+            --proxy-port "${MYCELOS_PROXY_PORT:-9110}" \
+            --data-dir "$DATA_DIR"
+        ;;
+    gateway|all)
+        # Default: gateway (web UI + API). Passes through the compose CMD.
+        exec "$@"
+        ;;
+    *)
+        echo "Error: unknown MYCELOS_ROLE=$ROLE (expected: proxy, gateway, all)" >&2
+        exit 1
+        ;;
+esac
