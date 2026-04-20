@@ -19,11 +19,20 @@ def build_user_context(app: Any) -> str:
 
     if user_name:
         parts.append(f"## User\nName: {user_name}\nLanguage: {user_lang}")
-        parts.append("The user's name is known. Do NOT ask for their name again.")
+        parts.append(
+            "The user's name is known — do NOT ask for it again. "
+            f"You are talking WITH {user_name}, not ABOUT them. Always address "
+            "them directly in the second person ('you' in English, 'du' in "
+            f"German). Never refer to the user in the third person ('{user_name} "
+            f"asked…', 'they want…'). Use their name sparingly and only when "
+            "greeting or when it adds warmth — every sentence does not need it."
+        )
     else:
         parts.append(
             "## User\nThis is a NEW user (name unknown).\n"
-            "Ask their name ONCE at the start, then remember it."
+            "Ask their name ONCE at the start, then remember it. "
+            "Always address the user directly in the second person — never in "
+            "the third person."
         )
 
     # Inject persistent memory
