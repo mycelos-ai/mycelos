@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -134,3 +135,71 @@ class EncryptedCredentialProxy:
         )
         if self._notifier:
             self._notifier.notify_change(f"Credential rotated: {service}", "credential_rotate")
+
+
+class DelegatingCredentialProxy:
+    """Gateway-side credential proxy for two-container mode.
+
+    Forwards every WRITE operation (store / delete / rotate) to the
+    SecurityProxy over the shared bearer-token TCP channel. The master
+    key does not exist in this process.
+
+    READ operations:
+      - ``list_credentials`` returns METADATA ONLY (service, label,
+        description, created_at) from the proxy. Never plaintext.
+      - ``list_services`` returns the deduped list of service names.
+      - ``get_credential`` raises NotImplementedError. The only callers
+        that need plaintext today are the LLM broker and MCP manager,
+        and both already route through SecurityProxyClient.llm_complete
+        / mcp_start / http_get. New callers needing plaintext should
+        route through the proxy too.
+    """
+
+    def __init__(self, storage: Any, proxy_client: Any) -> None:
+        self._storage = storage
+        self._proxy_client = proxy_client
+
+    def store_credential(
+        self,
+        service: str,
+        credential: dict,
+        user_id: str = "default",
+        label: str = "default",
+        description: str | None = None,
+    ) -> None:
+        # user_id is accepted for interface compatibility with
+        # EncryptedCredentialProxy but is not forwarded — the proxy
+        # handles user_id from its own bearer-authenticated request.
+        self._proxy_client.credential_store(
+            service, credential, label=label, description=description,
+        )
+
+    def delete_credential(
+        self,
+        service: str,
+        user_id: str = "default",
+        label: str = "default",
+    ) -> None:
+        self._proxy_client.credential_delete(service, label)
+
+    def list_credentials(self, user_id: str = "default") -> list[dict]:
+        return self._proxy_client.credential_list()
+
+    def list_services(self, user_id: str = "default") -> list[str]:
+        items = self._proxy_client.credential_list()
+        return sorted({i["service"] for i in items if i.get("service")})
+
+    def mark_security_rotated(self, service: str) -> None:
+        self._proxy_client.credential_rotate(service, "default")
+
+    def get_credential(
+        self,
+        service: str,
+        user_id: str = "default",
+        label: str = "default",
+    ) -> dict | None:
+        raise NotImplementedError(
+            "Gateway cannot read credential plaintext in two-container mode. "
+            "Route this call through SecurityProxyClient.llm_complete / "
+            "mcp_start / http_get instead."
+        )
