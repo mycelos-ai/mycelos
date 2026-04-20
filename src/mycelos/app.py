@@ -195,17 +195,25 @@ class App:
             self._llm._proxy_client = client
 
     @property
-    def credentials(self) -> EncryptedCredentialProxy:
-        # Only for CLI mode — Gateway uses proxy_client
+    def credentials(self):
         if self._credentials is None:
-            master_key = os.environ.get("MYCELOS_MASTER_KEY")
-            if not master_key:
-                raise RuntimeError(
-                    "MYCELOS_MASTER_KEY environment variable is not set. "
-                    "This is required for credential encryption. "
-                    "Set it before running Mycelos."
+            proxy_url = os.environ.get("MYCELOS_PROXY_URL", "").strip()
+            if proxy_url and self._proxy_client is not None:
+                from mycelos.security.credentials import DelegatingCredentialProxy
+                self._credentials = DelegatingCredentialProxy(
+                    storage=self.storage,
+                    proxy_client=self._proxy_client,
                 )
-            self._credentials = EncryptedCredentialProxy(self.storage, master_key, notifier=self.config_notifier)
+            else:
+                # Single-container mode (CLI, tests, or proxy client not yet wired)
+                master_key = os.environ.get("MYCELOS_MASTER_KEY")
+                if not master_key:
+                    raise RuntimeError(
+                        "MYCELOS_MASTER_KEY environment variable is not set. "
+                        "This is required for credential encryption. "
+                        "Set it before running Mycelos."
+                    )
+                self._credentials = EncryptedCredentialProxy(self.storage, master_key, notifier=self.config_notifier)
         return self._credentials
 
     @property
