@@ -69,3 +69,23 @@ def test_same_image_for_both(compose):
     gw_image = compose["services"]["gateway"].get("image")
     px_image = compose["services"]["proxy"].get("image")
     assert gw_image and gw_image == px_image
+
+
+def test_gateway_not_on_default_network(compose):
+    """Phase 1b: gateway reaches only the proxy; no direct internet route."""
+    gw = compose["services"]["gateway"]
+    networks = gw.get("networks", [])
+    if isinstance(networks, dict):
+        networks = list(networks.keys())
+    assert "default" not in networks, \
+        f"gateway must not be on default network (got {networks})"
+    assert "mycelos-internal" in networks
+
+
+def test_proxy_db_mount_is_writable(compose):
+    """Phase 1b: proxy writes credentials — mycelos.db mount must not be read_only."""
+    px = compose["services"]["proxy"]
+    for v in px.get("volumes", []):
+        if isinstance(v, dict) and "mycelos.db" in str(v.get("target", "")):
+            assert v.get("read_only") is not True, \
+                "proxy must be able to write credentials — mycelos.db must not be read_only"

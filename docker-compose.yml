@@ -23,7 +23,9 @@ services:
       - type: bind
         source: ${MYCELOS_DATA_DIR:-./data}/mycelos.db
         target: /data/mycelos.db
-        read_only: true
+        # Phase 1b: proxy writes credentials (encrypted) to the DB.
+        # Schema-level split into a dedicated proxy.db is a future phase.
+        read_only: false
     networks:
       - mycelos-internal
     restart: unless-stopped
@@ -50,8 +52,9 @@ services:
       - MYCELOS_PROXY_URL=http://proxy:9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
     networks:
+      # Phase 1b: gateway is off the default (internet-capable) network.
+      # Every outbound call flows through the proxy container or fails.
       - mycelos-internal
-      - default
     restart: unless-stopped
 
 networks:
