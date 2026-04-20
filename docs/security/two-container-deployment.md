@@ -29,6 +29,22 @@ Phase 1 (1a + 1b) is complete. This doc describes the steady state.
 | Proxy's own outbound call leaking the credential | By design — the proxy uses the key. |
 | Docker-engine-level MITM between gateway and proxy | Bearer token prevents replay; a privileged attacker inside the Docker engine could still tap traffic. Mitigation: mTLS between containers (Phase 3). |
 | Unauthenticated web access | Phase 1 binds the gateway to `localhost` in the default installer output. Passkey auth ships in Phase 2. |
+| Gateway holding the Telegram bot token in RAM | Deliberate. See "Materializable credentials" below. |
+
+## Materializable credentials (deliberate compromise)
+
+Most credentials (Anthropic, OpenAI, MCP tokens, …) never leave the proxy: the gateway calls `POST /http` with `inject_credential=<name>` and `inject_as=bearer|header:X|url_path`, and the proxy substitutes the secret at the network boundary.
+
+Telegram is the exception. aiogram's authenticated long-poll session keeps its own HTTP connection directly to `api.telegram.org` for minutes at a time, so proxying every request is structurally awkward. We chose the pragmatic path:
+
+- The proxy exposes `POST /credential/materialize` that returns plaintext, but **only for a hard-coded allow-list** (`MATERIALIZABLE_SERVICES = {"telegram"}`).
+- The endpoint is **bootstrap-window gated** (10 s after proxy start, shared with `/credential/bootstrap`). A gateway compromised later in the session cannot materialize new credentials — the proxy refuses with `403`.
+- The gateway holds the resolved bot token in process RAM for the lifetime of the gateway container. It's never written to disk and never included in any outbound request except to `api.telegram.org` (enforced by the aiogram session).
+- Every materialize call is audited as `proxy.credential_materialized`; refusals as `proxy.materialize_denied`.
+
+Net effect: the master key and every other credential remain inside the proxy. Telegram is the single case where the gateway holds a derived secret; that secret is useless without Telegram's network endpoint (no pivot to other providers) and cannot be refreshed after startup.
+
+The cleaner alternative — writing a `ProxyAiohttpSession` that tunnels every aiogram request through `/http` — was considered and postponed. It depends on aiogram internals (token format validation, retry logic) and would cost a moving-parts problem at every aiogram upgrade.
 
 ## Operational notes
 

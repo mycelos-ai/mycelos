@@ -133,10 +133,13 @@ def doctor_check_telegram(app: "App") -> dict[str, Any]:
     except Exception:
         pass
 
+    # Metadata-only check — works in both single- and two-container modes.
     has_token = False
     try:
-        cred = app.credentials.get_credential("telegram")
-        has_token = bool(cred and cred.get("api_key"))
+        has_token = any(
+            (c.get("service") or "").lower() == "telegram"
+            for c in app.credentials.list_credentials(user_id="default")
+        )
     except Exception:
         pass
 

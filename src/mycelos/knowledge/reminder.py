@@ -159,7 +159,8 @@ class ReminderService:
             return False
 
     def _send_telegram(self, message: str) -> bool:
-        """Send reminder via Telegram bot."""
+        """Send reminder via Telegram bot — proxy-mediated, token never
+        visible to the gateway."""
         try:
             # Get Telegram config
             channel = self._app.storage.fetchone(
@@ -179,27 +180,17 @@ class ReminderService:
                 logger.debug("No Telegram chat_id configured")
                 return False
 
-            # Get bot token from credentials
-            cred = self._app.credentials.get_credential("telegram")
-            if not cred or not cred.get("api_key"):
-                logger.debug("No Telegram bot token")
-                return False
-
-            token = cred["api_key"]
-
-            # Send via Telegram API
-            import urllib.request
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            data = json.dumps({"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}).encode()
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read())
-                if result.get("ok"):
-                    logger.info("Telegram reminder sent to chat_id=%s", chat_id)
-                    return True
-                else:
-                    logger.warning("Telegram API error: %s", result.get("description"))
-                    return False
+            from mycelos.channels.telegram import call_telegram_api
+            result = call_telegram_api(
+                self._app,
+                "sendMessage",
+                {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+            )
+            if result.get("ok"):
+                logger.info("Telegram reminder sent to chat_id=%s", chat_id)
+                return True
+            logger.warning("Telegram API error: %s", result.get("description"))
+            return False
         except Exception as e:
             logger.warning("Telegram reminder failed: %s", e)
             return False

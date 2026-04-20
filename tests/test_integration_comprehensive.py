@@ -393,7 +393,13 @@ class TestFollowUpSuggestions:
             "test-wf", "Test", steps=[{"agent": "a", "action": "b"}]
         )
         app.schedule_manager.add("test-wf", "0 8 * * *")
-        with patch.object(app.credentials, "get_credential", return_value={"api_key": "fake"}):
+        # _get_follow_up_suggestions() uses list_credentials (metadata-only)
+        # now that two-container mode cannot fetch plaintext from the gateway.
+        with patch.object(
+            app.credentials,
+            "list_credentials",
+            return_value=[{"service": "telegram", "label": "default"}],
+        ):
             suggestions = chat_service._get_follow_up_suggestions()
         assert suggestions == "" or suggestions is None or len(suggestions) == 0
 

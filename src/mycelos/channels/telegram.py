@@ -763,43 +763,115 @@ def _split_message(text: str, max_len: int = 4000) -> list[str]:
     return chunks
 
 
-def send_notification(app: Any, message: str) -> bool:
-    """Send a proactive notification message via Telegram.
+def call_telegram_api(
+    app: Any,
+    method: str,
+    payload: dict | None = None,
+    *,
+    http_method: str = "POST",
+    timeout: int = 10,
+) -> dict:
+    """Call the Telegram Bot API through the SecurityProxy when available.
 
-    Uses the stored telegram_chat_id from memory and bot token from credentials.
-    Automatically splits messages exceeding Telegram's 4096-character limit.
-    Returns True if sent successfully, False otherwise.
+    The bot token never crosses the gateway process boundary in the
+    two-container deployment: we hand the proxy a URL with a literal
+    ``{credential}`` placeholder and let it substitute. In the
+    single-container mode (no MYCELOS_PROXY_URL) we fall back to a
+    direct call using the local credential.
+
+    Returns the parsed Telegram response (``{"ok": bool, …}``) or, on
+    transport failure, a synthetic ``{"ok": False, "description": "..."}``
+    so callers can treat all errors uniformly.
     """
     import json as _json
     import urllib.request
 
+    url = f"https://api.telegram.org/bot{{credential}}/{method}"
+
+    # --- Two-container path: delegate to SecurityProxy ---
+    from mycelos.connectors import http_tools as _http_tools
+    pc = getattr(_http_tools, "_proxy_client", None)
+    if pc is not None:
+        try:
+            if http_method.upper() == "GET":
+                resp = pc.http_get(url, credential="telegram", inject_as="url_path", timeout=timeout)
+            else:
+                resp = pc.http_post(
+                    url,
+                    body=payload or {},
+                    credential="telegram",
+                    inject_as="url_path",
+                    timeout=timeout,
+                )
+        except Exception as e:
+            return {"ok": False, "description": f"proxy transport error: {e}"}
+
+        status = resp.get("status", 0)
+        body = resp.get("body", "")
+        if not body:
+            return {"ok": False, "description": f"proxy returned empty body (HTTP {status})"}
+        try:
+            parsed = _json.loads(body)
+            if isinstance(parsed, dict):
+                return parsed
+        except ValueError:
+            pass
+        return {"ok": False, "description": f"non-JSON response (HTTP {status})"}
+
+    # --- Single-container fallback: local credential ---
+    try:
+        cred = app.credentials.get_credential("telegram")
+    except Exception as e:
+        return {"ok": False, "description": f"credential lookup failed: {e}"}
+    if not cred or not cred.get("api_key"):
+        return {"ok": False, "description": "no telegram credential"}
+    token = cred["api_key"]
+
+    resolved = url.replace("{credential}", token)
+    try:
+        data = _json.dumps(payload or {}).encode()
+        req = urllib.request.Request(
+            resolved,
+            data=data if http_method.upper() == "POST" else None,
+            headers={"Content-Type": "application/json"},
+            method=http_method.upper(),
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            parsed = _json.loads(resp.read())
+            if isinstance(parsed, dict):
+                return parsed
+            return {"ok": False, "description": "non-dict response"}
+    except Exception as e:
+        return {"ok": False, "description": str(e)}
+
+
+def send_notification(app: Any, message: str) -> bool:
+    """Send a proactive notification message via Telegram.
+
+    Uses the stored telegram_chat_id from memory. The bot token is
+    resolved inside the SecurityProxy (two-container) or via the local
+    credential (single-container) — never visible in the gateway.
+
+    Automatically splits messages exceeding Telegram's 4096-character
+    limit. Returns True if every chunk was accepted.
+    """
     try:
         chat_id = app.memory.get("default", "system", "telegram_chat_id")
         if not chat_id:
             logger.debug("No Telegram chat_id configured — skipping notification")
             return False
 
-        cred = app.credentials.get_credential("telegram")
-        if not cred or not cred.get("api_key"):
-            logger.debug("No Telegram bot token — skipping notification")
-            return False
-
-        token = cred["api_key"]
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-
-        # Telegram limit is 4096 characters — split if needed
         chunks = _split_message(message, max_len=4096)
 
         for chunk in chunks:
-            data = _json.dumps({"chat_id": chat_id, "text": chunk}).encode()
-            req = urllib.request.Request(
-                url, data=data, headers={"Content-Type": "application/json"}
+            result = call_telegram_api(
+                app,
+                "sendMessage",
+                {"chat_id": chat_id, "text": chunk},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = _json.loads(resp.read())
-                if not result.get("ok"):
-                    logger.warning("Telegram API error: %s", result.get("description"))
-                    return False
+            if not result.get("ok"):
+                logger.warning("Telegram API error: %s", result.get("description"))
+                return False
 
         logger.info("Telegram notification sent to chat_id=%s (%d part(s))", chat_id, len(chunks))
         return True

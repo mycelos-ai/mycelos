@@ -89,6 +89,95 @@ class TestProxyAuthEnforcement:
         })
         assert resp.status_code == 401
 
+    def test_credential_materialize_requires_auth(self, proxy_client):
+        """POST /credential/materialize without auth returns 401."""
+        resp = proxy_client.post("/credential/materialize", json={
+            "service": "telegram"
+        })
+        assert resp.status_code == 401
+
+
+class TestCredentialMaterialize:
+    """Hand-back-plaintext RPC is a deliberate compromise — strictly gated."""
+
+    AUTH = {"Authorization": f"Bearer {SESSION_TOKEN}", "X-User-Id": "default"}
+
+    def test_rejects_non_allowlisted_service(self, proxy_client):
+        """Only 'telegram' is materializable; anthropic etc. must be denied."""
+        resp = proxy_client.post("/credential/materialize", json={
+            "service": "anthropic",
+        }, headers=self.AUTH)
+        assert resp.status_code == 403
+        assert "not materializable" in resp.json().get("error", "").lower()
+
+    def test_rejects_after_bootstrap_window(self, proxy_client, monkeypatch):
+        """Window is 10s — after that, materialize is denied even for allow-listed services."""
+        from mycelos.security import proxy_server as mod
+        # Cheap way to simulate elapsed time without sleeping.
+        monkeypatch.setattr(mod, "time", type("T", (), {"time": staticmethod(lambda: 1e12)}))
+        resp = proxy_client.post("/credential/materialize", json={
+            "service": "telegram",
+        }, headers=self.AUTH)
+        assert resp.status_code == 403
+        assert "window closed" in resp.json().get("error", "").lower()
+
+
+class TestUrlPathCredentialInjection:
+    """The proxy substitutes {credential} in outbound URLs without leaking
+    the resolved token back to the gateway."""
+
+    AUTH = {"Authorization": f"Bearer {SESSION_TOKEN}", "X-User-Id": "default"}
+
+    def test_url_never_echoed_with_secret(self, proxy_client, monkeypatch):
+        """The response 'url' field must be the placeholder URL, not the
+        resolved one — otherwise the gateway could learn the token from
+        the response body."""
+        import os
+        import httpx
+        from mycelos.security import proxy_server as mod
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        from mycelos.storage.database import SQLiteStorage
+
+        # Seed a telegram credential via the real EncryptedCredentialProxy
+        # so the proxy's internal _get_credential_proxy() returns it.
+        db_path = os.environ["MYCELOS_DB_PATH"]
+        storage = SQLiteStorage(db_path)
+        ecp = EncryptedCredentialProxy(storage, os.environ["MYCELOS_MASTER_KEY"])
+        ecp.store_credential("telegram", {"api_key": "TELEGRAM_TOKEN_12345"}, user_id="default")
+
+        # Bypass SSRF validation for this test — we're not exercising that
+        # path here, and the sandbox has no network to resolve hostnames.
+        monkeypatch.setattr(mod, "_validate_url", lambda url: None)
+
+        # Capture whichever URL httpx sees
+        calls: list = []
+        def fake_request(method, url, **kw):
+            calls.append(url)
+            class R:
+                status_code = 200
+                text = '{"ok": true}'
+                url = "<echo-url>"
+                headers = {}
+            return R()
+        monkeypatch.setattr(httpx, "request", fake_request)
+
+        placeholder = "https://api.telegram.org/bot{credential}/sendMessage"
+        resp = proxy_client.post("/http", json={
+            "method": "POST",
+            "url": placeholder,
+            "body": {"chat_id": 1, "text": "hi"},
+            "inject_credential": "telegram",
+            "inject_as": "url_path",
+        }, headers=self.AUTH)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # Outbound URL was resolved with the real token
+        assert calls and "TELEGRAM_TOKEN_12345" in calls[0]
+        # Response URL echoed to gateway is the placeholder, never the secret
+        assert body["url"] == placeholder
+        assert "TELEGRAM_TOKEN_12345" not in body["url"]
+
 
 class TestSsrfProtection:
     """SSRF tests through the full proxy stack."""

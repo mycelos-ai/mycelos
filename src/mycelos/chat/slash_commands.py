@@ -1171,17 +1171,23 @@ def _connector_test(app: Any, connector_id: str) -> str | list:
 
 
 def _test_telegram(app: Any, connector_id: str) -> str | list:
-    """Test Telegram bot: check token + call getMe API."""
+    """Test Telegram bot: check token presence + call getMe via proxy."""
     from mycelos.chat.events import system_response_event, suggested_actions_event
+    from mycelos.channels.telegram import call_telegram_api
 
-    # Check if token is stored
-    cred = None
+    # Check token is registered (credential list is metadata-only — OK in
+    # two-container mode). We don't need the plaintext here; the proxy
+    # handles the actual API call.
+    has_token = False
     try:
-        cred = app.credentials.get_credential("telegram")
+        for item in app.credentials.list_credentials(user_id="default"):
+            if (item.get("service") or "").lower() == "telegram":
+                has_token = True
+                break
     except Exception:
         pass
 
-    if not cred or not cred.get("api_key"):
+    if not has_token:
         return [
             system_response_event(
                 "**Telegram Bot is registered but has no token.**\n\n"
@@ -1194,40 +1200,30 @@ def _test_telegram(app: Any, connector_id: str) -> str | list:
             ]),
         ]
 
-    # Token exists — try to reach Telegram API
-    token = cred["api_key"]
-    try:
-        import urllib.request
-        import json as _json
-        url = f"https://api.telegram.org/bot{token}/getMe"
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = _json.loads(resp.read())
-            if data.get("ok"):
-                bot = data["result"]
-                bot_name = bot.get("first_name", "Unknown")
-                bot_username = bot.get("username", "?")
-                return (
-                    f"**Telegram Bot is working!**\n\n"
-                    f"  Bot: {bot_name} (@{bot_username})\n"
-                    f"  Token: stored (encrypted)\n\n"
-                    f"Run `mycelos serve` to connect — then message your bot in Telegram."
-                )
-            else:
-                return f"**Telegram API error:** {data.get('description', 'Unknown error')}"
-    except Exception as e:
-        error = str(e)
-        if "401" in error or "Unauthorized" in error:
-            return [
-                system_response_event(
-                    "**Telegram token is invalid or expired.**\n\n"
-                    "Get a new token from @BotFather and update it:"
-                ),
-                suggested_actions_event([
-                    {"label": "Update token", "command": "/connector add telegram ", "prefill": True},
-                ]),
-            ]
-        return f"**Telegram connection test failed:** {e}"
+    data = call_telegram_api(app, "getMe", http_method="GET", timeout=5)
+    if data.get("ok"):
+        bot = data.get("result", {})
+        bot_name = bot.get("first_name", "Unknown")
+        bot_username = bot.get("username", "?")
+        return (
+            f"**Telegram Bot is working!**\n\n"
+            f"  Bot: {bot_name} (@{bot_username})\n"
+            f"  Token: stored (encrypted)\n\n"
+            f"Restart the stack (`docker compose restart`) to connect — "
+            f"then message your bot in Telegram."
+        )
+    description = data.get("description", "Unknown error")
+    if "401" in description or "Unauthorized" in description.lower():
+        return [
+            system_response_event(
+                "**Telegram token is invalid or expired.**\n\n"
+                "Get a new token from @BotFather and update it:"
+            ),
+            suggested_actions_event([
+                {"label": "Update token", "command": "/connector add telegram ", "prefill": True},
+            ]),
+        ]
+    return f"**Telegram connection test failed:** {description}"
 
 
 # ---------------------------------------------------------------------------

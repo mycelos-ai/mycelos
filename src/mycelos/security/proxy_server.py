@@ -48,7 +48,7 @@ class HttpProxyRequest(BaseModel):
     body: str | dict | None = None  # Accept dict (JSON body) or string
     timeout: int = 30
     inject_credential: str | None = None
-    inject_as: str | None = None  # "bearer" | "header:{name}"
+    inject_as: str | None = None  # "bearer" | "header:{name}" | "url_path"
 
 
 class HttpProxyResponse(BaseModel):
@@ -86,6 +86,23 @@ class LlmCompleteRequest(BaseModel):
 
 class CredentialBootstrapRequest(BaseModel):
     service: str
+
+
+class CredentialMaterializeRequest(BaseModel):
+    service: str
+
+
+# Services whose secret may be materialized (handed back as plaintext to
+# the gateway) instead of proxied per-request. This is a deliberate
+# compromise documented in docs/security/two-container-deployment.md —
+# the gateway needs the raw token for long-lived protocols where a
+# generic HTTP-proxy façade does not fit (e.g. aiogram's
+# authenticated long-polling session).
+#
+# Default: closed. Only services in this allow-list are materializable.
+# Everything else — anthropic, openai, github, etc. — stays strictly
+# proxy-mediated via /http + inject_credential.
+MATERIALIZABLE_SERVICES: set[str] = {"telegram"}
 
 
 # ---------------------------------------------------------------------------
@@ -331,24 +348,16 @@ def create_proxy_app() -> FastAPI:
 
         storage = _get_storage()
 
-        # SSRF validation
-        try:
-            _validate_url(req.url)
-        except ValueError as e:
-            if storage:
-                _write_audit(storage, "proxy.ssrf_blocked", user_id, {
-                    "url": req.url,
-                    "reason": str(e),
-                })
-            return JSONResponse({
-                "status": 0,
-                "error": f"URL blocked: {e}",
-            })
-
         # Build outbound headers
         outbound_headers = dict(req.headers)
 
-        # Credential injection — happens inside proxy, never exposed to callers
+        # Resolve the outbound URL, substituting {credential} in the path for
+        # providers that carry the secret in the URL (e.g. Telegram's
+        # /bot<TOKEN>/sendMessage). Happens BEFORE SSRF validation so the
+        # validator still sees the fully-resolved hostname — the substitution
+        # only touches the path/query.
+        outbound_url = req.url
+
         if req.inject_credential:
             credential_proxy = _get_credential_proxy()
             if credential_proxy:
@@ -362,13 +371,38 @@ def create_proxy_app() -> FastAPI:
                         elif inject_as.startswith("header:"):
                             header_name = inject_as[len("header:"):]
                             outbound_headers[header_name] = api_key
+                        elif inject_as == "url_path":
+                            # Substitute the literal '{credential}' placeholder
+                            # in the URL path/query with the raw token. We do
+                            # NOT url-encode: Telegram bot tokens are already
+                            # URL-safe (digits:base64url) and the provider
+                            # expects them verbatim. Credentials that could
+                            # contain URL-reserved chars would need a
+                            # different injection path.
+                            outbound_url = outbound_url.replace("{credential}", api_key)
                 except Exception:
                     return JSONResponse(
                         {"error": f"Credential injection failed for '{req.inject_credential}' — denied (fail-closed)"},
                         status_code=502,
                     )
 
-        # Audit the outbound request (no credential values logged)
+        # SSRF validation on the resolved URL
+        try:
+            _validate_url(outbound_url)
+        except ValueError as e:
+            if storage:
+                _write_audit(storage, "proxy.ssrf_blocked", user_id, {
+                    "url": req.url,
+                    "reason": str(e),
+                })
+            return JSONResponse({
+                "status": 0,
+                "error": f"URL blocked: {e}",
+            })
+
+        # Audit the outbound request. We log req.url (still has the
+        # {credential} placeholder) — never outbound_url, which contains
+        # the resolved secret.
         if storage:
             _write_audit(storage, "proxy.http_request", user_id, {
                 "method": req.method,
@@ -376,7 +410,7 @@ def create_proxy_app() -> FastAPI:
                 "inject_credential": req.inject_credential,
             })
 
-        # Make the outbound request
+        # Make the outbound request against the resolved URL
         try:
             kwargs: dict[str, Any] = {
                 "headers": outbound_headers,
@@ -389,13 +423,16 @@ def create_proxy_app() -> FastAPI:
                 else:
                     kwargs["content"] = req.body
 
-            response = httpx.request(req.method, req.url, **kwargs)
+            response = httpx.request(req.method, outbound_url, **kwargs)
 
+            # Echo back the placeholder URL — never the resolved one.
+            # Otherwise the gateway (which never sees the raw credential
+            # elsewhere) would learn the token from the response body.
             return JSONResponse({
                 "status": response.status_code,
                 "headers": dict(response.headers),
                 "body": response.text[:50_000],
-                "url": str(response.url),
+                "url": req.url,
             })
 
         except httpx.TimeoutException:
@@ -744,6 +781,79 @@ def create_proxy_app() -> FastAPI:
 
         # Never return plaintext credentials (Constitution Rule 4)
         return JSONResponse({"service": req.service, "status": "available"})
+
+    # ---------------------------------------------------------------------------
+    # POST /credential/materialize
+    #
+    # Hands plaintext back to the gateway for a narrow allow-list of
+    # services whose protocol is a poor fit for per-request proxying
+    # (currently: Telegram long-polling via aiogram's authenticated
+    # session). Also bootstrap-window gated so a compromised gateway
+    # later in the session cannot materialize new credentials.
+    # ---------------------------------------------------------------------------
+
+    @app.post("/credential/materialize")
+    async def credential_materialize(request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body_data = await request.json()
+        req = CredentialMaterializeRequest(**body_data)
+        storage = _get_storage()
+
+        if req.service not in MATERIALIZABLE_SERVICES:
+            if storage:
+                _write_audit(storage, "proxy.materialize_denied", user_id, {
+                    "service": req.service,
+                    "reason": "not_in_allow_list",
+                })
+            return JSONResponse(
+                {"error": f"Service '{req.service}' is not materializable"},
+                status_code=403,
+            )
+
+        elapsed = time.time() - _state["start_time"]
+        if elapsed > _BOOTSTRAP_WINDOW_SECONDS:
+            if storage:
+                _write_audit(storage, "proxy.materialize_denied", user_id, {
+                    "service": req.service,
+                    "reason": "window_closed",
+                    "elapsed": round(elapsed, 1),
+                })
+            return JSONResponse(
+                {"error": "Materialize window closed", "elapsed": round(elapsed, 1)},
+                status_code=403,
+            )
+
+        credential_proxy = _get_credential_proxy()
+        if not credential_proxy:
+            return JSONResponse({"error": "Credential proxy unavailable"}, status_code=500)
+
+        try:
+            cred = credential_proxy.get_credential(req.service, user_id=user_id)
+        except Exception as e:
+            logger.error("Credential materialize failed for service '%s': %s", req.service, e)
+            return JSONResponse(
+                {"error": "Credential lookup failed. Check server logs for details."},
+                status_code=500,
+            )
+
+        if not cred or not cred.get("api_key"):
+            return JSONResponse(
+                {"error": "Credential not found", "service": req.service},
+                status_code=404,
+            )
+
+        if storage:
+            _write_audit(storage, "proxy.credential_materialized", user_id, {
+                "service": req.service,
+            })
+
+        return JSONResponse({
+            "service": req.service,
+            "api_key": cred["api_key"],
+        })
 
     # ---------------------------------------------------------------------------
     # POST /credential/store

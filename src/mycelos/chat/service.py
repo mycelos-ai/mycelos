@@ -2498,8 +2498,14 @@ class ChatService:
                     "When the user asks for scheduled messages or notifications, you CAN deliver them via Telegram."
                 )
             else:
-                telegram_cred = self._app.credentials.get_credential("telegram")
-                if not telegram_cred or not telegram_cred.get("api_key"):
+                # Metadata-only check — get_credential isn't available in
+                # two-container mode. A row in credential_list is enough
+                # to know the token has been stored.
+                has_token = any(
+                    (c.get("service") or "").lower() == "telegram"
+                    for c in self._app.credentials.list_credentials(user_id="default")
+                )
+                if not has_token:
                     suggestions.append(
                         "The user has NOT set up Telegram yet. "
                         "If it comes up naturally, mention: "

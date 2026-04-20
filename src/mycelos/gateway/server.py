@@ -164,17 +164,36 @@ def _start_telegram_channel(mycelos: App, api: FastAPI, debug: bool = False) -> 
             logger.debug("Telegram: no channel config found")
         return
 
-    # Load bot token from credentials
+    # Load bot token. In the two-container deployment the gateway cannot
+    # decrypt credentials itself — we ask the SecurityProxy to materialize
+    # the Telegram token once at startup (bootstrap-window gated,
+    # allow-listed, audited). aiogram's authenticated long-poll session
+    # needs the raw token; see docs/security/two-container-deployment.md
+    # for the rationale. In single-container mode (no proxy), fall back
+    # to the local credential store.
+    bot_token: str | None = None
     try:
-        telegram_cred = mycelos.credentials.get_credential("telegram")
-        if not telegram_cred or not telegram_cred.get("api_key"):
-            logger.warning("Telegram channel configured but no bot token in credentials")
-            return
+        from mycelos.connectors import http_tools as _http_tools
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            materialized = pc.credential_materialize("telegram")
+            if materialized.get("api_key"):
+                bot_token = materialized["api_key"]
+            else:
+                logger.warning(
+                    "Telegram credential materialize failed: %s",
+                    materialized.get("error", "unknown"),
+                )
+                return
+        else:
+            telegram_cred = mycelos.credentials.get_credential("telegram")
+            if not telegram_cred or not telegram_cred.get("api_key"):
+                logger.warning("Telegram channel configured but no bot token in credentials")
+                return
+            bot_token = telegram_cred["api_key"]
     except Exception as e:
         logger.warning("Telegram credential lookup failed: %s", e)
         return
-
-    bot_token = telegram_cred["api_key"]
     mode = channel_cfg.get("mode", "polling")
     allowed_users = channel_cfg.get("allowed_users", [])
     config = channel_cfg.get("config", {})

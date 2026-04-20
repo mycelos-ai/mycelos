@@ -128,7 +128,7 @@ class TestTelegramSetupFlow:
             assert "working" in text.lower()
             assert "TestBot" in text
             assert "test_mycelos_bot" in text
-            assert "mycelos serve" in text
+            assert "docker compose restart" in text
 
     def test_step4_already_active(self, app):
         """Adding telegram again when already active → already active message."""

@@ -76,9 +76,19 @@ class SecurityProxyClient:
             raise ProxyUnavailableError(f"SecurityProxy unreachable: {e}")
 
     def http_get(self, url: str, headers: dict | None = None,
-                 credential: str | None = None, timeout: int = 30,
+                 credential: str | None = None, inject_as: str | None = None,
+                 timeout: int = 30,
                  user_id: str = "default", agent_id: str | None = None) -> dict:
-        """Proxy a GET request through the SecurityProxy."""
+        """Proxy a GET request through the SecurityProxy.
+
+        ``credential`` / ``inject_as`` let the proxy inject the raw secret
+        without ever revealing it to the gateway:
+
+        - ``inject_as="bearer"`` (default) — adds ``Authorization: Bearer <key>``
+        - ``inject_as="header:X-Name"`` — adds a custom header
+        - ``inject_as="url_path"`` — replaces the literal ``{credential}``
+          token in the URL (e.g. Telegram's ``https://api.telegram.org/bot{credential}/…``)
+        """
         extra_headers: dict = {"X-User-Id": user_id}
         if agent_id:
             extra_headers["X-Agent-Id"] = agent_id
@@ -88,13 +98,18 @@ class SecurityProxyClient:
             "headers": headers or {},
             "timeout": timeout,
             "inject_credential": credential,
+            "inject_as": inject_as,
         }, headers=extra_headers)
         return resp.json()
 
     def http_post(self, url: str, body=None, headers: dict | None = None,
-                  credential: str | None = None, timeout: int = 30,
+                  credential: str | None = None, inject_as: str | None = None,
+                  timeout: int = 30,
                   user_id: str = "default", agent_id: str | None = None) -> dict:
-        """Proxy a POST request through the SecurityProxy."""
+        """Proxy a POST request through the SecurityProxy.
+
+        See :meth:`http_get` for ``credential`` / ``inject_as`` semantics.
+        """
         extra_headers: dict = {"X-User-Id": user_id}
         if agent_id:
             extra_headers["X-Agent-Id"] = agent_id
@@ -105,6 +120,7 @@ class SecurityProxyClient:
             "body": body,
             "timeout": timeout,
             "inject_credential": credential,
+            "inject_as": inject_as,
         }, headers=extra_headers)
         return resp.json()
 
@@ -226,6 +242,22 @@ class SecurityProxyClient:
             "POST",
             "/credential/rotate",
             json={"service": service, "label": label},
+        )
+        return resp.json() if hasattr(resp, "json") else {}
+
+    def credential_materialize(self, service: str) -> dict:
+        """Fetch a plaintext credential (long-lived session token).
+
+        Only works for a narrow allow-list of services (currently
+        ``telegram``) and only inside the bootstrap window. Used by the
+        gateway to hold a token that aiogram's authenticated long-poll
+        session requires. Returns ``{"service": "...", "api_key": "..."}``
+        on success, or ``{"error": "..."}`` on refusal.
+        """
+        resp = self._request(
+            "POST",
+            "/credential/materialize",
+            json={"service": service},
         )
         return resp.json() if hasattr(resp, "json") else {}
 
