@@ -297,12 +297,20 @@ class ModelRegistry:
         if prefer_remote:
             try:
                 import httpx
-                resp = httpx.get(
-                    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+                import json as _json
+                from mycelos.connectors import http_tools as _http_tools
+
+                _url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+                if _http_tools._proxy_client is not None:
+                    raw = _http_tools._proxy_client.http_get(_url, timeout=10)
+                    status = raw.get("status", 0)
+                    if status == 0 or status >= 400:
+                        raise RuntimeError(raw.get("error", f"HTTP {status}"))
+                    data = _json.loads(raw.get("body", "{}")) if raw.get("body") else {}
+                else:
+                    resp = httpx.get(_url, timeout=10)
+                    resp.raise_for_status()
+                    data = resp.json()
                 if isinstance(data, dict) and data:
                     return data
             except Exception:

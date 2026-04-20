@@ -211,3 +211,53 @@ def test_setup_smart_defaults_anthropic(
     # Classification should use cheap model
     sys_class = registry.resolve_models(None, "classification")
     assert len(sys_class) >= 1
+
+
+# ── Proxy routing: model_registry._fetch_cost_map ──
+
+
+def test_fetch_cost_map_uses_proxy_when_available(
+    registry: ModelRegistry, monkeypatch
+) -> None:
+    """_fetch_cost_map routes through _proxy_client.http_get when proxy is set."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    import json
+
+    mock_pc = MagicMock()
+    fake_cost_map = {"gpt-4o": {"input_cost_per_token": 0.000005}}
+    mock_pc.http_get.return_value = {
+        "status": 200,
+        "body": json.dumps(fake_cost_map),
+        "headers": {},
+        "url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    result = registry._fetch_cost_map(prefer_remote=True)
+
+    mock_pc.http_get.assert_called_once()
+    assert result == fake_cost_map
+
+
+def test_fetch_cost_map_uses_direct_httpx_when_no_proxy(
+    registry: ModelRegistry, monkeypatch
+) -> None:
+    """_fetch_cost_map falls back to direct httpx when _proxy_client is None."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    import json
+
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
+
+    import httpx
+    fake_cost_map = {"claude-3-opus-20240229": {"input_cost_per_token": 0.000015}}
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = fake_cost_map
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+    result = registry._fetch_cost_map(prefer_remote=True)
+
+    assert result == fake_cost_map
