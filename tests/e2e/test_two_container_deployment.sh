@@ -40,4 +40,11 @@ if [ "$status" != "401" ] && [ "$status" != "403" ]; then
 fi
 echo "OK: proxy rejects unauthenticated calls ($status)"
 
+# 5. Gateway cannot reach the public internet (Phase 1b lockdown)
+if docker compose exec -T gateway curl -fsSL -m 3 https://example.com >/dev/null 2>&1; then
+    echo "FAIL: gateway has an internet route (Phase 1b expects it to have none)"
+    exit 1
+fi
+echo "OK: gateway has no direct internet route"
+
 echo "PASS: two-container deployment e2e"
