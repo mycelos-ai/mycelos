@@ -20,6 +20,7 @@ Available variables (built by build_prompt_variables):
     {agent_name}            — custom display name if user renamed the agent
     {channel_prompt}        — channel-specific instructions (api/cli/telegram)
     {system_context}        — Planner: formatted system state for planning
+    {configured_providers}  — which LLM providers have credentials (prevents "add your key" hallucinations)
 """
 from __future__ import annotations
 
@@ -196,6 +197,42 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
             variables["pending_workflows"] = ""
     except Exception:
         variables["pending_workflows"] = ""
+
+    # --- configured_providers: which LLM providers the user has set up.
+    #     Prevents "please add your API key" hallucinations when the key
+    #     is already stored (issue #3 from mycelos_retired).
+    try:
+        creds = app.credentials.list_credentials(user_id="default")
+        llm_services = {"anthropic", "openai", "google", "gemini", "mistral", "cohere", "groq"}
+        providers = sorted({
+            (c.get("service") or "").lower()
+            for c in creds
+            if (c.get("service") or "").lower() in llm_services
+        })
+        # Ollama is credential-less — include it when an endpoint is recorded
+        try:
+            if app.memory.get("default", "system", "provider.ollama.url"):
+                providers.append("ollama")
+        except Exception:
+            pass
+        if providers:
+            variables["configured_providers"] = (
+                "## Configured LLM Providers\n"
+                f"The user has API credentials configured for: {', '.join(providers)}.\n"
+                "When the user asks to 'use X as the model' where X is a model from one "
+                "of these providers (e.g. Sonnet, Opus, Haiku → Anthropic; GPT-4o → OpenAI; "
+                "Gemini → Google), DO NOT ask for an API key — it is already stored. "
+                "Instead, acknowledge the model switch and proceed. Only prompt for a key "
+                "if the requested model is from a provider NOT in the list above."
+            )
+        else:
+            variables["configured_providers"] = (
+                "## Configured LLM Providers\n"
+                "No LLM providers are configured yet. If the user asks to use a model, "
+                "guide them to Settings to add an API key."
+            )
+    except Exception:
+        variables["configured_providers"] = ""
 
     # --- agent_name: custom display name ---
     try:
