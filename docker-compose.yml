@@ -30,7 +30,7 @@ services:
       - mycelos-internal
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9110/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9110/healthz"]
       interval: 30s
       timeout: 5s
       start_period: 10s

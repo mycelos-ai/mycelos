@@ -56,6 +56,13 @@ class TestProxyAuthEnforcement:
         resp = proxy_client.get("/health", headers={"Authorization": f"Bearer {SESSION_TOKEN}"})
         assert resp.status_code == 200
 
+    def test_healthz_is_unauthenticated(self, proxy_client):
+        """GET /healthz is the liveness probe — no auth, minimal info."""
+        resp = proxy_client.get("/healthz")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == {"status": "ok"}
+
     def test_http_endpoint_requires_auth(self, proxy_client):
         """POST /http without auth returns 401."""
         resp = proxy_client.post("/http", json={"method": "GET", "url": "https://example.com"})

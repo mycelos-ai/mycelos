@@ -292,7 +292,15 @@ def create_proxy_app() -> FastAPI:
         return True, user_id
 
     # ---------------------------------------------------------------------------
-    # GET /health
+    # GET /healthz — unauthenticated liveness probe for Docker/K8s
+    # ---------------------------------------------------------------------------
+
+    @app.get("/healthz")
+    async def healthz() -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    # ---------------------------------------------------------------------------
+    # GET /health — authenticated, includes operational detail
     # ---------------------------------------------------------------------------
 
     @app.get("/health")
