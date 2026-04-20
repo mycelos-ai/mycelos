@@ -124,9 +124,12 @@ def test_handler_is_pure_python_no_llm(handler) -> None:
 def update_handler(handler, monkeypatch):
     """Handler with a stubbed httpx so we can inject release responses."""
     from mycelos.agents.handlers import model_updater_handler as mod
+    from mycelos.connectors import http_tools
     h, app = handler
     # No prior cached update state
     app.memory.get.side_effect = lambda key, scope=None: None
+    # Ensure http_tools._proxy_client is None so legacy httpx.get patches work
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
     return h, app, mod
 
 
@@ -229,3 +232,63 @@ def test_update_check_audits_only_once_per_new_tag(update_handler, monkeypatch):
 
     audited = [c for c in app.audit.log.call_args_list if c.args and c.args[0] == "mycelos.update_available"]
     assert len(audited) == 1, "update audit must fire only once per new tag"
+
+
+# ── Proxy routing: model_updater._check_app_update ──
+
+
+def test_check_app_update_uses_proxy_when_available(update_handler, monkeypatch) -> None:
+    """_check_app_update routes through _proxy_client.http_get when set."""
+    import json
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+
+    h, app, mod = update_handler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"))
+
+    mock_pc = MagicMock()
+    mock_pc.http_get.return_value = {
+        "status": 200,
+        "body": json.dumps({
+            "tag_name": "v0.3.0",
+            "html_url": "https://github.com/mycelos-ai/mycelos/releases/tag/v0.3.0",
+            "published_at": "2026-05-01T12:00:00Z",
+        }),
+        "headers": {},
+        "url": "https://api.github.com/repos/mycelos-ai/mycelos/releases/latest",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    result = h.run("default")
+
+    mock_pc.http_get.assert_called_once()
+    assert result["update_available"] is True
+    assert result["latest_version"] == "0.3.0"
+
+
+def test_check_app_update_uses_direct_httpx_when_no_proxy(update_handler, monkeypatch) -> None:
+    """_check_app_update falls back to direct httpx when _proxy_client is None."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+
+    h, app, mod = update_handler
+    monkeypatch.setattr(ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"))
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
+
+    import httpx
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {
+        "tag_name": "v0.2.0",
+        "html_url": "https://github.com/mycelos-ai/mycelos/releases/tag/v0.2.0",
+        "published_at": "2026-04-01T00:00:00Z",
+    }
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+    result = h.run("default")
+
+    assert result["update_available"] is True
+    assert result["latest_version"] == "0.2.0"

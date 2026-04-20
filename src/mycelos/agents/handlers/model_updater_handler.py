@@ -127,16 +127,26 @@ class ModelUpdaterHandler:
 
         try:
             import httpx
-            resp = httpx.get(
-                _RELEASE_API,
-                timeout=5,
-                headers={"Accept": "application/vnd.github+json", "User-Agent": "mycelos-updater"},
-            )
-            if resp.status_code == 404:
-                # No release published yet on this repo — not an error.
-                return {}
-            resp.raise_for_status()
-            data = resp.json()
+            import json as _json
+            from mycelos.connectors import http_tools as _http_tools
+
+            _headers = {"Accept": "application/vnd.github+json", "User-Agent": "mycelos-updater"}
+            if _http_tools._proxy_client is not None:
+                raw = _http_tools._proxy_client.http_get(_RELEASE_API, headers=_headers, timeout=5)
+                status = raw.get("status", 0)
+                if status == 404:
+                    # No release published yet on this repo — not an error.
+                    return {}
+                if status == 0 or status >= 400:
+                    raise RuntimeError(raw.get("error", f"HTTP {status}"))
+                data = _json.loads(raw.get("body", "{}")) if raw.get("body") else {}
+            else:
+                resp = httpx.get(_RELEASE_API, timeout=5, headers=_headers)
+                if resp.status_code == 404:
+                    # No release published yet on this repo — not an error.
+                    return {}
+                resp.raise_for_status()
+                data = resp.json()
         except Exception as e:
             logger.debug("Update check failed: %s", e)
             return self._load_cached_update_state()
