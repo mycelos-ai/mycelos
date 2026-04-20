@@ -180,6 +180,55 @@ class SecurityProxyClient:
         resp = self._request("GET", "/health")
         return resp.json()
 
+    def credential_store(
+        self,
+        service: str,
+        payload: dict,
+        *,
+        label: str = "default",
+        description: str | None = None,
+    ) -> dict:
+        """Encrypt and store a credential via the proxy.
+
+        The plaintext payload leaves THIS process encrypted-at-rest only after
+        it reaches the proxy, but within this single RPC the payload is sent
+        in cleartext HTTPS/HTTP body over the shared bearer-authenticated
+        channel to the proxy container.
+        """
+        resp = self._request(
+            "POST",
+            "/credential/store",
+            json={
+                "service": service,
+                "label": label,
+                "payload": payload,
+                "description": description,
+            },
+        )
+        return resp.json() if hasattr(resp, "json") else {}
+
+    def credential_delete(self, service: str, label: str = "default") -> dict:
+        """Remove a credential via the proxy."""
+        resp = self._request("DELETE", f"/credential/{service}/{label}")
+        return resp.json() if hasattr(resp, "json") else {}
+
+    def credential_list(self) -> list[dict]:
+        """Return credential METADATA only — never plaintext."""
+        resp = self._request("GET", "/credential/list")
+        if not hasattr(resp, "json"):
+            return []
+        data = resp.json()
+        return data.get("credentials", []) if isinstance(data, dict) else []
+
+    def credential_rotate(self, service: str, label: str = "default") -> dict:
+        """Mark a credential as security-rotated."""
+        resp = self._request(
+            "POST",
+            "/credential/rotate",
+            json={"service": service, "label": label},
+        )
+        return resp.json() if hasattr(resp, "json") else {}
+
     def close(self) -> None:
         """Close the underlying HTTP client."""
         self._client.close()
