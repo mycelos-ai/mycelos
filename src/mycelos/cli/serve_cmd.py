@@ -35,13 +35,70 @@ DEFAULT_HOST = "127.0.0.1"
 @click.option("--debug", is_flag=True, help="Enable debug logging (intents, models, tokens, events).")
 @click.option("--status", "show_status", is_flag=True, help="Check if gateway is running.")
 @click.option("--no-scheduler", is_flag=True, help="Disable background scheduler (Huey).")
-def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug: bool, show_status: bool, no_scheduler: bool) -> None:
+@click.option(
+    "--role",
+    type=click.Choice(["all", "gateway", "proxy"]),
+    default="all",
+    help=(
+        "Container/process role. 'all' (default) runs the gateway with an "
+        "in-process SecurityProxy; 'gateway' uses an external proxy from "
+        "MYCELOS_PROXY_URL; 'proxy' runs ONLY the SecurityProxy on TCP."
+    ),
+)
+@click.option("--proxy-host", default="127.0.0.1", help="Proxy bind host (role=proxy only)")
+@click.option("--proxy-port", default=9110, type=int, help="Proxy bind port (role=proxy only)")
+@click.option("--dry-run", is_flag=True, help="Validate configuration and exit.")
+def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug: bool, show_status: bool, no_scheduler: bool, role: str, proxy_host: str, proxy_port: int, dry_run: bool) -> None:
     """Start the Mycelos Gateway (HTTP API).
 
     The gateway exposes the chat, config, and health endpoints
     over HTTP with SSE streaming. Channels (Slack, Telegram, Web UI)
     connect to the gateway instead of running chat directly.
     """
+    # --- Proxy role: run only the SecurityProxy on TCP ---
+    if role == "proxy":
+        import os as _os
+        from pathlib import Path as _Path
+        key_path = _Path(data_dir) / ".master_key"
+        if not key_path.exists():
+            click.echo(
+                f"Error: .master_key not found in {data_dir}. "
+                "The gateway container or install script must create it first.",
+                err=True,
+            )
+            raise click.exceptions.Exit(code=2)
+        token = _os.environ.get("MYCELOS_PROXY_TOKEN", "").strip()
+        if not token:
+            click.echo(
+                "Error: MYCELOS_PROXY_TOKEN must be set. "
+                "Generate with: python -c 'import secrets; print(secrets.token_urlsafe(32))'",
+                err=True,
+            )
+            raise click.exceptions.Exit(code=2)
+        if dry_run:
+            click.echo(f"Proxy ready (dry-run): would bind {proxy_host}:{proxy_port}")
+            return
+        _os.environ["MYCELOS_MASTER_KEY"] = key_path.read_text().strip()
+        _os.environ["MYCELOS_DB_PATH"] = str(_Path(data_dir) / "mycelos.db")
+        import uvicorn
+        from mycelos.security.proxy_server import create_proxy_app
+        uvicorn.run(create_proxy_app(), host=proxy_host, port=proxy_port, log_level="warning")
+        return
+
+    # --- Gateway role without external proxy URL: warn, fall back to in-process ---
+    if role == "gateway":
+        import os as _os
+        if not _os.environ.get("MYCELOS_PROXY_URL"):
+            click.echo(
+                "Note: --role gateway without MYCELOS_PROXY_URL falls back to "
+                "an in-process proxy (same as --role all)."
+            )
+
+    # --- Dry run: validate config + exit before binding ---
+    if dry_run:
+        click.echo(f"Gateway ready (dry-run): would bind {host}:{port}")
+        return
+
     if show_status:
         _show_status(port)
         return
