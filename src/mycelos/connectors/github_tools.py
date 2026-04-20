@@ -30,6 +30,8 @@ def github_api(
         Dict with 'data' (parsed JSON) or 'error'.
     """
     import httpx
+    import json as _json
+    from mycelos.connectors import http_tools as _http_tools
 
     # Get token from credential proxy
     token = None
@@ -63,29 +65,45 @@ def github_api(
     }
 
     try:
-        if method.upper() == "GET":
-            resp = httpx.get(url, headers=headers, timeout=15)
-        elif method.upper() == "POST":
-            resp = httpx.post(url, headers=headers, json=body or {}, timeout=15)
-        elif method.upper() == "PATCH":
-            resp = httpx.patch(url, headers=headers, json=body or {}, timeout=15)
+        if _http_tools._proxy_client is not None:
+            if method.upper() == "GET":
+                raw = _http_tools._proxy_client.http_get(url, headers=headers, timeout=15)
+            elif method.upper() in ("POST", "PATCH"):
+                raw = _http_tools._proxy_client.http_post(url, body=body or {}, headers=headers, timeout=15)
+            else:
+                return {"error": f"Unsupported method: {method}"}
+
+            status = raw.get("status", 0)
+            if status == 0:
+                return {"error": f"GitHub API proxy error: {raw.get('error', 'unknown')}"}
+            body_text = raw.get("body", "")
         else:
-            return {"error": f"Unsupported method: {method}"}
+            if method.upper() == "GET":
+                resp = httpx.get(url, headers=headers, timeout=15)
+            elif method.upper() == "POST":
+                resp = httpx.post(url, headers=headers, json=body or {}, timeout=15)
+            elif method.upper() == "PATCH":
+                resp = httpx.patch(url, headers=headers, json=body or {}, timeout=15)
+            else:
+                return {"error": f"Unsupported method: {method}"}
 
-        if resp.status_code == 401:
+            status = resp.status_code
+            body_text = resp.text
+
+        if status == 401:
             return {"error": "GitHub token invalid or expired. Reconfigure with: /connector setup github"}
-        if resp.status_code == 404:
+        if status == 404:
             return {"error": f"Not found: {endpoint}"}
-        if resp.status_code >= 400:
-            return {"error": f"GitHub API error {resp.status_code}: {resp.text[:200]}"}
+        if status >= 400:
+            return {"error": f"GitHub API error {status}: {body_text[:200]}"}
 
-        data = resp.json()
+        data = _json.loads(body_text) if body_text else {}
 
         # Slim down large responses — GitHub returns ~100 fields per object
         if isinstance(data, list):
             data = [_slim_github_object(item) if isinstance(item, dict) else item for item in data]
 
-        return {"data": data, "status": resp.status_code, "count": len(data) if isinstance(data, list) else 1}
+        return {"data": data, "status": status, "count": len(data) if isinstance(data, list) else 1}
 
     except Exception as e:
         return {"error": f"GitHub API call failed: {e}"}
