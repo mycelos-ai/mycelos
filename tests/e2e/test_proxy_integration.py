@@ -47,7 +47,7 @@ def proxy_system():
             pytest.skip(f"Could not start proxy: {e}")
 
         client = SecurityProxyClient(
-            launcher.socket_path, launcher.session_token
+            socket_path=launcher.socket_path, token=launcher.session_token
         )
 
         yield launcher, client, data_dir
@@ -147,7 +147,7 @@ class TestProxyRestart:
         # New client works
         from mycelos.security.proxy_client import SecurityProxyClient
         new_client = SecurityProxyClient(
-            launcher.socket_path, launcher.session_token
+            socket_path=launcher.socket_path, token=launcher.session_token
         )
         health = new_client.health()
         assert health["status"] == "ok"

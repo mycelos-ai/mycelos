@@ -377,7 +377,7 @@ def create_app(
             _ = mycelos.credentials  # Eagerly init before proxy clears the env var
             proxy_launcher = ProxyLauncher(data_dir, master_key)
             proxy_launcher.start()
-            proxy_client = SecurityProxyClient(proxy_launcher.socket_path, proxy_launcher.session_token)
+            proxy_client = SecurityProxyClient(socket_path=proxy_launcher.socket_path, token=proxy_launcher.session_token)
             mycelos.set_proxy_client(proxy_client)
             api.state.proxy_launcher = proxy_launcher
             logger.info("SecurityProxy started (pid=%s)", proxy_launcher._process.pid if proxy_launcher._process else "?")

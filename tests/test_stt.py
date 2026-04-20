@@ -159,7 +159,7 @@ class TestSttClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             result = proxy.stt_transcribe(b"audio-bytes", filename="voice.ogg", user_id="stefan")
             assert result["text"] == "hello"
             # Verify request was made
@@ -175,7 +175,7 @@ class TestSttClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             result = proxy.stt_transcribe(b"data")
             assert result["language"] == "de"
             assert result["duration_seconds"] == 2.0
@@ -188,7 +188,7 @@ class TestSttClient:
             mock_client.request.side_effect = httpx.ConnectError("refused")
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             with pytest.raises(ProxyUnavailableError):
                 proxy.stt_transcribe(b"audio")
 

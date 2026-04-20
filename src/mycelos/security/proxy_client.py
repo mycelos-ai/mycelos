@@ -1,4 +1,4 @@
-"""SecurityProxy client — synchronous HTTP client over Unix Domain Socket."""
+"""SecurityProxy client — synchronous HTTP client over Unix Domain Socket or TCP."""
 
 from __future__ import annotations
 
@@ -13,21 +13,48 @@ class ProxyUnavailableError(Exception):
 class SecurityProxyClient:
     """Gateway-side client for the SecurityProxy.
 
-    Synchronous — uses httpx.Client with Unix socket transport.
-    All external network access, MCP calls, and LLM completions flow
-    through the SecurityProxy over a Unix Domain Socket, keeping credentials
-    out of agent processes.
+    Synchronous — uses httpx.Client with either Unix socket transport (UDS)
+    or plain TCP. All external network access, MCP calls, and LLM completions
+    flow through the SecurityProxy, keeping credentials out of agent processes.
     """
 
-    def __init__(self, socket_path: str, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        socket_path: str | None = None,
+        url: str | None = None,
+        token: str,
+    ) -> None:
+        """Connect to a SecurityProxy over Unix socket OR TCP.
+
+        socket_path: path to AF_UNIX socket (in-process / single-container).
+        url: http://host:port base URL (cross-container TCP).
+        Exactly one must be given.
+        """
+        if bool(socket_path) == bool(url):
+            raise ValueError(
+                "SecurityProxyClient needs exactly one of socket_path= or url="
+            )
+
         self._socket_path = socket_path
         self._token = token
-        self._client = httpx.Client(
-            transport=httpx.HTTPTransport(uds=socket_path),
-            base_url="http://proxy",  # arbitrary hostname, routed via socket
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=60.0,
-        )
+
+        if socket_path:
+            self._client = httpx.Client(
+                transport=httpx.HTTPTransport(uds=socket_path),
+                base_url="http://proxy",  # arbitrary hostname, routed via socket
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=60.0,
+            )
+            self.base_url = "http://proxy"
+        else:
+            self._client = httpx.Client(
+                base_url=url.rstrip("/"),
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=60.0,
+                trust_env=False,  # ignore system proxy settings for direct TCP
+            )
+            self.base_url = url.rstrip("/")
 
     def _request(self, method: str, path: str, **kwargs):
         """Make request to proxy, raise ProxyUnavailableError on connection failure.

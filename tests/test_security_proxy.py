@@ -264,7 +264,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "my-token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="my-token")
             proxy.http_get("https://example.com", user_id="stefan")
 
             call_args = mock_client.request.call_args
@@ -279,7 +279,7 @@ class TestProxyClient:
             mock_client.request.side_effect = httpx.ConnectError("refused")
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             with pytest.raises(ProxyUnavailableError):
                 proxy.http_get("https://example.com")
 
@@ -294,7 +294,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             proxy.http_post("https://api.example.com", body={"key": "value"}, user_id="stefan")
 
             call_args = mock_client.request.call_args
@@ -313,7 +313,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             result = proxy.mcp_start("github", ["npx", "@github/mcp"], {"GH_TOKEN": "x"})
 
             call_args = mock_client.request.call_args
@@ -332,7 +332,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             result = proxy.mcp_call("sess-123", "list_repos", {"org": "acme"})
 
             call_args = mock_client.request.call_args
@@ -352,7 +352,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             messages = [{"role": "user", "content": "Hi"}]
             result = proxy.llm_complete("gpt-4o", messages, purpose="chat")
 
@@ -373,7 +373,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             result = proxy.health()
 
             call_args = mock_client.request.call_args
@@ -389,7 +389,7 @@ class TestProxyClient:
             mock_client.request.side_effect = httpx.ConnectTimeout("timed out")
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             with pytest.raises(ProxyUnavailableError):
                 proxy.health()
 
@@ -404,7 +404,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             proxy.http_get("https://example.com", user_id="stefan", agent_id="creator-agent")
 
             call_args = mock_client.request.call_args
@@ -421,7 +421,7 @@ class TestProxyClient:
             )
             mock_cls.return_value = mock_client
 
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             proxy.http_get("https://example.com", user_id="stefan")
 
             call_args = mock_client.request.call_args
@@ -432,7 +432,7 @@ class TestProxyClient:
         from mycelos.security.proxy_client import SecurityProxyClient
         from mycelos.protocols import SecurityProxyProtocol
         with patch("mycelos.security.proxy_client.httpx.Client"):
-            proxy = SecurityProxyClient("/tmp/fake.sock", "token")
+            proxy = SecurityProxyClient(socket_path="/tmp/fake.sock", token="token")
             assert isinstance(proxy, SecurityProxyProtocol)
 
 
