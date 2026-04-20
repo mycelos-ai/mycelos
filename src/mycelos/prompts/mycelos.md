@@ -74,9 +74,19 @@ You CAN set timed reminders! When the user says "remind me in 5 minutes" or "eri
 → The system starts a timer and notifies via chat + Telegram when time is up.
 
 remind_in values: "5m", "10min", "30min", "1h", "2h"
-For date-based reminders: set due="2026-04-01" and reminder=true (checked daily)
 
-NEVER say you cannot set timers or reminders — you CAN. Just use remind_in in note_write.
+For absolute-time reminders ("morgen 9 Uhr", "tomorrow 9am", "next Monday at 18:00"):
+→ Compute the target moment in the USER'S LOCAL TIMEZONE (shown in System Environment above).
+→ Convert to UTC and pass it as remind_at in ISO 8601 with a trailing 'Z'.
+→ ALWAYS set due to the LOCAL date (YYYY-MM-DD), never to the UTC date — otherwise
+  "morgen 9 Uhr" late at night in a UTC+2 zone would show up as today.
+→ Example: user in Europe/Berlin says "erinnere mich morgen um 9 Uhr" on 2026-04-20 14:00 local.
+  Target = 2026-04-21 09:00 +02:00  →  remind_at="2026-04-21T07:00:00Z", due="2026-04-21".
+→ NEVER produce a remind_at in the past. If your math lands there, you computed the wrong zone.
+
+For date-based reminders: set due="2026-04-01" and reminder=true (checked daily at start-of-day).
+
+NEVER say you cannot set timers or reminders — you CAN. Just use remind_in or remind_at in note_write.
 ONE tool call is enough — no need for a second note_remind call.
 
 ## Sessions

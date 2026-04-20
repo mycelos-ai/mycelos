@@ -2627,28 +2627,51 @@ def _validate_memory_write(category: str, key: str, value: str) -> str | None:
     return None
 
 
-def _build_system_info(now: Any) -> str:
-    """Build system environment info for the prompt."""
+def _build_system_info(now: Any, user_tz: str | None = None) -> str:
+    """Build system environment info for the prompt.
+
+    If ``user_tz`` (IANA name like ``Europe/Berlin``) is provided, date
+    and time are rendered in the user's timezone — not the container's.
+    This is critical inside Docker, where the OS TZ is usually UTC but
+    the user lives elsewhere, so "tomorrow 9am" resolved against UTC
+    would land in the past and fire the reminder immediately.
+    """
     import platform
     import os
     from pathlib import Path
+    from datetime import datetime as _dt, timezone as _tz
 
-    # Detect timezone
-    import time as _t
-    tz_name = _t.tzname[0] if _t.tzname else "UTC"
-    try:
-        from datetime import timezone as _tz, timedelta as _td
-        utc_offset = now.astimezone().utcoffset()
-        if utc_offset is not None:
-            hours = int(utc_offset.total_seconds() // 3600)
-            tz_name = f"UTC{hours:+d}" if hours != 0 else "UTC"
-    except Exception:
-        _log.debug("Failed to detect timezone offset", exc_info=True)
+    # Make `now` aware: naive values are assumed OS-local.
+    if getattr(now, "tzinfo", None) is None:
+        now_aware = now.astimezone()
+    else:
+        now_aware = now
+
+    tz_name = ""
+    local_now = now_aware
+    if user_tz:
+        try:
+            from zoneinfo import ZoneInfo
+            local_now = now_aware.astimezone(ZoneInfo(user_tz))
+            tz_name = user_tz
+        except Exception:
+            _log.debug("Unknown user timezone %r, falling back to OS tz", user_tz, exc_info=True)
+
+    if not tz_name:
+        # Fall back to OS offset (e.g. "UTC", "UTC+2").
+        try:
+            off = now_aware.utcoffset()
+            hours = int((off.total_seconds() if off else 0) // 3600)
+            tz_name = "UTC" if hours == 0 else f"UTC{hours:+d}"
+        except Exception:
+            tz_name = "UTC"
 
     parts = ["## System Environment"]
-    parts.append(f"Date: {now.strftime('%A, %d. %B %Y')}")
-    parts.append(f"Time: {now.strftime('%H:%M')} ({tz_name})")
+    parts.append(f"Date: {local_now.strftime('%A, %d. %B %Y')}")
+    parts.append(f"Time: {local_now.strftime('%H:%M')} ({tz_name})")
     parts.append(f"Timezone: {tz_name}")
+    utc_now = _dt.now(_tz.utc)
+    parts.append(f"UTC now: {utc_now.strftime('%Y-%m-%dT%H:%M:%SZ')}")
     parts.append(f"OS: {platform.system()} {platform.release()} ({platform.machine()})")
     parts.append(f"Python: {platform.python_version()}")
 

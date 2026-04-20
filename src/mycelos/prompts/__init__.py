@@ -96,7 +96,12 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
     try:
         import datetime
         from mycelos.chat.service import _build_system_info
-        variables["system_info"] = _build_system_info(datetime.datetime.now())
+        user_tz = None
+        try:
+            user_tz = app.memory.get("default", "system", "user.timezone")
+        except Exception:
+            pass
+        variables["system_info"] = _build_system_info(datetime.datetime.now(), user_tz=user_tz)
     except Exception:
         variables["system_info"] = ""
 

@@ -58,6 +58,15 @@ NOTE_WRITE_SCHEMA = {
                     "type": "string",
                     "description": "Relative reminder timer: '5m', '10min', '1h', '2h'. Starts countdown immediately.",
                 },
+                "remind_at": {
+                    "type": "string",
+                    "description": (
+                        "Absolute reminder time in UTC ISO 8601 with trailing 'Z' "
+                        "(e.g. '2026-04-21T07:00:00Z'). Compute from the user's local time "
+                        "and their timezone shown in System Environment; never produce a "
+                        "value in the past."
+                    ),
+                },
             },
             "required": ["title", "content"],
         },
@@ -173,10 +182,11 @@ def execute_note_write(args: dict, context: dict) -> Any:
 
     reminder = args.get("reminder", False)
     remind_in = args.get("remind_in")
+    remind_at_arg = args.get("remind_at")
     due = args.get("due")
 
-    # If remind_in is set, force reminder=True and set due to today if missing
-    if remind_in:
+    # If remind_in or remind_at is set, force reminder=True and pick a default due.
+    if remind_in or remind_at_arg:
         reminder = True
         if not due:
             from datetime import date as _date
@@ -196,9 +206,30 @@ def execute_note_write(args: dict, context: dict) -> Any:
 
     result = {"path": path, "status": "created"}
 
-    # Compute remind_at = now + delta and persist it via the indexer.
-    # No background thread — the Huey reminder_tick job polls the row.
-    if remind_in:
+    # Absolute remind_at wins when set — the LLM has already done the
+    # timezone math using the user's zone from System Environment.
+    if remind_at_arg:
+        from datetime import datetime, timezone
+        try:
+            parsed = datetime.fromisoformat(str(remind_at_arg).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            if parsed < datetime.now(timezone.utc):
+                result["timer_error"] = (
+                    f"remind_at {remind_at_arg} is in the past — the reminder would fire "
+                    "immediately. Re-check the user's timezone and recompute."
+                )
+            else:
+                normalized = parsed.astimezone(timezone.utc).isoformat()
+                kb._indexer.set_reminder(path, due=due, reminder=True, remind_at=normalized)
+                result["remind_at"] = normalized
+                result["reminder_channels"] = "chat + telegram (if active)"
+        except ValueError as e:
+            result["timer_error"] = f"invalid remind_at {remind_at_arg!r}: {e}"
+
+    # Relative remind_in (e.g. "5m") — compute from UTC-now. Unaffected
+    # by user timezone because it's a delta, not an absolute wall time.
+    elif remind_in:
         _, delay_seconds = _parse_when(remind_in)
         if delay_seconds:
             try:

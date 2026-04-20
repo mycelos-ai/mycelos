@@ -325,3 +325,28 @@ window.sidebarData = function () {
     },
   };
 };
+
+/**
+ * Report the browser's IANA timezone to the backend so the LLM prompt
+ * shows "now" in the user's local time instead of the container's UTC.
+ *
+ * Runs once per tz-change — stored in localStorage so we don't hit the
+ * API on every page load. Fire-and-forget; a failure never blocks the UI.
+ */
+(function syncUserTimezone() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!tz) return;
+    if (localStorage.getItem("mycelos.user.timezone") === tz) return;
+    fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "system", key: "user.timezone", value: tz }),
+      credentials: "same-origin",
+    }).then((r) => {
+      if (r.ok) localStorage.setItem("mycelos.user.timezone", tz);
+    }).catch(() => {});
+  } catch (e) {
+    // Intl unsupported on very old browsers — skip.
+  }
+})();
