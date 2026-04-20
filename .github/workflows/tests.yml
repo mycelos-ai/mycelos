@@ -39,3 +39,13 @@ jobs:
           MYCELOS_MASTER_KEY: "ci-test-key-not-real"
         run: |
           python -m pytest tests/security/ -v --tb=short
+
+      - name: Validate docker-compose.yml
+        env:
+          MYCELOS_PROXY_TOKEN: "ci-token-not-real"
+          MYCELOS_DATA_DIR: "/tmp/fake-data"
+        run: |
+          mkdir -p /tmp/fake-data
+          touch /tmp/fake-data/.master_key /tmp/fake-data/mycelos.db
+          docker compose -f docker-compose.yml config > /dev/null
+          echo "compose parse OK"
