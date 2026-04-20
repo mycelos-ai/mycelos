@@ -363,30 +363,47 @@ def create_app(
         if key_file.exists():
             os.environ["MYCELOS_MASTER_KEY"] = key_file.read_text().strip()
 
-    # Start SecurityProxy child process
+    # SecurityProxy wiring: three modes.
+    #  1. MYCELOS_PROXY_URL set → external proxy container (Phase-1 two-container deployment).
+    #     No fork, no master key read in this process.
+    #  2. MYCELOS_MASTER_KEY set → fork a local SecurityProxy child (existing single-container path).
+    #  3. Neither → run without proxy (legacy fallback; credential access degrades).
     from mycelos.security.proxy_launcher import ProxyLauncher
     from mycelos.security.proxy_client import SecurityProxyClient
 
-    # Eagerly initialize the credential proxy before starting the SecurityProxy.
-    # The ProxyLauncher.start() clears MYCELOS_MASTER_KEY from the parent env after
-    # forking the child, so we must instantiate EncryptedCredentialProxy first to
-    # cache it in App._credentials before the env var disappears.
-    master_key = os.environ.get("MYCELOS_MASTER_KEY", "")
-    if master_key:
-        try:
-            _ = mycelos.credentials  # Eagerly init before proxy clears the env var
-            proxy_launcher = ProxyLauncher(data_dir, master_key)
-            proxy_launcher.start()
-            proxy_client = SecurityProxyClient(socket_path=proxy_launcher.socket_path, token=proxy_launcher.session_token)
-            mycelos.set_proxy_client(proxy_client)
-            api.state.proxy_launcher = proxy_launcher
-            logger.info("SecurityProxy started (pid=%s)", proxy_launcher._process.pid if proxy_launcher._process else "?")
-        except Exception as e:
-            logger.warning("Failed to start SecurityProxy: %s (running without proxy)", e)
-            api.state.proxy_launcher = None
-    else:
-        logger.warning("No MYCELOS_MASTER_KEY — running without SecurityProxy")
+    proxy_url = os.environ.get("MYCELOS_PROXY_URL", "").strip()
+    if proxy_url:
+        proxy_token = os.environ.get("MYCELOS_PROXY_TOKEN", "").strip()
+        if not proxy_token:
+            raise RuntimeError(
+                "MYCELOS_PROXY_URL set but MYCELOS_PROXY_TOKEN is missing — "
+                "the gateway cannot authenticate to the external proxy."
+            )
+        proxy_client = SecurityProxyClient(url=proxy_url, token=proxy_token)
+        mycelos.set_proxy_client(proxy_client)
         api.state.proxy_launcher = None
+        logger.info("SecurityProxy: external at %s (no local fork)", proxy_url)
+    else:
+        # Eagerly initialize the credential proxy before starting the SecurityProxy.
+        # The ProxyLauncher.start() clears MYCELOS_MASTER_KEY from the parent env after
+        # forking the child, so we must instantiate EncryptedCredentialProxy first to
+        # cache it in App._credentials before the env var disappears.
+        master_key = os.environ.get("MYCELOS_MASTER_KEY", "")
+        if master_key:
+            try:
+                _ = mycelos.credentials  # Eagerly init before proxy clears the env var
+                proxy_launcher = ProxyLauncher(data_dir, master_key)
+                proxy_launcher.start()
+                proxy_client = SecurityProxyClient(socket_path=proxy_launcher.socket_path, token=proxy_launcher.session_token)
+                mycelos.set_proxy_client(proxy_client)
+                api.state.proxy_launcher = proxy_launcher
+                logger.info("SecurityProxy started (pid=%s)", proxy_launcher._process.pid if proxy_launcher._process else "?")
+            except Exception as e:
+                logger.warning("Failed to start SecurityProxy: %s (running without proxy)", e)
+                api.state.proxy_launcher = None
+        else:
+            logger.warning("No MYCELOS_MASTER_KEY — running without SecurityProxy")
+            api.state.proxy_launcher = None
 
     # Wire http_tools to use proxy when available
     from mycelos.connectors.http_tools import set_proxy_client as set_http_proxy
