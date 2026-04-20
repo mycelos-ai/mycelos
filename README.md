@@ -85,28 +85,45 @@ A 60-second tour, then deep dives on the parts that matter.
 
 ## Quick Start
 
-### With Docker (recommended)
+### One-shot installer (recommended)
 
 ```bash
-# Download the compose file
-curl -O https://raw.githubusercontent.com/mycelos-ai/mycelos/main/docker-compose.yml
-
-# Start Mycelos
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-That's it. Open `http://localhost:9100` in your browser. Mycelos will ask for your API key on first use and store it encrypted.
+This creates a working directory, generates the master key and the internal proxy token, fetches `docker-compose.yml`, starts two containers (`mycelos-gateway` and `mycelos-proxy`), and opens the web UI at <http://localhost:9100>.
 
-Pre-built images are available for **AMD64** and **ARM64** (Raspberry Pi, Apple Silicon) via GitHub Container Registry.
+Idempotent — re-running keeps existing keys and tokens.
 
-### Build from source (alternative)
+**Windows:**
+
+```powershell
+iwr https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.ps1 -OutFile install.ps1
+./install.ps1
+```
+
+### Manual
+
+If you prefer to see every file before it lands:
 
 ```bash
 git clone https://github.com/mycelos-ai/mycelos
 cd mycelos
-docker compose build
+cp .env.example .env
+# Edit .env: set MYCELOS_PROXY_TOKEN to a random 32+ char string
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+mkdir -p data && python -c "import secrets; print(secrets.token_urlsafe(32))" > data/.master_key && chmod 600 data/.master_key
+touch data/mycelos.db
 docker compose up -d
 ```
+
+### Architecture (why two containers?)
+
+The **gateway** serves the web UI, chat, and REST API. The **proxy** holds the master key and brokers every outbound LLM, MCP, and HTTP call. They share an internal Docker network and a bearer token; the proxy's port is never published to the host.
+
+A prompt-injection or RCE inside the gateway cannot read `.master_key` or decrypt the credentials table — the key lives on a different filesystem namespace. See `docs/security/two-container-deployment.md` for the threat model.
+
+> **Network access and authentication:** Phase 1 binds the gateway to `localhost` only. Public exposure (Cloudflare Tunnel, Tailscale, or direct Let's Encrypt) is Phase 2 and ships together with passkey-based authentication. Do not expose this to a network you do not control until that ships.
 
 ### Updating
 
@@ -116,37 +133,21 @@ When a new Mycelos release is available:
 docker compose pull && docker compose up -d
 ```
 
-Your data in `~/.mycelos/` stays untouched — only the container image is replaced.
+Your data stays untouched — only the container images are replaced.
 
-Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page (`/pages/doctor.html`) and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
 
-### Network access & security
+### With pip (single-process mode)
 
-The Docker image binds to `0.0.0.0` so it's reachable from other devices on your network. That's convenient, but also means **anyone on your network can access Mycelos** unless you protect it.
-
-**Recommended:** Enable Basic Auth by setting a password in `.env`:
-
-```bash
-# .env
-MYCELOS_PASSWORD=your-strong-password-here
-```
-
-Then restart: `docker compose up -d`. The web UI will prompt for your browser's Basic Auth dialog.
-
-**Alternative:** If you only want local access, change the port mapping in `docker-compose.yml`:
-
-```yaml
-ports:
-  - "127.0.0.1:9100:9100"   # Only reachable from the host itself
-```
-
-### With pip
+For development or single-host use without Docker:
 
 ```bash
 pip install mycelos
 mycelos init          # Setup: database, encryption key, LLM provider
 mycelos serve         # Start the web interface at http://localhost:9100
 ```
+
+This runs the gateway + in-process SecurityProxy in a single process (`--role all`, the default).
 
 For terminal-only use:
 
