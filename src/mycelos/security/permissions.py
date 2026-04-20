@@ -133,6 +133,30 @@ def _install_packages(app: Any, permission: PermissionRequired) -> str:
     Returns:
         Human-readable result message.
     """
+    import os as _os
+    if _os.environ.get("MYCELOS_PROXY_URL", "").strip():
+        # Two-container Docker mode: runtime pip install is disabled.
+        # The gateway container has no internet route in Phase 1b, and a
+        # runtime install without allow-list validation is itself a
+        # supply-chain risk (P0 item from the April security review).
+        # Phase 1c will add validated proxy-mediated installs.
+        try:
+            app.audit.log(
+                "package.install_blocked",
+                details={
+                    "target": (permission.target or "")[:200],
+                    "reason": "docker_mode",
+                },
+            )
+        except Exception:
+            pass
+        return (
+            "Package installation is disabled in Docker deployments. "
+            "To add dependencies, build a custom image — "
+            "see docs/deployment/custom-image.md."
+        )
+
+    # existing single-container code continues unchanged below
     import subprocess
     import sys
 
