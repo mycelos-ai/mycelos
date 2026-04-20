@@ -74,3 +74,6 @@ AGENT.md
 # Never committed — used for Claude/Stefan working notes.
 docs/local-reviews/
 docs/local-notes/
+
+# Git worktrees (created by subagent-driven-development workflow)
+.worktrees/
