@@ -1199,7 +1199,7 @@
                 mode: 'polling',
                 allowed_users: [w.data.chatId],
               });
-              this.showToast('Telegram connected! Restart the gateway to activate.', 'success');
+              this.showToast('Telegram connected! Restart the stack (docker compose restart) to activate the channel.', 'success');
             }
           } catch (e) {
             this.showToast('Failed to save: ' + e.message, 'error');
