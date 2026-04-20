@@ -705,6 +705,206 @@ Test this by running `mycelos connector setup telegram` in a dev install and con
 
 ---
 
+## Task 5.5: Disable runtime `pip install` in Docker mode
+
+**Files:**
+- Modify: `src/mycelos/security/permissions.py` (`_install_packages`)
+- Create: `docs/deployment/custom-image.md`
+- Test: `tests/test_permissions_pip_install_docker.py`
+
+Runtime `pip install` is one of the P0 security items from the April code review: an LLM-driven call to `_install_packages` currently runs `subprocess.run(["pip", "install", *untrusted_input])` with no allow-list. In Phase 1b's Docker deployment it would also require internet access in the gateway (which we're locking down in Task 6). The cleanest fix is to disable runtime installs in Docker mode and document the "custom image" alternative for users who want extra packages. Phase 1c will add a proxy-mediated, validated pip flow.
+
+- [ ] **Step 1: Failing tests**
+
+Create `tests/test_permissions_pip_install_docker.py`:
+
+```python
+"""In Docker / two-container mode, _install_packages must refuse.
+
+Single-container / pip-install-from-PyPI mode keeps the existing behavior —
+this test pins the gate, not a rewrite of the underlying function.
+"""
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+
+def test_install_packages_blocked_in_docker_mode(monkeypatch):
+    monkeypatch.setenv("MYCELOS_PROXY_URL", "http://proxy.internal:9110")
+
+    from mycelos.security.permissions import PermissionRequired, _install_packages
+
+    app = MagicMock()
+    permission = PermissionRequired(action="pip install", target="pillow", reason="agent needs image ops")
+
+    result = _install_packages(app, permission)
+
+    # Clear signal to the user; must mention "disabled" AND hint at the workaround.
+    lowered = result.lower()
+    assert "disabled" in lowered or "not available" in lowered
+    assert "custom image" in lowered or "docker" in lowered
+
+    # Audit trail records the attempt so operators see it in Doctor Activity.
+    audit_calls = [c for c in app.audit.log.call_args_list if c.args and c.args[0] == "package.install_blocked"]
+    assert len(audit_calls) == 1
+
+    # Must NOT have shelled out to pip — no subprocess call on the app object.
+    # (The function uses a local `subprocess` import, so the strongest assertion
+    # we can make here is that the audit fired instead of a success message.)
+    assert "installed" not in lowered
+
+
+def test_install_packages_still_works_without_proxy_url(monkeypatch, tmp_path):
+    """Legacy single-container mode must keep running pip as before."""
+    monkeypatch.delenv("MYCELOS_PROXY_URL", raising=False)
+
+    # We don't want to actually install anything — stub subprocess.run
+    from mycelos.security import permissions
+    from mycelos.security.permissions import PermissionRequired
+
+    calls = {}
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        return R()
+    monkeypatch.setattr(permissions.subprocess if hasattr(permissions, "subprocess") else None, "run", fake_run, raising=False)
+    # If subprocess is a local import, the above fails silently — monkeypatch the module instead.
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run", fake_run)
+
+    from unittest.mock import MagicMock
+    app = MagicMock()
+    permission = PermissionRequired(action="pip install", target="pillow", reason="x")
+    result = permissions._install_packages(app, permission)
+
+    assert "installed" in result.lower() or "success" in result.lower() or calls.get("cmd")
+```
+
+- [ ] **Step 2: Implement the gate**
+
+In `src/mycelos/security/permissions.py`, at the top of `_install_packages`:
+
+```python
+def _install_packages(app: Any, permission: PermissionRequired) -> str:
+    """Install Python packages via pip and log the action."""
+    import os as _os
+    if _os.environ.get("MYCELOS_PROXY_URL", "").strip():
+        # Two-container Docker mode: runtime pip install is disabled.
+        # The gateway container has no internet route, and a runtime install
+        # without allow-list validation is itself a supply-chain risk
+        # (flagged P0 in the April security review).
+        try:
+            app.audit.log(
+                "package.install_blocked",
+                details={
+                    "target": permission.target[:200],
+                    "reason": "docker_mode",
+                },
+            )
+        except Exception:
+            pass
+        return (
+            "Package installation is disabled in Docker deployments. "
+            "To add dependencies, build a custom image — "
+            "see docs/deployment/custom-image.md."
+        )
+
+    # Existing single-container / pip-install-from-PyPI behavior below.
+    import subprocess
+    ...
+```
+
+(Leave the rest of the function unchanged.)
+
+- [ ] **Step 3: Custom-image doc**
+
+Create `docs/deployment/custom-image.md`:
+
+```markdown
+# Adding Python packages to Mycelos (Docker deployment)
+
+Runtime `pip install` is disabled in the Docker deployment for three reasons:
+
+1. The gateway container has no outbound internet route (Phase 1b security lockdown).
+2. Runtime package installs are not persistent — they disappear on the next container restart.
+3. Installing arbitrary packages on user demand is a supply-chain risk (flagged P0 in the security audit).
+
+If you need extra Python packages (for example to process images with Pillow or scrape HTML with BeautifulSoup), build a custom image:
+
+## Option A: One-shot Dockerfile
+
+Create a `Dockerfile.custom` next to your `docker-compose.yml`:
+
+```dockerfile
+FROM ghcr.io/mycelos-ai/mycelos:main
+RUN pip install --no-cache-dir \
+    pillow>=10.0 \
+    beautifulsoup4>=4.12 \
+    lxml>=5.0
+```
+
+Build and point compose at it with a `docker-compose.override.yml`:
+
+```yaml
+services:
+  gateway:
+    image: mycelos-custom:local
+    build:
+      context: .
+      dockerfile: Dockerfile.custom
+  proxy:
+    image: mycelos-custom:local
+    build:
+      context: .
+      dockerfile: Dockerfile.custom
+```
+
+Then:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+## Option B: A rich pre-built image (Phase 1c)
+
+Phase 1c of Mycelos ships a `mycelos:rich` tag with a curated set of common packages (Pillow, BeautifulSoup, lxml, pypdf, python-dateutil) pre-installed. When that lands, set `image: ghcr.io/mycelos-ai/mycelos:rich` in `docker-compose.yml` instead of the slim default.
+
+## Why not use MCP instead?
+
+For many "I need a package" scenarios, an MCP server is the better answer — it runs as its own process, carries its own dependencies, and stays isolated from the gateway. Browser automation (Playwright MCP), image generation (via API), and CLI wrapping (GitHub, Slack, Notion) all have mature MCP servers. Only reach for a custom image when you specifically need to call a Python library from inside an agent's tool code.
+```
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+pytest tests/test_permissions_pip_install_docker.py -v --timeout=30
+```
+
+Expected: 2 passed.
+
+- [ ] **Step 5: Regression on permissions**
+
+```bash
+pytest tests/security/ -k "permission or package" -v --timeout=30
+```
+
+Existing tests must stay green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/mycelos/security/permissions.py tests/test_permissions_pip_install_docker.py docs/deployment/custom-image.md
+git commit -m "Disable runtime pip install in Docker mode; document custom-image workflow"
+```
+
+---
+
 ## Task 6: Gateway container off the `default` network
 
 **Files:**
