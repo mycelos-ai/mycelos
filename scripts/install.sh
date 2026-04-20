@@ -55,11 +55,11 @@ gen_token() {
 ensure_data_dir() {
     mkdir -p "$DATA_DIR"
     if [ ! -f "$DATA_DIR/.master_key" ]; then
-        log "Generating .master_key in $DATA_DIR"
         gen_token > "$DATA_DIR/.master_key"
         chmod 600 "$DATA_DIR/.master_key"
+        log "🔑 .master_key generated in $DATA_DIR"
     else
-        log ".master_key already exists — keeping it"
+        log "🔑 .master_key preserved"
     fi
     # Pre-create the DB file so the proxy's read-only bind-mount has a target.
     # Mycelos auto-initializes the schema on first gateway start.
@@ -68,10 +68,9 @@ ensure_data_dir() {
 
 ensure_env() {
     if [ -f .env ]; then
-        log ".env exists — keeping it"
+        log "🔐 .env preserved (MYCELOS_PROXY_TOKEN kept stable)"
         return
     fi
-    log "Writing .env with a fresh MYCELOS_PROXY_TOKEN"
     local token
     token="$(gen_token)"
     cat > .env <<EOF
@@ -81,36 +80,52 @@ MYCELOS_DATA_DIR="$DATA_DIR"
 MYCELOS_PORT=9100
 EOF
     chmod 600 .env
+    log "🔐 .env written with fresh MYCELOS_PROXY_TOKEN"
 }
 
 ensure_compose() {
-    if [ -f docker-compose.yml ]; then
-        log "docker-compose.yml exists — keeping it"
+    local new=".docker-compose.yml.new.$$"
+    trap 'rm -f "$new"' RETURN
+    if [ -f "$COMPOSE_SRC" ]; then
+        cp "$COMPOSE_SRC" "$new"
+    else
+        curl -fsSL "$COMPOSE_SRC" -o "$new"
+    fi
+
+    if [ ! -f docker-compose.yml ]; then
+        mv "$new" docker-compose.yml
+        log "📦 docker-compose.yml installed"
         return
     fi
-    if [ -f "$COMPOSE_SRC" ]; then
-        log "Copying $COMPOSE_SRC"
-        cp "$COMPOSE_SRC" docker-compose.yml
-    else
-        log "Fetching docker-compose.yml"
-        curl -fsSL "$COMPOSE_SRC" -o docker-compose.yml
+
+    if cmp -s "$new" docker-compose.yml; then
+        log "📦 docker-compose.yml up to date"
+        return
     fi
+
+    local backup="docker-compose.yml.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+    cp docker-compose.yml "$backup"
+    mv "$new" docker-compose.yml
+    log "📦 docker-compose.yml updated (previous saved as $backup)"
 }
 
 bring_up() {
-    [ "$DRY_RUN" = 1 ] && { log "Dry run: skipping 'docker compose up'"; return; }
+    [ "$DRY_RUN" = 1 ] && { log "Dry run: skipping docker compose pull/up"; return; }
 
-    log "Starting containers..."
+    log "⬆️  Pulling latest image..."
+    docker compose pull
+
+    log "🚀 Starting containers..."
     docker compose up -d
 
-    log "Waiting for /api/health (up to 60s)..."
+    log "⏳ Waiting for gateway to become healthy (up to 60s)..."
     local deadline=$(( $(date +%s) + 60 ))
     local port
     port="$(grep '^MYCELOS_PORT=' .env | cut -d= -f2)"
     port="${port:-9100}"
     while [ "$(date +%s)" -lt "$deadline" ]; do
         if curl -fsSL "http://localhost:${port}/api/health" >/dev/null 2>&1; then
-            log "Healthy. Open http://localhost:${port} to finish setup."
+            log "✅ Mycelos is running — open http://localhost:${port}"
             return
         fi
         sleep 2
@@ -124,4 +139,3 @@ ensure_data_dir
 ensure_env
 ensure_compose
 bring_up
-log "Done."
