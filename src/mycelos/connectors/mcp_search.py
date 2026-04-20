@@ -26,15 +26,30 @@ def search_mcp_servers(query: str, limit: int = 10) -> list[dict[str, Any]]:
         List of server dicts with name, description, repository, packages.
     """
     import httpx
+    import json as _json
+    from mycelos.connectors import http_tools as _http_tools
 
     try:
-        resp = httpx.get(
-            REGISTRY_URL,
-            params={"search": query, "limit": limit},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        if _http_tools._proxy_client is not None:
+            from urllib.parse import urlencode
+            full_url = f"{REGISTRY_URL}?{urlencode({'search': query, 'limit': limit})}"
+            raw = _http_tools._proxy_client.http_get(full_url, timeout=10)
+            status = raw.get("status", 0)
+            if status == 0:
+                logger.warning("MCP registry proxy error: %s", raw.get("error"))
+                return []
+            if status >= 400:
+                logger.warning("MCP registry returned status %d", status)
+                return []
+            data = _json.loads(raw.get("body", "{}")) if raw.get("body") else {}
+        else:
+            resp = httpx.get(
+                REGISTRY_URL,
+                params={"search": query, "limit": limit},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
         servers = data.get("servers", [])
         results = []
