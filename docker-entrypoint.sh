@@ -5,16 +5,26 @@ DATA_DIR="${MYCELOS_DATA_DIR:-/data}"
 
 # ── Fix volume permissions (Docker named volumes are owned by root) ──
 # Entrypoint runs as root, fixes ownership, then drops to mycelos user.
+#
+# In two-container mode with MYCELOS_ROLE=proxy, /data/.master_key and
+# /data/mycelos.db are bind-mounted read-only. A recursive chown fails
+# there. The proxy has no writable state of its own, so skip chown
+# entirely in that mode.
 if [ "$(id -u)" = "0" ]; then
-    chown -R mycelos:mycelos "$DATA_DIR"
+    ROLE="${MYCELOS_ROLE:-gateway}"
+    if [ "$ROLE" != "proxy" ]; then
+        chown -R mycelos:mycelos "$DATA_DIR" 2>/dev/null || true
+    fi
     # Re-exec this script as mycelos user (preserving all args + env)
     exec gosu mycelos "$0" "$@"
 fi
 
 # ── From here on we run as mycelos ──────────────────────────────────
 
-# ── First start: auto-initialize ──────────────────────────────────
-if [ ! -f "$DATA_DIR/mycelos.db" ]; then
+# ── First start: auto-initialize (gateway role only) ────────────
+# Proxy role has /data/mycelos.db mounted read-only and performs no
+# init — the gateway container owns the init path.
+if [ "${MYCELOS_ROLE:-gateway}" != "proxy" ] && [ ! -s "$DATA_DIR/mycelos.db" ]; then
     echo "=== Mycelos: First start — auto-initializing ==="
 
     # Generate master key if not provided
