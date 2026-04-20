@@ -1,25 +1,59 @@
-# Mycelos — Docker Compose
+# Mycelos — Docker Compose (two-container deployment)
 #
 # Quick start:
-#   docker compose up -d
+#   ./scripts/install.sh          # recommended — guided setup
+#   # or:
+#   cp .env.example .env && edit .env && docker compose up -d
 #
-# First start auto-initializes. Web UI: http://localhost:9100
-# Mycelos will ask for your API key on first use and store it encrypted.
-#
-# Optional: set MYCELOS_PASSWORD in .env for network access protection.
+# The proxy container owns .master_key. The gateway never sees it.
 
 services:
-  mycelos:
+  proxy:
     image: ghcr.io/mycelos-ai/mycelos:main
-    container_name: mycelos
-    ports:
-      - "9100:9100"
-    volumes:
-      - mycelos-data:/data
+    container_name: mycelos-proxy
     environment:
-      - MYCELOS_MASTER_KEY=${MYCELOS_MASTER_KEY:-}
-      - MYCELOS_PASSWORD=${MYCELOS_PASSWORD:-}
+      - MYCELOS_ROLE=proxy
+      - MYCELOS_PROXY_PORT=9110
+      - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
+    volumes:
+      - type: bind
+        source: ${MYCELOS_DATA_DIR:-./data}/.master_key
+        target: /data/.master_key
+        read_only: true
+      - type: bind
+        source: ${MYCELOS_DATA_DIR:-./data}/mycelos.db
+        target: /data/mycelos.db
+        read_only: true
+    networks:
+      - mycelos-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9110/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+
+  gateway:
+    image: ghcr.io/mycelos-ai/mycelos:main
+    container_name: mycelos-gateway
+    depends_on:
+      proxy:
+        condition: service_healthy
+    ports:
+      - "${MYCELOS_PORT:-9100}:9100"
+    volumes:
+      # Gateway owns the full data dir except the master key (separate
+      # bind-mount on the proxy, not visible here).
+      - ${MYCELOS_DATA_DIR:-./data}:/data
+    environment:
+      - MYCELOS_ROLE=gateway
+      - MYCELOS_PROXY_URL=http://proxy:9110
+      - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
+    networks:
+      - mycelos-internal
+      - default
     restart: unless-stopped
 
-volumes:
-  mycelos-data:
+networks:
+  mycelos-internal:
+    driver: bridge
