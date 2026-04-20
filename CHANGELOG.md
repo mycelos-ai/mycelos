@@ -2,6 +2,16 @@
 
 ## Week 16 (2026)
 
+### Two-Container Docker Deployment (Phase 1b — security lockdown)
+- Credential writes move out of the gateway. New endpoints on the SecurityProxy: `POST /credential/store`, `DELETE /credential/{service}/{label}`, `GET /credential/list` (metadata only), `POST /credential/rotate`. `SecurityProxyClient` gains matching `credential_store` / `credential_delete` / `credential_list` / `credential_rotate` methods.
+- Gateway uses `DelegatingCredentialProxy`, a thin wrapper that forwards writes and never reads plaintext. `get_credential` raises `NotImplementedError` — callers needing plaintext must go through `SecurityProxyClient.llm_complete` / `mcp_start` / `http_get`.
+- `app.credentials` auto-selects: `MYCELOS_PROXY_URL` + wired proxy-client → `DelegatingCredentialProxy`; otherwise → legacy in-process `EncryptedCredentialProxy`. Master key never loaded in the gateway process in two-container mode.
+- Gateway's direct-httpx calls in `search_tools`, `github_tools`, `mcp_search`, `llm.model_registry.sync_from_litellm`, and `model_updater release check` now route through the SecurityProxy via `http_tools._proxy_client`. Telegram polling is a follow-up because of the long-poll shape.
+- Runtime `pip install` is disabled in Docker mode with an audit event (`package.install_blocked`) and a pointer to `docs/deployment/custom-image.md`. P0 security item from the April audit closed.
+- Gateway container drops off the `default` Docker network — `mycelos-internal` is its only network. Proxy's `mycelos.db` bind-mount flips from read-only to read-write (required for credential writes).
+- New E2E assertion: `docker compose exec gateway curl https://example.com` fails at the network layer.
+- Threat model doc (`docs/security/two-container-deployment.md`) updated: Phase 1 is complete, Phase 1c ships a rich image + MCP-first docs, Phase 2 is passkey auth + public exposure.
+
 ### Two-Container Docker Deployment (Phase 1a)
 - New default: `docker compose up -d` launches `mycelos-proxy` (hosts MCP subprocess children in its own PID namespace, reads `.master_key` from a read-only bind mount, not reachable from the host) and `mycelos-gateway` (web UI, API, chat, scheduler) on a shared Docker network with a bearer-token shared secret.
 - New `scripts/install.sh` and `scripts/install.ps1` installers. Zero-question: generate a master key and proxy token, write `.env` and `docker-compose.yml`, bring the stack up, wait for `/api/health`. Idempotent.
