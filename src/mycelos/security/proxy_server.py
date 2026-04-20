@@ -153,27 +153,32 @@ def create_proxy_app() -> FastAPI:
     # Storage and credential proxy (lazy — created once on first use)
     # ---------------------------------------------------------------------------
 
-    def _get_storage() -> Any | None:
-        """Get a read-only storage for the proxy process.
+    def _get_storage(read_only: bool = True) -> Any | None:
+        """Get a storage connection for the proxy process.
 
-        The proxy only reads credentials — all writes go through the
-        gateway process to avoid cross-process SQLite locking.
+        By default opens a read-only connection (safe for credential reads,
+        no cross-process locking). Pass read_only=False to get a writable
+        connection for credential writes (Phase 1b: proxy owns all writes).
+
+        Existing callers that pass no argument remain unchanged.
         """
         if not db_path_str:
             return None
-        if _state["_storage"] is None:
+        if _state["_storage"] is None or _state.get("_storage_read_only") != read_only:
             import sqlite3 as _sql3
-            # Open a read-only connection — no writes, no locking
-            conn = _sql3.connect(
-                f"file:{db_path_str}?mode=ro",
-                uri=True,
-                timeout=5,
-            )
+            if read_only:
+                conn = _sql3.connect(
+                    f"file:{db_path_str}?mode=ro",
+                    uri=True,
+                    timeout=5,
+                )
+            else:
+                conn = _sql3.connect(db_path_str, timeout=5)
             conn.row_factory = _sql3.Row
             conn.execute("PRAGMA busy_timeout=3000")
 
             # Wrap in a minimal object that matches what EncryptedCredentialProxy needs
-            class _ReadOnlyStorage:
+            class _Storage:
                 def __init__(self, c):
                     self._conn = c
                 def fetchone(self, sql, params=()):
@@ -181,11 +186,15 @@ def create_proxy_app() -> FastAPI:
                 def fetchall(self, sql, params=()):
                     return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
                 def execute(self, sql, params=()):
-                    return self._conn.execute(sql, params)
+                    cur = self._conn.execute(sql, params)
+                    if not read_only:
+                        self._conn.commit()  # autocommit each statement in RW mode
+                    return cur
                 def _get_connection(self):
                     return self._conn
 
-            _state["_storage"] = _ReadOnlyStorage(conn)
+            _state["_storage"] = _Storage(conn)
+            _state["_storage_read_only"] = read_only
         return _state["_storage"]
 
     def _get_credential_proxy() -> Any | None:
@@ -727,6 +736,94 @@ def create_proxy_app() -> FastAPI:
 
         # Never return plaintext credentials (Constitution Rule 4)
         return JSONResponse({"service": req.service, "status": "available"})
+
+    # ---------------------------------------------------------------------------
+    # POST /credential/store
+    # ---------------------------------------------------------------------------
+
+    @app.post("/credential/store")
+    async def credential_store(request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        body = await request.json()
+        service = (body.get("service") or "").strip()
+        label = (body.get("label") or "default").strip() or "default"
+        payload = body.get("payload")
+        description = body.get("description")
+        if not service or not isinstance(payload, dict) or not payload:
+            return JSONResponse({"error": "service + payload dict required"}, status_code=400)
+        storage = _get_storage(read_only=False)
+        if storage is None:
+            return JSONResponse({"error": "storage unavailable"}, status_code=500)
+        if not master_key:
+            return JSONResponse({"error": "master key not available"}, status_code=500)
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        ecp = EncryptedCredentialProxy(storage, master_key)
+        ecp.store_credential(service, payload, user_id=user_id, label=label, description=description)
+        return JSONResponse({"status": "stored", "service": service, "label": label})
+
+    # ---------------------------------------------------------------------------
+    # DELETE /credential/{service}/{label}
+    # ---------------------------------------------------------------------------
+
+    @app.delete("/credential/{service}/{label}")
+    async def credential_delete(service: str, label: str, request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        storage = _get_storage(read_only=False)
+        if storage is None:
+            return JSONResponse({"error": "storage unavailable"}, status_code=500)
+        if not master_key:
+            return JSONResponse({"error": "master key not available"}, status_code=500)
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        ecp = EncryptedCredentialProxy(storage, master_key)
+        ecp.delete_credential(service, user_id=user_id, label=label)
+        return JSONResponse({"status": "deleted", "service": service, "label": label})
+
+    # ---------------------------------------------------------------------------
+    # GET /credential/list
+    # ---------------------------------------------------------------------------
+
+    @app.get("/credential/list")
+    async def credential_list(request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        storage = _get_storage(read_only=False)
+        if storage is None:
+            return JSONResponse({"credentials": []})
+        if not master_key:
+            return JSONResponse({"credentials": []})
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        ecp = EncryptedCredentialProxy(storage, master_key)
+        items = ecp.list_credentials(user_id=user_id)
+        return JSONResponse({"credentials": items})
+
+    # ---------------------------------------------------------------------------
+    # POST /credential/rotate
+    # ---------------------------------------------------------------------------
+
+    @app.post("/credential/rotate")
+    async def credential_rotate(request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        body = await request.json()
+        service = (body.get("service") or "").strip()
+        label = (body.get("label") or "default").strip() or "default"
+        if not service:
+            return JSONResponse({"error": "service required"}, status_code=400)
+        storage = _get_storage(read_only=False)
+        if storage is None:
+            return JSONResponse({"error": "storage unavailable"}, status_code=500)
+        if not master_key:
+            return JSONResponse({"error": "master key not available"}, status_code=500)
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        ecp = EncryptedCredentialProxy(storage, master_key)
+        ecp.mark_security_rotated(service)
+        return JSONResponse({"status": "rotated", "service": service, "label": label})
 
     # ---------------------------------------------------------------------------
     # POST /stt/transcribe
