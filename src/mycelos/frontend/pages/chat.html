@@ -336,7 +336,9 @@
       </div>
     </div>
 
-    <section id="chat-area" class="flex-1 overflow-y-auto pt-28 pb-56 px-8 scroll-smooth">
+    <!-- mb-56 (not pb-56) ends the scroll region above the fixed footer so the
+         native scrollbar stays reachable; pb-8 gives breathing room inside. -->
+    <section id="chat-area" class="flex-1 overflow-y-auto pt-28 pb-8 mb-56 px-8 scroll-smooth">
       <div class="max-w-4xl mx-auto w-full space-y-6">
 
         <!-- Empty state: shown when no messages -->
