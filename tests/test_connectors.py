@@ -326,3 +326,168 @@ def test_search_tool_blocked_without_capability() -> None:
     )
     resp = runtime.handle_request(req)
     assert resp.is_error  # Permission denied -- no search.web in scope
+
+
+# ── Proxy routing: search_tools ──
+
+
+def test_search_web_brave_uses_proxy_when_available(monkeypatch) -> None:
+    """search_web_brave routes through _proxy_client when set."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+
+    mock_pc = MagicMock()
+    mock_pc.http_get.return_value = {
+        "status": 200,
+        "body": '{"web": {"results": [{"title": "T", "url": "https://x.com", "description": "D"}]}}',
+        "headers": {},
+        "url": "https://api.search.brave.com/res/v1/web/search",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    from mycelos.connectors.search_tools import search_web_brave
+    results = search_web_brave("test query", api_key="test-key", max_results=1)
+
+    mock_pc.http_get.assert_called_once()
+    assert len(results) == 1
+    assert results[0]["title"] == "T"
+
+
+def test_search_web_brave_uses_direct_httpx_when_no_proxy(monkeypatch) -> None:
+    """search_web_brave falls back to direct httpx when _proxy_client is None."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
+
+    import httpx
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"web": {"results": []}}
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+    from mycelos.connectors.search_tools import search_web_brave
+    results = search_web_brave("test", api_key="key")
+
+    assert isinstance(results, list)
+
+
+# ── Proxy routing: github_tools ──
+
+
+def test_github_api_get_uses_proxy_when_available(monkeypatch) -> None:
+    """github_api GET routes through _proxy_client when set."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+
+    mock_pc = MagicMock()
+    mock_pc.http_get.return_value = {
+        "status": 200,
+        "body": '[{"id": 1, "name": "myrepo", "full_name": "user/myrepo"}]',
+        "headers": {},
+        "url": "https://api.github.com/user/repos",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    mock_cred_proxy = MagicMock()
+    mock_cred_proxy.get_credential.return_value = {"api_key": "ghp_token"}
+
+    from mycelos.connectors.github_tools import github_api
+    result = github_api("/user/repos", credential_proxy=mock_cred_proxy, method="GET")
+
+    mock_pc.http_get.assert_called_once()
+    assert "data" in result
+
+
+def test_github_api_post_uses_proxy_when_available(monkeypatch) -> None:
+    """github_api POST routes through _proxy_client when set."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+
+    mock_pc = MagicMock()
+    mock_pc.http_post.return_value = {
+        "status": 201,
+        "body": '{"id": 42, "number": 1, "title": "Issue title"}',
+        "headers": {},
+        "url": "https://api.github.com/repos/user/repo/issues",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    mock_cred_proxy = MagicMock()
+    mock_cred_proxy.get_credential.return_value = {"api_key": "ghp_token"}
+
+    from mycelos.connectors.github_tools import github_api
+    result = github_api(
+        "/repos/user/repo/issues",
+        credential_proxy=mock_cred_proxy,
+        method="POST",
+        body={"title": "Issue title"},
+    )
+
+    mock_pc.http_post.assert_called_once()
+    assert "data" in result
+
+
+def test_github_api_get_uses_direct_httpx_when_no_proxy(monkeypatch) -> None:
+    """github_api falls back to direct httpx when _proxy_client is None."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
+
+    import httpx
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "[]"
+    mock_resp.json.return_value = []
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+    mock_cred_proxy = MagicMock()
+    mock_cred_proxy.get_credential.return_value = {"api_key": "ghp_token"}
+
+    from mycelos.connectors.github_tools import github_api
+    result = github_api("/user/repos", credential_proxy=mock_cred_proxy, method="GET")
+
+    assert "data" in result
+
+
+# ── Proxy routing: mcp_search ──
+
+
+def test_mcp_search_uses_proxy_when_available(monkeypatch) -> None:
+    """search_mcp_servers routes through _proxy_client when set."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+
+    mock_pc = MagicMock()
+    mock_pc.http_get.return_value = {
+        "status": 200,
+        "body": '{"servers": [{"server": {"name": "github-mcp", "description": "GitHub connector", "repository": {"url": "https://github.com/x/y"}, "packages": []}}]}',
+        "headers": {},
+        "url": "https://registry.modelcontextprotocol.io/v0/servers",
+    }
+    monkeypatch.setattr(http_tools, "_proxy_client", mock_pc)
+
+    from mycelos.connectors.mcp_search import search_mcp_servers
+    results = search_mcp_servers("github")
+
+    mock_pc.http_get.assert_called_once()
+    assert len(results) == 1
+    assert results[0]["name"] == "github-mcp"
+
+
+def test_mcp_search_uses_direct_httpx_when_no_proxy(monkeypatch) -> None:
+    """search_mcp_servers falls back to direct httpx when _proxy_client is None."""
+    from unittest.mock import MagicMock
+    from mycelos.connectors import http_tools
+    monkeypatch.setattr(http_tools, "_proxy_client", None)
+
+    import httpx
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"servers": []}
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: mock_resp)
+
+    from mycelos.connectors.mcp_search import search_mcp_servers
+    results = search_mcp_servers("anything")
+
+    assert results == []

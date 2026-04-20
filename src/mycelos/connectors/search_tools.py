@@ -71,19 +71,34 @@ def search_web_brave(
     """
     try:
         import httpx
+        import json as _json
 
-        resp = httpx.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            params={"q": query, "count": max_results},
-            headers={
-                "X-Subscription-Token": api_key,
-                "Accept": "application/json",
-            },
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            return [{"error": f"Brave API returned {resp.status_code}"}]
-        data = resp.json()
+        from mycelos.connectors import http_tools as _http_tools
+
+        url = "https://api.search.brave.com/res/v1/web/search"
+        headers = {
+            "X-Subscription-Token": api_key,
+            "Accept": "application/json",
+        }
+        params = {"q": query, "count": max_results}
+
+        if _http_tools._proxy_client is not None:
+            # Build full URL with query params for the proxy
+            from urllib.parse import urlencode
+            full_url = f"{url}?{urlencode(params)}"
+            result = _http_tools._proxy_client.http_get(full_url, headers=headers, timeout=15)
+            status = result.get("status", 0)
+            if status == 0:
+                return [{"error": f"Brave search proxy error: {result.get('error', 'unknown')}"}]
+            if status != 200:
+                return [{"error": f"Brave API returned {status}"}]
+            data = _json.loads(result.get("body", "{}")) if result.get("body") else {}
+        else:
+            resp = httpx.get(url, params=params, headers=headers, timeout=15)
+            if resp.status_code != 200:
+                return [{"error": f"Brave API returned {resp.status_code}"}]
+            data = resp.json()
+
         results = data.get("web", {}).get("results", [])
         return [
             {
