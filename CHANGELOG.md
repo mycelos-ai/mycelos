@@ -2,6 +2,15 @@
 
 ## Week 16 (2026)
 
+### Two-Container Docker Deployment (Phase 1)
+- New default: `docker compose up -d` launches `mycelos-proxy` (owns `.master_key`, read-only DB mount, internal TCP only) and `mycelos-gateway` (web UI, API, chat, scheduler) on a shared Docker network with a bearer-token shared secret.
+- New `scripts/install.sh` and `scripts/install.ps1` installers. Zero-question: generate a master key and proxy token, write `.env` and `docker-compose.yml`, bring the stack up, wait for `/api/health`. Idempotent.
+- Single-container mode still works unchanged: when `MYCELOS_PROXY_URL` is not set, the gateway forks a local SecurityProxy via `ProxyLauncher` like before. No breaking change for existing installs.
+- `mycelos serve` gains `--role {all,gateway,proxy}`. `all` (default) is today's in-process behavior; `gateway` uses an external proxy from `MYCELOS_PROXY_URL`; `proxy` runs only the SecurityProxy on TCP.
+- `SecurityProxyClient` accepts either `socket_path=` (legacy UDS) or `url=` (new TCP) — mutually exclusive.
+- New doc `docs/security/two-container-deployment.md` spells out what Phase 1 protects and what Phase 2 (passkey auth + public exposure) will add.
+- Phase 1 binds to `localhost`. Public exposure with authentication ships in Phase 2.
+
 ### Agents Page — Tool Capabilities View
 - Agent detail panel now shows tool capabilities grouped by category (core, connectors, email, knowledge_read, knowledge_write, knowledge_manage, system, workflows, …).
 - System agents (mycelos, builder, workflow-agent, evaluator-agent, auditor-agent) see the capability list in read-only mode with an explanation that their tool set is role-defined — stripping tools would break the agent's purpose.
