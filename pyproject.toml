@@ -57,8 +57,23 @@ files = [
 embeddings = [
     "sentence-transformers>=3.0",
 ]
+# Agent toolkit — libraries a general-purpose assistant reaches for when
+# handling common data shapes (HTML pages, spreadsheets, Word docs,
+# images). Shipped in the Docker image by default so agents Just Work
+# without users having to build a custom image for ordinary tasks.
+# Heavy numeric / ML stacks (pandas, numpy, sklearn) are deliberately
+# NOT in here — they would add hundreds of megabytes for a small
+# minority of use cases; those users build a custom image.
+agent-toolkit = [
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "Pillow>=10.0",
+    "pymupdf>=1.24",
+]
 all = [
-    "mycelos[files,embeddings]",
+    "mycelos[files,embeddings,agent-toolkit]",
 ]
 
 [project.urls]

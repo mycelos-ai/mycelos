@@ -24,8 +24,12 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 COPY docs/ docs/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e .
+# Install Python dependencies plus the agent toolkit (beautifulsoup,
+# lxml, openpyxl, python-docx, Pillow, pymupdf). See pyproject.toml —
+# these ship by default so a container-only user has the libraries
+# agents reach for with common data shapes (HTML, Excel, Word, images,
+# PDFs). Heavy numeric stacks stay opt-in via a custom image.
+RUN pip install --no-cache-dir -e ".[agent-toolkit]"
 
 # Copy entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/

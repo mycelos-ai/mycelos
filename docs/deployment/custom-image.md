@@ -6,7 +6,21 @@ Runtime `pip install` is disabled in the Docker deployment for three reasons:
 2. Runtime package installs are not persistent — they disappear on the next container restart.
 3. Installing arbitrary packages on user demand is a supply-chain risk (flagged P0 in the security audit).
 
-If you need extra Python packages (for example to process images with Pillow or scrape HTML with BeautifulSoup), build a custom image:
+## What's already in the image
+
+The default `ghcr.io/mycelos-ai/mycelos:main` image ships the **agent toolkit** extra:
+
+| Package | What it's for |
+|---|---|
+| `beautifulsoup4` + `lxml` | HTML / XML parsing |
+| `openpyxl` | Excel (`.xlsx`) read/write |
+| `python-docx` | Word documents |
+| `Pillow` | Images (resize, OCR prep, metadata) |
+| `pymupdf` | PDF text + metadata |
+
+Plus everything Mycelos itself depends on (FastAPI, httpx, litellm, aiogram, sqlite-vec, click, rich, …).
+
+You only need a custom image for packages beyond that list — typically heavy numeric / ML stacks (`pandas`, `numpy`, `scikit-learn`, `torch`), OCR (`pytesseract`), browser automation (`playwright`), or domain-specific libraries.
 
 ## Option A: One-shot Dockerfile
 
@@ -15,9 +29,8 @@ Create a `Dockerfile.custom` next to your `docker-compose.yml`:
 ```dockerfile
 FROM ghcr.io/mycelos-ai/mycelos:main
 RUN pip install --no-cache-dir \
-    pillow>=10.0 \
-    beautifulsoup4>=4.12 \
-    lxml>=5.0
+    pandas>=2.2 \
+    pytesseract>=0.3
 ```
 
 Point compose at it with a `docker-compose.override.yml`:
