@@ -1619,30 +1619,47 @@ def setup_routes(api: FastAPI) -> None:
         # name — both builtins (telegram, email) and MCP connectors share
         # one namespace. The MCP subsystem substitutes `credential:<id>`
         # in env_vars and the SecurityProxy resolves that via the bare
-        # name. Using 'connector:<id>' here would bypass the recipe's
-        # env_var convention and was the root cause of 'Failed to load
-        # credential connector:brave-search' log noise.
+        # name.
+        logger.info(
+            "add_connector: name=%s has_secret=%s secret_len=%d",
+            body.name,
+            bool(body.secret),
+            len(body.secret) if body.secret else 0,
+        )
         if body.secret:
             try:
                 # Recipe-declared env_var name (e.g. BRAVE_API_KEY) if the
                 # connector is a known MCP recipe; otherwise derive from
-                # the name. This matters because the MCP server looks up
-                # a specific env-var, not a made-up one.
-                from mycelos.connectors.mcp_recipes import get_recipe as _get_recipe
-                recipe = _get_recipe(body.name)
+                # the name.
                 if recipe and recipe.credentials:
                     env_var_name = recipe.credentials[0].get("env_var", "")
                 else:
                     env_var_name = f"{body.name.upper().replace('-', '_')}_API_KEY"
 
+                logger.info(
+                    "add_connector: storing credential service=%s env_var=%s",
+                    body.name, env_var_name,
+                )
                 mycelos.credentials.store_credential(
                     body.name,
                     {"api_key": body.secret, "env_var": env_var_name},
                     description=f"Credentials for {body.name}",
                 )
+                logger.info("add_connector: store_credential returned OK for %s", body.name)
+                mycelos.audit.log(
+                    "credential.stored",
+                    details={"connector": body.name, "env_var": env_var_name},
+                    user_id=_resolve_user_id(request),
+                )
             except Exception as e:
-                logger.warning("Credential storage failed for connector %s: %s", body.name, e)
-                mycelos.audit.log("credential.store_failed", details={"connector": body.name, "error": str(e)})
+                logger.exception("Credential storage failed for connector %s: %s", body.name, e)
+                mycelos.audit.log(
+                    "credential.store_failed",
+                    details={"connector": body.name, "error": str(e)},
+                    user_id=_resolve_user_id(request),
+                )
+        else:
+            logger.info("add_connector: no secret provided for %s — skipping store", body.name)
 
         # Channel connectors also need a row in `channels` so the channel
         # layer (Telegram polling, Slack socket, ...) actually picks them up.
