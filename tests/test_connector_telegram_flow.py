@@ -102,9 +102,14 @@ class TestTelegramSetupFlow:
     def test_step3_test_with_invalid_token(self, app):
         """Test with invalid token → clear error."""
         handle_slash_command(app, "/connector add telegram invalid-token")
-        # Mock the urllib call to simulate 401
-        with patch("urllib.request.urlopen") as mock_url:
-            mock_url.side_effect = Exception("HTTP Error 401: Unauthorized")
+        # Mock the Telegram API helper directly — more robust than
+        # mocking urllib.request, which depends on how the helper
+        # imports it and whether the proxy path or direct path is
+        # taken on this host.
+        with patch(
+            "mycelos.channels.telegram.call_telegram_api",
+            return_value={"ok": False, "description": "Unauthorized (HTTP 401)"},
+        ):
             result = handle_slash_command(app, "/connector test telegram")
             text = _result_text(result)
             assert "invalid" in text.lower() or "expired" in text.lower()
@@ -113,16 +118,16 @@ class TestTelegramSetupFlow:
         """Test with valid token → shows bot name."""
         handle_slash_command(app, "/connector add telegram 123456789:ABCdefGHIjklMNOpqrsTUVwxyz")
 
-        import json
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "ok": True,
-            "result": {"first_name": "TestBot", "username": "test_mycelos_bot"}
-        }).encode()
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        # Mock the Telegram API helper — same rationale as the
+        # invalid-token test: don't depend on which HTTP layer the
+        # single-container fallback happens to use.
+        with patch(
+            "mycelos.channels.telegram.call_telegram_api",
+            return_value={
+                "ok": True,
+                "result": {"first_name": "TestBot", "username": "test_mycelos_bot"},
+            },
+        ):
             result = handle_slash_command(app, "/connector test telegram")
             text = _result_text(result)
             assert "working" in text.lower()
