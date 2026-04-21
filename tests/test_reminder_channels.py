@@ -487,6 +487,88 @@ class TestFireBookkeeping:
         assert second["notifications_sent"] == 0
 
 
+class TestDispatchRetryLog:
+    """A reminder whose every channel fails must (a) not be marked fired,
+    (b) bump dispatch_attempts, and (c) record last_dispatch_error so
+    Doctor can surface it. A later successful dispatch clears the
+    retry counter."""
+
+    def _mock_llm(self, app):
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "Reminder!"
+        mock_response.total_tokens = 5
+        mock_llm.complete.return_value = mock_response
+        app._llm = mock_llm
+
+    def test_full_channel_failure_bumps_attempts(self, app, kb):
+        from mycelos.knowledge.reminder import ReminderService
+        kb.write("Unreachable", "x", type="task", status="open",
+                 due=date.today().isoformat(), reminder=True)
+        self._mock_llm(app)
+
+        rs = ReminderService(app)
+        # Force every channel to fail.
+        with patch.object(rs, "dispatch", return_value=False):
+            rs.check_and_notify()
+
+        row = app.storage.fetchone(
+            "SELECT reminder_fired_at, dispatch_attempts, last_dispatch_error "
+            "FROM knowledge_notes WHERE title=?",
+            ("Unreachable",),
+        )
+        assert row["reminder_fired_at"] is None  # still pending
+        assert row["dispatch_attempts"] == 1
+        assert row["last_dispatch_error"] is not None
+        assert "failed" in row["last_dispatch_error"].lower()
+
+    def test_repeated_failure_keeps_incrementing(self, app, kb):
+        from mycelos.knowledge.reminder import ReminderService
+        kb.write("Persistent failure", "x", type="task", status="open",
+                 due=date.today().isoformat(), reminder=True)
+        self._mock_llm(app)
+        rs = ReminderService(app)
+
+        with patch.object(rs, "dispatch", return_value=False):
+            rs.check_and_notify()
+            rs.check_and_notify()
+            rs.check_and_notify()
+
+        row = app.storage.fetchone(
+            "SELECT dispatch_attempts FROM knowledge_notes WHERE title=?",
+            ("Persistent failure",),
+        )
+        assert row["dispatch_attempts"] == 3
+
+    def test_eventual_success_clears_retry_state(self, app, kb):
+        from mycelos.knowledge.reminder import ReminderService
+        kb.write("Comes back", "x", type="task", status="open",
+                 due=date.today().isoformat(), reminder=True)
+        self._mock_llm(app)
+        rs = ReminderService(app)
+
+        # First tick: everything fails.
+        with patch.object(rs, "dispatch", return_value=False):
+            rs.check_and_notify()
+        row = app.storage.fetchone(
+            "SELECT dispatch_attempts FROM knowledge_notes WHERE title=?",
+            ("Comes back",),
+        )
+        assert row["dispatch_attempts"] == 1
+
+        # Second tick: chat works again.
+        with patch.object(rs, "dispatch", return_value=True):
+            rs.check_and_notify()
+        row = app.storage.fetchone(
+            "SELECT reminder_fired_at, dispatch_attempts, last_dispatch_error "
+            "FROM knowledge_notes WHERE title=?",
+            ("Comes back",),
+        )
+        assert row["reminder_fired_at"] is not None
+        assert row["dispatch_attempts"] == 0
+        assert row["last_dispatch_error"] is None
+
+
 class TestDismiss:
     """mark_dismissed stops a reminder without firing it."""
 

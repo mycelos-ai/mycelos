@@ -110,6 +110,7 @@ def _run_check(app, category: str, fix: bool) -> None:
         "sqlite_vec": checks.check_sqlite_vec,
         "credentials": checks.check_credentials,
         "telegram": checks.check_telegram,
+        "connectors": checks.check_connectors,
         "reminders": checks.check_reminders,
         "schedules": checks.check_schedules,
         "organizer": checks.check_organizer,
@@ -118,7 +119,7 @@ def _run_check(app, category: str, fix: bool) -> None:
 
     if not check_fn:
         console.print(f"  [red]Unknown category: {category}[/red]")
-        console.print(f"  Available: storage, sqlite_vec, credentials, telegram, reminders, schedules, organizer, update")
+        console.print(f"  Available: storage, sqlite_vec, credentials, telegram, connectors, reminders, schedules, organizer, update")
         return
 
     if category == "server":

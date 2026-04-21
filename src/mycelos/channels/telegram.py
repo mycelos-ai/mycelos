@@ -763,6 +763,28 @@ def _split_message(text: str, max_len: int = 4000) -> list[str]:
     return chunks
 
 
+def _record_telegram_outcome(app: Any, result: dict) -> None:
+    """Write last_success_at / last_error on the telegram connector row.
+
+    Best-effort — any storage hiccup is swallowed. Telegram is a hot path
+    (every reminder fires through it); we never want telemetry to block
+    the real call.
+    """
+    try:
+        registry = getattr(app, "connector_registry", None)
+        if registry is None:
+            return
+        if result.get("ok"):
+            registry.record_success("telegram")
+        else:
+            registry.record_failure(
+                "telegram",
+                str(result.get("description") or "unknown error"),
+            )
+    except Exception:
+        logger.debug("telegram telemetry write failed", exc_info=True)
+
+
 def call_telegram_api(
     app: Any,
     method: str,
@@ -788,61 +810,100 @@ def call_telegram_api(
 
     url = f"https://api.telegram.org/bot{{credential}}/{method}"
 
-    # --- Two-container path: delegate to SecurityProxy ---
-    from mycelos.connectors import http_tools as _http_tools
-    pc = getattr(_http_tools, "_proxy_client", None)
-    if pc is not None:
+    def _inner() -> dict:
+        # --- Two-container path: delegate to SecurityProxy ---
+        from mycelos.connectors import http_tools as _http_tools
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            try:
+                if http_method.upper() == "GET":
+                    resp = pc.http_get(url, credential="telegram", inject_as="url_path", timeout=timeout)
+                else:
+                    resp = pc.http_post(
+                        url,
+                        body=payload or {},
+                        credential="telegram",
+                        inject_as="url_path",
+                        timeout=timeout,
+                    )
+            except Exception as e:
+                return {"ok": False, "description": f"proxy transport error: {e}"}
+
+            status = resp.get("status", 0)
+            body = resp.get("body", "")
+            if not body:
+                return {"ok": False, "description": f"proxy returned empty body (HTTP {status})"}
+            try:
+                parsed = _json.loads(body)
+                if isinstance(parsed, dict):
+                    return parsed
+            except ValueError:
+                pass
+            return {"ok": False, "description": f"non-JSON response (HTTP {status})"}
+
+        # --- Single-container fallback: local credential ---
         try:
-            if http_method.upper() == "GET":
-                resp = pc.http_get(url, credential="telegram", inject_as="url_path", timeout=timeout)
-            else:
-                resp = pc.http_post(
-                    url,
-                    body=payload or {},
-                    credential="telegram",
-                    inject_as="url_path",
-                    timeout=timeout,
-                )
+            cred = app.credentials.get_credential("telegram")
         except Exception as e:
-            return {"ok": False, "description": f"proxy transport error: {e}"}
+            return {"ok": False, "description": f"credential lookup failed: {e}"}
+        if not cred or not cred.get("api_key"):
+            return {"ok": False, "description": "no telegram credential"}
+        token = cred["api_key"]
 
-        status = resp.get("status", 0)
-        body = resp.get("body", "")
-        if not body:
-            return {"ok": False, "description": f"proxy returned empty body (HTTP {status})"}
+        resolved = url.replace("{credential}", token)
         try:
-            parsed = _json.loads(body)
-            if isinstance(parsed, dict):
-                return parsed
-        except ValueError:
-            pass
-        return {"ok": False, "description": f"non-JSON response (HTTP {status})"}
+            data = _json.dumps(payload or {}).encode()
+            req = urllib.request.Request(
+                resolved,
+                data=data if http_method.upper() == "POST" else None,
+                headers={"Content-Type": "application/json"},
+                method=http_method.upper(),
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                parsed = _json.loads(resp.read())
+                if isinstance(parsed, dict):
+                    return parsed
+                return {"ok": False, "description": "non-dict response"}
+        except Exception as e:
+            return {"ok": False, "description": str(e)}
 
-    # --- Single-container fallback: local credential ---
-    try:
-        cred = app.credentials.get_credential("telegram")
-    except Exception as e:
-        return {"ok": False, "description": f"credential lookup failed: {e}"}
-    if not cred or not cred.get("api_key"):
-        return {"ok": False, "description": "no telegram credential"}
-    token = cred["api_key"]
+    result = _inner()
+    _record_telegram_outcome(app, result)
+    return result
 
-    resolved = url.replace("{credential}", token)
-    try:
-        data = _json.dumps(payload or {}).encode()
-        req = urllib.request.Request(
-            resolved,
-            data=data if http_method.upper() == "POST" else None,
-            headers={"Content-Type": "application/json"},
-            method=http_method.upper(),
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            parsed = _json.loads(resp.read())
-            if isinstance(parsed, dict):
-                return parsed
-            return {"ok": False, "description": "non-dict response"}
-    except Exception as e:
-        return {"ok": False, "description": str(e)}
+
+class TelegramChannel:
+    """Channel-protocol wrapper around the Telegram functions.
+
+    Reminder / notifier code gets a uniform ``Channel`` interface —
+    ``is_active()``, ``send()`` — and doesn't need to know anything about
+    bots, tokens, or aiogram. Adding Slack or email later is "write one
+    more class that matches this shape", not "rewire every call site".
+    """
+
+    channel_id: str = "telegram"
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    def is_active(self) -> bool:
+        """True when the telegram channel row is ``status='active'`` AND
+        a chat_id is known (we need somewhere to send the message)."""
+        try:
+            row = self._app.storage.fetchone(
+                "SELECT status FROM channels WHERE id = 'telegram'"
+            )
+            if not row or row.get("status") != "active":
+                return False
+            chat_id = self._app.memory.get("default", "system", "telegram_chat_id")
+            return bool(chat_id)
+        except Exception:
+            return False
+
+    def send(self, message: str) -> bool:
+        """Delegates to send_notification() which already handles chunking,
+        proxy routing, and telemetry."""
+        return send_notification(self._app, message)
 
 
 def send_notification(app: Any, message: str) -> bool:

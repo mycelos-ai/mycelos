@@ -103,3 +103,40 @@ def test_register_no_capabilities(registry: ConnectorRegistry):
     c = registry.get("empty")
     assert c is not None
     assert c["capabilities"] == []
+
+
+def test_record_success_stamps_timestamp(registry: ConnectorRegistry):
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_success("ddg")
+    c = registry.get("ddg")
+    assert c["last_success_at"] is not None
+    assert c["last_error"] is None
+    assert c["last_error_at"] is None
+
+
+def test_record_failure_stamps_and_truncates(registry: ConnectorRegistry):
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_failure("ddg", "Service Unavailable")
+    c = registry.get("ddg")
+    assert c["last_error"] == "Service Unavailable"
+    assert c["last_error_at"] is not None
+
+
+def test_record_failure_truncates_long_errors(registry: ConnectorRegistry):
+    """Huge tracebacks belong in audit_events, not in the row. Cap at 500."""
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_failure("ddg", "x" * 2000)
+    c = registry.get("ddg")
+    assert len(c["last_error"]) == 500
+
+
+def test_success_after_failure_keeps_last_error(registry: ConnectorRegistry):
+    """A later success does not erase the previous failure — operators
+    still want to see 'what went wrong last' even on green rows."""
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_failure("ddg", "transient glitch")
+    registry.record_success("ddg")
+    c = registry.get("ddg")
+    assert c["last_success_at"] is not None
+    assert c["last_error"] == "transient glitch"
+    assert c["last_error_at"] is not None

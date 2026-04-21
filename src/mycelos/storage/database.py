@@ -95,6 +95,13 @@ class SQLiteStorage:
             ("knowledge_notes", "organizer_state", "TEXT NOT NULL DEFAULT 'pending'"),
             ("knowledge_notes", "organizer_seen_at", "TEXT"),
             ("knowledge_notes", "source_file", "TEXT"),
+            # Connector operational telemetry — see ConnectorRegistry.record_*.
+            ("connectors", "last_success_at", "TEXT"),
+            ("connectors", "last_error", "TEXT"),
+            ("connectors", "last_error_at", "TEXT"),
+            # Reminder dispatch retry bookkeeping — see ReminderService.
+            ("knowledge_notes", "dispatch_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("knowledge_notes", "last_dispatch_error", "TEXT"),
         ]
         for table, column, col_type in _MIGRATIONS:
             try:

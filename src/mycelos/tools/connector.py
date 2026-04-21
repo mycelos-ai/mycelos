@@ -186,7 +186,29 @@ def execute_connector_call(args: dict, context: dict) -> Any:
             "available_tools": similar[:10],
         }
 
-    result = mcp_mgr.call_tool(mcp_tool_name, tool_args or {})
+    try:
+        result = mcp_mgr.call_tool(mcp_tool_name, tool_args or {})
+    except Exception as e:
+        # Record failure for Doctor / Connectors UI so "when did this
+        # last fail?" is answerable without grepping audit_events.
+        try:
+            app.connector_registry.record_failure(connector_id, str(e))
+        except Exception:
+            pass
+        raise
+
+    # Treat a structured {"error": ...} payload as a failure too — many
+    # MCP tools return errors without raising.
+    if isinstance(result, dict) and result.get("error"):
+        try:
+            app.connector_registry.record_failure(connector_id, str(result["error"]))
+        except Exception:
+            pass
+    else:
+        try:
+            app.connector_registry.record_success(connector_id)
+        except Exception:
+            pass
 
     app.audit.log("tool.executed", details={
         "tool": mcp_tool_name,

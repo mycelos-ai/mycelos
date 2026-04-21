@@ -267,22 +267,42 @@ class ReminderService:
                 channels_failed.append(channel)
 
         fired_at = datetime.now(timezone.utc).isoformat()
-        # Mark each row as fired so it won't re-fire on the next tick.
-        # We mark even on zero-success dispatch *if* the configured channels
-        # are all failing — otherwise the inbox would keep the row visible
-        # indefinitely. But a complete shutout means something systemic is
-        # broken; we'd rather let the doctor pick that up than spam the
-        # user on every tick. So: mark when at least one channel worked,
-        # OR when there were no channels at all (defensive guard).
         if channels_succeeded or not channels:
+            # At least one channel took the message — mark the reminder as
+            # fired. reminder_fired_at stops the row from re-firing on the
+            # next tick. Clear the retry counter so a future re-scheduling
+            # of the same row (reminder=True set again) starts fresh.
             for t in tasks:
                 try:
                     self._app.storage.execute(
-                        "UPDATE knowledge_notes SET reminder_fired_at = ? WHERE path = ?",
+                        """UPDATE knowledge_notes
+                              SET reminder_fired_at   = ?,
+                                  dispatch_attempts   = 0,
+                                  last_dispatch_error = NULL
+                            WHERE path = ?""",
                         (fired_at, t["path"]),
                     )
                 except Exception:
                     logger.warning("Failed to set reminder_fired_at for %s", t["path"], exc_info=True)
+        else:
+            # Everything we tried failed. Bump the retry counter and record
+            # the error string so Doctor ("reminder X has failed 7 times,
+            # last error: …") and future fixes can reason about this row
+            # without re-reading audit_events. reminder_fired_at stays NULL
+            # — the row is still pending and will be picked up by the next
+            # scheduler tick.
+            err_msg = f"all channels failed: {sorted(channels_failed)}"[:500]
+            for t in tasks:
+                try:
+                    self._app.storage.execute(
+                        """UPDATE knowledge_notes
+                              SET dispatch_attempts   = COALESCE(dispatch_attempts, 0) + 1,
+                                  last_dispatch_error = ?
+                            WHERE path = ?""",
+                        (err_msg, t["path"]),
+                    )
+                except Exception:
+                    logger.warning("Failed to bump dispatch_attempts for %s", t["path"], exc_info=True)
 
         self._app.audit.log(
             "reminder.fired",

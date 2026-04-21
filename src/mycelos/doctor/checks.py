@@ -175,16 +175,48 @@ def check_reminder_scheduler(app: "App") -> dict[str, Any]:
 
 
 def check_reminders(app: "App") -> dict[str, Any]:
-    """Check for overdue reminders."""
+    """Check for overdue reminders. Promotes to 'error' severity when a
+    reminder has failed repeatedly — that's usually a stuck Telegram
+    token / broken channel, not user oversight."""
     from mycelos.doctor.tools import doctor_check_reminders
     r = doctor_check_reminders(app)
 
-    if r["due_count"] == 0:
+    # Look for reminders that we have tried and failed more than once —
+    # one hiccup is transient, two is a pattern worth promoting.
+    stuck: list[dict] = []
+    try:
+        rows = app.storage.fetchall(
+            """SELECT title, dispatch_attempts, last_dispatch_error
+                 FROM knowledge_notes
+                WHERE reminder = 1
+                  AND reminder_fired_at IS NULL
+                  AND COALESCE(dispatch_attempts, 0) >= 2"""
+        )
+        stuck = [dict(row) for row in rows]
+    except Exception:
+        stuck = []
+
+    if r["due_count"] == 0 and not stuck:
         return {
             "category": "reminders",
             "status": "ok",
             "details": "No overdue reminders",
         }
+
+    if stuck:
+        name = stuck[0]["title"]
+        attempts = stuck[0]["dispatch_attempts"]
+        err = stuck[0].get("last_dispatch_error") or "unknown"
+        return {
+            "category": "reminders",
+            "status": "error",
+            "details": (
+                f"{len(stuck)} reminder(s) failing repeatedly — "
+                f"'{name}' failed {attempts}× (last error: {err[:100]}). "
+                f"Check channel setup with: mycelos doctor --check telegram"
+            ),
+        }
+
     task_list = ", ".join(t["title"] for t in r["tasks"][:3])
     last = r["last_sent"]
     last_info = f", last sent: {last['created_at']}" if last else ", never sent"
@@ -192,6 +224,99 @@ def check_reminders(app: "App") -> dict[str, Any]:
         "category": "reminders",
         "status": "warning",
         "details": f"{r['due_count']} overdue: {task_list}{last_info}",
+    }
+
+
+def check_connectors(app: "App") -> dict[str, Any]:
+    """Aggregate health across every registered connector using the
+    last_success_at / last_error_at telemetry recorded at each call site.
+
+    Rules:
+      - no connectors → ok (nothing to check)
+      - any connector whose last action was an error (error_at > success_at
+        OR only errors so far) → error
+      - any connector that hasn't succeeded in >24h but is active → warning
+      - everything else → ok
+
+    This answers "is anything stuck?" without scanning audit_events.
+    """
+    try:
+        connectors = app.connector_registry.list_connectors(status="active")
+    except Exception as e:
+        return {
+            "category": "connectors",
+            "status": "unknown",
+            "details": f"could not enumerate connectors: {e}",
+        }
+
+    if not connectors:
+        return {
+            "category": "connectors",
+            "status": "ok",
+            "details": "no connectors configured",
+        }
+
+    failing: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    stale_after = timedelta(hours=24)
+
+    def _parse(ts: str | None):
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    for c in connectors:
+        last_ok = _parse(c.get("last_success_at"))
+        last_err = _parse(c.get("last_error_at"))
+
+        # >= so a failure that happens in the same millisecond as a prior
+        # success still counts as "the last thing that happened was an
+        # error" — SQLite's timestamps aren't always sub-ms unique.
+        if last_err and (not last_ok or last_err >= last_ok):
+            failing.append({
+                "id": c["id"],
+                "error": c.get("last_error") or "unknown",
+                "at": c.get("last_error_at"),
+            })
+            continue
+
+        # No error, or last error came before last success. Flag stale
+        # connectors — ones that haven't done anything useful in a day.
+        if last_ok and (now - last_ok) > stale_after:
+            stale.append({"id": c["id"], "last_success_at": c["last_success_at"]})
+        elif not last_ok and not last_err:
+            # Never used — not a problem; likely newly registered.
+            pass
+
+    if failing:
+        names = ", ".join(f["id"] for f in failing[:3])
+        first = failing[0]
+        return {
+            "category": "connectors",
+            "status": "error",
+            "details": (
+                f"{len(failing)} connector(s) failing: {names}. "
+                f"Last error on '{first['id']}': {first['error'][:120]}"
+            ),
+            "failing": failing,
+        }
+    if stale:
+        names = ", ".join(s["id"] for s in stale[:3])
+        return {
+            "category": "connectors",
+            "status": "warning",
+            "details": f"{len(stale)} connector(s) idle >24h: {names}",
+            "stale": stale,
+        }
+    return {
+        "category": "connectors",
+        "status": "ok",
+        "details": f"{len(connectors)} connector(s) operational",
     }
 
 
@@ -377,6 +502,7 @@ def run_health_checks(
         check_sqlite_vec(app),
         check_credentials(app),
         check_telegram(app),
+        check_connectors(app),
         check_reminders(app),
         check_reminder_scheduler(app),
         check_schedules(app),

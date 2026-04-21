@@ -182,3 +182,37 @@ class SecurityProxyProtocol(Protocol):
                        user_id: str = "default",
                        provider: str | None = None) -> dict: ...
     def health(self) -> dict: ...
+
+
+@runtime_checkable
+class Channel(Protocol):
+    """Interface for a notification channel (Telegram, email, Slack, …).
+
+    Keeps Telegram from being a shapeless special case. A channel knows
+    how to:
+      * identify itself (``channel_id``)
+      * decide whether it's currently usable (``is_active``)
+      * send a message somewhere meaningful to the user (``send``)
+
+    Implementations keep their transport details to themselves — the
+    reminder service and chat notifier only ever talk to this interface.
+    """
+
+    @property
+    def channel_id(self) -> str:
+        """Stable identifier matching the ``channels.id`` column
+        (``'telegram'``, ``'email'``, ``'slack'`` …)."""
+        ...
+
+    def is_active(self) -> bool:
+        """Return True when the channel has credentials, addressing, and
+        any other prerequisites in place. Used by the reminder service to
+        decide whether to include this channel in the default fan-out."""
+        ...
+
+    def send(self, message: str) -> bool:
+        """Deliver ``message``. Return True on success, False on any
+        recoverable failure. Non-recoverable failures (no credential,
+        service down) should return False, not raise — the caller treats
+        every failure the same way."""
+        ...

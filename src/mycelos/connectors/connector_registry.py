@@ -101,3 +101,36 @@ class ConnectorRegistry:
         )
         if self._notifier:
             self._notifier.notify_change(f"Connector removed: {connector_id}", "connector_remove")
+
+    # --- Operational telemetry ------------------------------------------------
+    #
+    # Every outbound call site hands its result back here. The registry
+    # stores a single "last success" and "last error" per connector so the
+    # Doctor and the Connectors UI can answer "when did this last work?"
+    # without scanning audit_events. We deliberately do NOT keep a full
+    # history here — audit_events is the authoritative log for that.
+
+    def record_success(self, connector_id: str) -> None:
+        """Stamp last_success_at for a connector after a successful call."""
+        self._storage.execute(
+            """UPDATE connectors
+                 SET last_success_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+            (connector_id,),
+        )
+
+    def record_failure(self, connector_id: str, error: str) -> None:
+        """Stamp last_error / last_error_at for a connector after a failed call.
+
+        The error message is truncated to 500 chars so a huge traceback
+        cannot blow up the row. Stack traces belong in the audit log, not
+        in this hot-path column.
+        """
+        trimmed = (error or "")[:500]
+        self._storage.execute(
+            """UPDATE connectors
+                 SET last_error    = ?,
+                     last_error_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+            (trimmed, connector_id),
+        )

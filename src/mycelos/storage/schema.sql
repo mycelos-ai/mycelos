@@ -275,7 +275,13 @@ CREATE TABLE IF NOT EXISTS connectors (
     status          TEXT NOT NULL DEFAULT 'active',
     setup_type      TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT
+    updated_at      TEXT,
+    -- Operational telemetry: populated by each call site so Doctor and
+    -- the Connectors UI can answer "when did this last work?" without
+    -- digging through audit_events.
+    last_success_at TEXT,              -- ISO timestamp of the last successful outbound call
+    last_error      TEXT,              -- short error string, truncated to 500 chars at write time
+    last_error_at   TEXT               -- ISO timestamp of the last failed call
 );
 
 -- Connector Capabilities (V2)
@@ -388,6 +394,8 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     remind_at   TEXT,                                -- ISO datetime: exact moment to fire the reminder
     reminder_fired_at TEXT,                          -- ISO datetime: set when dispatched or user-dismissed
     remind_via  TEXT,                                -- JSON array of channels; NULL = notify every active channel at fire time
+    dispatch_attempts  INTEGER NOT NULL DEFAULT 0,   -- how often we tried to dispatch; rises on every failed tick
+    last_dispatch_error TEXT,                        -- short error from the most recent failed dispatch
     sort_order  INTEGER DEFAULT 0,                   -- manual ordering within topic
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at  TEXT,
