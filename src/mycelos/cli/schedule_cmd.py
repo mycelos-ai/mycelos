@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from mycelos.cli import default_data_dir
 from typing import Any
 
 import click
@@ -23,7 +24,7 @@ def schedule_cmd() -> None:
 
 
 @schedule_cmd.command("list")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_list(data_dir: Path) -> None:
     """List all scheduled tasks."""
     app = App(data_dir)
@@ -61,7 +62,7 @@ def schedule_list(data_dir: Path) -> None:
 @click.option("--cron", required=True, help='Cron expression, e.g. "0 8 * * *"')
 @click.option("--input", "input_json", default=None, help='JSON input, e.g. \'{"query":"AI"}\'')
 @click.option("--budget", type=float, default=None, help="Max cost per run in $")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_add(
     workflow_id: str,
     cron: str,
@@ -101,7 +102,7 @@ def schedule_add(
 
 @schedule_cmd.command("pause")
 @click.argument("task_id")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_pause(task_id: str, data_dir: Path) -> None:
     """Pause a scheduled task."""
     app = App(data_dir)
@@ -113,7 +114,7 @@ def schedule_pause(task_id: str, data_dir: Path) -> None:
 
 @schedule_cmd.command("resume")
 @click.argument("task_id")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_resume(task_id: str, data_dir: Path) -> None:
     """Resume a paused scheduled task."""
     app = App(data_dir)
@@ -125,7 +126,7 @@ def schedule_resume(task_id: str, data_dir: Path) -> None:
 
 @schedule_cmd.command("delete")
 @click.argument("task_id")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_delete(task_id: str, data_dir: Path) -> None:
     """Delete a scheduled task."""
     app = App(data_dir)
@@ -138,7 +139,7 @@ def schedule_delete(task_id: str, data_dir: Path) -> None:
 
 @schedule_cmd.command("run")
 @click.argument("task_id")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def schedule_run(task_id: str, data_dir: Path) -> None:
     """Run a scheduled task immediately (for testing)."""
     app = App(data_dir)

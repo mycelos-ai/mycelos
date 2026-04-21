@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -30,7 +31,7 @@ def _get_app(data_dir: Path) -> App:
 
 
 @db_cmd.command("connectors")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def connectors_cmd(data_dir: Path) -> None:
     """Show all connectors with capabilities."""
     app = _get_app(data_dir)
@@ -55,7 +56,7 @@ def connectors_cmd(data_dir: Path) -> None:
 
 
 @db_cmd.command("agents")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def agents_cmd(data_dir: Path) -> None:
     """Show all agents with capabilities."""
     app = _get_app(data_dir)
@@ -80,7 +81,7 @@ def agents_cmd(data_dir: Path) -> None:
 
 
 @db_cmd.command("policies")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def policies_cmd(data_dir: Path) -> None:
     """Show all policies."""
     app = _get_app(data_dir)
@@ -96,7 +97,7 @@ def policies_cmd(data_dir: Path) -> None:
 
 
 @db_cmd.command("channels")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def channels_cmd(data_dir: Path) -> None:
     """Show channel configurations."""
     app = _get_app(data_dir)
@@ -121,7 +122,7 @@ def channels_cmd(data_dir: Path) -> None:
 
 
 @db_cmd.command("credentials")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def credentials_cmd(data_dir: Path) -> None:
     """Show stored credential services (not the secrets!)."""
     app = _get_app(data_dir)
@@ -165,7 +166,7 @@ def _parse_since(value: str | None) -> str | None:
 
 
 @db_cmd.command("audit")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.option("--type", "event_type", default=None, help="Filter by event type (comma-separated for multiple)")
 @click.option("--agent", "agent_id", default=None, help="Filter by agent_id")
 @click.option("--since", default=None, help="Filter events newer than e.g. 30m, 1h, 24h, 7d")
@@ -257,7 +258,7 @@ def audit_cmd(
 
 
 @db_cmd.command("memory")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def memory_cmd(data_dir: Path) -> None:
     """Show memory entries."""
     app = _get_app(data_dir)
@@ -278,7 +279,7 @@ def memory_cmd(data_dir: Path) -> None:
 
 @db_cmd.command("sql")
 @click.argument("query")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def sql_cmd(query: str, data_dir: Path) -> None:
     """Run a raw SQL query (read-only)."""
     if not query.strip().upper().startswith("SELECT"):
@@ -301,7 +302,7 @@ def sql_cmd(query: str, data_dir: Path) -> None:
 
 
 @db_cmd.command("context")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def context_cmd(data_dir: Path) -> None:
     """Show what the LLM sees as system context (live)."""
     app = _get_app(data_dir)

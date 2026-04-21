@@ -90,6 +90,30 @@ function Initialize-Compose {
     }
 }
 
+function Install-CliShortcut {
+    # PowerShell wrapper script that talks to THIS install's docker-compose.yml.
+    # Placed in %USERPROFILE%\AppData\Local\mycelos\bin which is easier to
+    # manage than trying to patch the user's PATH transparently.
+    $binDir = Join-Path $env:LOCALAPPDATA "mycelos\bin"
+    if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
+    $wrapper = Join-Path $binDir "mycelos.ps1"
+    $composePath = Join-Path (Get-Location) "docker-compose.yml"
+
+    @"
+# Mycelos CLI shortcut — installed by scripts/install.ps1
+# Targets the stack at: $composePath
+docker compose -f "$composePath" exec gateway mycelos @args
+"@ | Set-Content -Path $wrapper -Encoding UTF8
+
+    $onPath = ($env:Path -split ";") -contains $binDir
+    if ($onPath) {
+        Write-Log "🔧 CLI shortcut: $wrapper"
+    } else {
+        Write-Log "🔧 CLI shortcut installed: $wrapper"
+        Write-Log "   (Add '$binDir' to your PATH, or call the script with its full path.)"
+    }
+}
+
 function Start-Stack {
     if ($DryRun) { Write-Log "Dry run: skipping docker compose pull/up"; return }
     Write-Log "⬆️  Pulling latest image..."
@@ -116,4 +140,5 @@ Assert-Docker
 Initialize-DataDir
 Initialize-EnvFile
 Initialize-Compose
+Install-CliShortcut
 Start-Stack

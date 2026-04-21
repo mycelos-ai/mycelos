@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 from typing import Any
 
 import click
@@ -103,7 +104,7 @@ def connector_cmd() -> None:
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
 )
 def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
     """Set up a connector.
@@ -141,7 +142,7 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
 )
 def list_cmd(data_dir: Path) -> None:
     """List configured connectors and their status."""

@@ -9,6 +9,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 
@@ -35,7 +36,7 @@ console = Console()
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
     help="Data directory for Mycelos",
 )
 def init_cmd(data_dir: Path) -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -86,7 +87,7 @@ def credential_cmd() -> None:
 
 @credential_cmd.command("list")
 @click.option("--data-dir", type=click.Path(path_type=Path),
-              default=Path.home() / ".mycelos")
+              default=default_data_dir)
 def list_cmd(data_dir: Path) -> None:
     """List all stored credentials."""
     app = _get_app(data_dir)
@@ -119,7 +120,7 @@ def list_cmd(data_dir: Path) -> None:
 @credential_cmd.command("store")
 @click.argument("service")
 @click.option("--data-dir", type=click.Path(path_type=Path),
-              default=Path.home() / ".mycelos")
+              default=default_data_dir)
 def store_cmd(service: str, data_dir: Path) -> None:
     """Store or update a credential."""
     app = _get_app(data_dir)
@@ -186,7 +187,7 @@ def store_cmd(service: str, data_dir: Path) -> None:
 @credential_cmd.command("delete")
 @click.argument("service")
 @click.option("--data-dir", type=click.Path(path_type=Path),
-              default=Path.home() / ".mycelos")
+              default=default_data_dir)
 def delete_cmd(service: str, data_dir: Path) -> None:
     """Delete a stored credential."""
     app = _get_app(data_dir)
@@ -204,7 +205,7 @@ def delete_cmd(service: str, data_dir: Path) -> None:
 
 @credential_cmd.command("export")
 @click.option("--data-dir", type=click.Path(path_type=Path),
-              default=Path.home() / ".mycelos")
+              default=default_data_dir)
 @click.option("--output", "-o", type=click.Path(path_type=Path),
               default=None, help="Output file (default: ./mycelos-credentials.json)")
 def export_cmd(data_dir: Path, output: Path | None) -> None:
@@ -251,7 +252,7 @@ def export_cmd(data_dir: Path, output: Path | None) -> None:
 @credential_cmd.command("import")
 @click.argument("file", type=click.Path(exists=True, path_type=Path))
 @click.option("--data-dir", type=click.Path(path_type=Path),
-              default=Path.home() / ".mycelos")
+              default=default_data_dir)
 def import_cmd(file: Path, data_dir: Path) -> None:
     """Import credentials from a JSON export file.
 

@@ -11,6 +11,7 @@ import shutil
 import tarfile
 from datetime import datetime
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -24,7 +25,7 @@ console = Console()
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
     help="Data directory to reset",
 )
 @click.option("--no-backup", is_flag=True, default=False, help="Skip backup (dangerous)")

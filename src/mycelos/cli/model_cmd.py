@@ -11,6 +11,7 @@ Provides a drill-down menu to:
 
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -72,7 +73,7 @@ def _model_dicts_to_infos(model_dicts: list[dict]) -> list[ModelInfo]:
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
     help="Data directory for Mycelos",
 )
 @click.pass_context

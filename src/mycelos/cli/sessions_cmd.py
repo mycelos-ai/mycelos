@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -41,7 +42,7 @@ def _list_recent_sessions(data_dir: Path) -> None:
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
     show_default=True,
     help="Data directory for Mycelos.",
 )

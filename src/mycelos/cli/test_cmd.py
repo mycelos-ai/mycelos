@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from mycelos.cli import default_data_dir
 from typing import Any
 
 import click
@@ -97,7 +98,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
 @click.command("test")
 @click.argument("scenario", required=False)
 @click.option("--list", "list_scenarios", is_flag=True, help="List available test scenarios.")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.option("--keep", is_flag=True, help="Keep test files after run (don't cleanup).")
 @click.option("--live", is_flag=True, help="Run live LLM tests (real API calls, costs money).")
 def test_cmd(scenario: str | None, list_scenarios: bool, data_dir: Path, keep: bool, live: bool) -> None:

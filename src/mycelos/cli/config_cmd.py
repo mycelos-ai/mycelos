@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -21,7 +22,7 @@ def config_group():
 
 
 @config_group.command("list")
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def config_list(data_dir: Path):
     """List all config generations."""
     app = App(data_dir)
@@ -52,7 +53,7 @@ def config_list(data_dir: Path):
 
 @config_group.command("show")
 @click.argument("generation_id", type=int, required=False)
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON snapshot")
 def config_show(generation_id: int | None, data_dir: Path, as_json: bool):
     """Show config state. Without ID shows the active generation."""
@@ -191,7 +192,7 @@ def config_show(generation_id: int | None, data_dir: Path, as_json: bool):
 @config_group.command("diff")
 @click.argument("gen_a", type=int)
 @click.argument("gen_b", type=int)
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def config_diff(gen_a: int, gen_b: int, data_dir: Path):
     """Show differences between two config generations."""
     app = App(data_dir)
@@ -236,7 +237,7 @@ def config_diff(gen_a: int, gen_b: int, data_dir: Path):
 
 @config_group.command("rollback")
 @click.argument("generation_id", type=int, required=False)
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def config_rollback(generation_id: int | None, data_dir: Path):
     """Roll back to a previous config generation."""
     app = App(data_dir)

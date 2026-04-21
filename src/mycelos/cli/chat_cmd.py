@@ -12,6 +12,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 from typing import Any
 
 import click
@@ -162,7 +163,7 @@ def _format_execution_result(result: Any) -> str:
 @click.option(
     "--data-dir",
     type=click.Path(path_type=Path),
-    default=Path.home() / ".mycelos",
+    default=default_data_dir,
     show_default=True,
     help="Data directory for Mycelos (must already be initialized).",
 )

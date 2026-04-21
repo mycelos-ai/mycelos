@@ -109,6 +109,37 @@ ensure_compose() {
     log "📦 docker-compose.yml updated (previous saved as $backup)"
 }
 
+install_cli_shortcut() {
+    # Drop a small wrapper into ~/.local/bin so `mycelos <cmd>` works from
+    # any shell (not just interactive ones where aliases would apply).
+    # Points at THIS install's docker-compose.yml so multi-install users
+    # don't accidentally target the wrong stack.
+    local bin_dir="${HOME}/.local/bin"
+    local wrapper="${bin_dir}/mycelos"
+    local compose_path
+    compose_path="$(pwd)/docker-compose.yml"
+
+    mkdir -p "$bin_dir"
+
+    cat > "$wrapper" <<EOF
+#!/usr/bin/env bash
+# Mycelos CLI shortcut — installed by scripts/install.sh
+# Targets the stack at: $compose_path
+exec docker compose -f "$compose_path" exec gateway mycelos "\$@"
+EOF
+    chmod +x "$wrapper"
+
+    # Warn once if ~/.local/bin is not on PATH — tell the user how to fix it.
+    case ":$PATH:" in
+        *":$bin_dir:"*) log "🔧 CLI shortcut: $wrapper" ;;
+        *)
+            log "🔧 CLI shortcut installed: $wrapper"
+            log "   (Add ~/.local/bin to your PATH to use 'mycelos <cmd>' directly,"
+            log "    or call it with its full path.)"
+            ;;
+    esac
+}
+
 bring_up() {
     [ "$DRY_RUN" = 1 ] && { log "Dry run: skipping docker compose pull/up"; return; }
 
@@ -138,4 +169,5 @@ check_prereqs
 ensure_data_dir
 ensure_env
 ensure_compose
+install_cli_shortcut
 bring_up

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -22,7 +23,7 @@ STATUS_ICONS = {
 
 
 @click.command()
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.option("--check", type=str, default=None, help="Check specific category: reminders, schedules, config, telegram")
 @click.option("--why", "why_question", type=str, default=None, is_flag=False, flag_value="", help="LLM diagnosis: describe what's not working (interactive if no value)")
 @click.option("--fix", is_flag=True, help="Auto-fix issues where possible")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from mycelos.cli import default_data_dir
 
 import click
 from rich.console import Console
@@ -28,7 +29,7 @@ DEFAULT_HOST = "127.0.0.1"
 
 
 @click.command()
-@click.option("--data-dir", type=click.Path(path_type=Path), default=Path.home() / ".mycelos")
+@click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.option("--port", type=int, default=DEFAULT_PORT, show_default=True, help="Port to listen on.")
 @click.option("--host", type=str, default=DEFAULT_HOST, show_default=True, help="Host to bind to.")
 @click.option("--password", type=str, default=None, help="Require Basic Auth password (recommended with --host 0.0.0.0).")
