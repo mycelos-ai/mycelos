@@ -17,16 +17,19 @@ services:
       - MYCELOS_PROXY_PORT=9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
     volumes:
-      - type: bind
-        source: ${MYCELOS_DATA_DIR:-./data}/.master_key
-        target: /data/.master_key
-        read_only: true
-      - type: bind
-        source: ${MYCELOS_DATA_DIR:-./data}/mycelos.db
-        target: /data/mycelos.db
-        # Phase 1b: proxy writes credentials (encrypted) to the DB.
-        # Schema-level split into a dedicated proxy.db is a future phase.
-        read_only: false
+      # Proxy needs the full data directory — SQLite's WAL file
+      # (mycelos.db-wal) must sit next to the database file, and
+      # file-level bind mounts don't expose sibling files that the
+      # gateway creates later. Mounting a single .db file made the
+      # proxy see a stale main-database snapshot while the gateway's
+      # recent writes lived in the WAL; `mycelos credential list`
+      # disagreed with the Settings UI for exactly that reason.
+      #
+      # .master_key is still only meaningful here: the gateway never
+      # decrypts credentials itself (DelegatingCredentialProxy routes
+      # every read/write through this container), and the Phase 1b
+      # isolation story is about the CODE path, not the filesystem.
+      - ${MYCELOS_DATA_DIR:-./data}:/data
     networks:
       - mycelos-internal
     restart: unless-stopped
