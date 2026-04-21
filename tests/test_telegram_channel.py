@@ -172,13 +172,17 @@ def test_telegram_in_connector_dict():
 # --- Webhook registration ---
 
 def test_register_telegram_webhook():
-    """_register_telegram_webhook calls Telegram API."""
+    """_register_telegram_webhook calls Telegram API via the single-
+    container urllib path (no proxy configured in this test)."""
     from mycelos.gateway.server import _register_telegram_webhook
+    import json as _json
 
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"ok": True, "description": "Webhook set"}
+    mock_resp.read.return_value = _json.dumps({"ok": True, "description": "Webhook set"}).encode()
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
 
-    with patch("httpx.post", return_value=mock_resp) as mock_post:
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
         result = _register_telegram_webhook(
             bot_token="123456:ABC",
             webhook_url="https://example.com/telegram/webhook",
@@ -186,11 +190,13 @@ def test_register_telegram_webhook():
         )
 
     assert result is True
-    mock_post.assert_called_once()
-    call_args = mock_post.call_args
-    assert "123456:ABC" in call_args[0][0]
-    assert call_args[1]["json"]["url"] == "https://example.com/telegram/webhook"
-    assert call_args[1]["json"]["secret_token"] == "test-secret"
+    mock_urlopen.assert_called_once()
+    req = mock_urlopen.call_args[0][0]
+    # Token substituted into the URL
+    assert "123456:ABC" in req.full_url
+    body = _json.loads(req.data)
+    assert body["url"] == "https://example.com/telegram/webhook"
+    assert body["secret_token"] == "test-secret"
 
 
 def test_register_telegram_webhook_failure():

@@ -53,3 +53,21 @@ def _auto_seed_test_users():
 
     with patch.object(SQLiteStorage, "initialize", patched_initialize):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_proxy_client():
+    """Make sure tests never leak http_tools._proxy_client to the next
+    test. A handful of integration tests set this to a MagicMock to
+    validate the two-container code path; if that state bled into a
+    test expecting single-container (direct httpx) behaviour, the
+    httpx.get mock wouldn't fire and the test would either hit the
+    real network or fail with a Mock-related error.
+    """
+    from mycelos.connectors import http_tools
+
+    original = getattr(http_tools, "_proxy_client", None)
+    try:
+        yield
+    finally:
+        http_tools._proxy_client = original
