@@ -246,15 +246,16 @@
                     <span class="text-[10px] font-label text-on-surface-variant/40">Requires API key</span>
                   </div>
                 </div>
-                <button @click="installFromUseCase(c)"
-                        :disabled="isConnectorInstalled(c.id) || submitting"
+                <button @click="isConnectorInstalled(c.id) ? jumpToInstalled(c.id) : installFromUseCase(c)"
+                        :disabled="(!isConnectorInstalled(c.id)) && submitting"
+                        :title="isConnectorInstalled(c.id) ? 'Jump to the installed connector below' : ''"
                         class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-shrink-0 ml-4"
                         :class="isConnectorInstalled(c.id)
-                          ? 'bg-surface-container text-on-surface-variant/30 cursor-default'
+                          ? 'bg-[#48c78e]/10 text-[#48c78e] hover:bg-[#48c78e]/20 cursor-pointer'
                           : 'bg-primary/10 text-primary hover:bg-primary/20'">
                   <span class="material-symbols-outlined text-sm"
-                        x-text="isConnectorInstalled(c.id) ? 'check' : c.credentials_needed ? 'tune' : 'add'"></span>
-                  <span x-text="isConnectorInstalled(c.id) ? 'Added' : c.credentials_needed ? 'Setup' : 'Add'"></span>
+                        x-text="isConnectorInstalled(c.id) ? 'south' : c.credentials_needed ? 'tune' : 'add'"></span>
+                  <span x-text="isConnectorInstalled(c.id) ? 'View' : c.credentials_needed ? 'Setup' : 'Add'"></span>
                 </button>
               </div>
             </template>
@@ -642,7 +643,9 @@
         <!-- Connector cards grid -->
         <div x-show="!loading && connectors.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           <template x-for="connector in connectors" :key="connector.id || connector.name">
-            <div class="card group relative animate-fade-in">
+            <div class="card group relative animate-fade-in transition-shadow"
+                 :id="'connector-card-' + (connector.id || connector.name)"
+                 :class="connector._highlight && 'ring-2 ring-primary ring-offset-2 ring-offset-background'">
 
               <!-- Delete button (top-right, visible on hover) -->
               <button @click="confirmDelete(connector)"
@@ -928,12 +931,39 @@
               _test_result: null,
               _tools_loading: false,
               _tools: null,
+              _highlight: false,
             }));
           } catch (e) {
             console.warn('Could not load connectors:', e.message);
             this.connectors = [];
           }
           this.loading = false;
+        },
+
+        /**
+         * Scroll to the installed connector card and flash-highlight it.
+         * Called from the 'View' button in the suggested-recipes panel
+         * so users who see an 'Added' recipe immediately know where
+         * their actual installed entry lives — solves a real usability
+         * footgun where the installed list was hidden below the fold.
+         */
+        jumpToInstalled(connectorId) {
+          // Close the use-case drawer first so the installed grid is
+          // actually visible when we scroll to it.
+          this.activeUseCase = null;
+
+          // Let Alpine re-render before scrolling — DOM isn't updated
+          // synchronously when we flip activeUseCase.
+          setTimeout(() => {
+            const card = document.getElementById('connector-card-' + connectorId);
+            if (!card) return;
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const target = this.connectors.find(c => (c.id || c.name) === connectorId);
+            if (target) {
+              target._highlight = true;
+              setTimeout(() => { target._highlight = false; }, 2000);
+            }
+          }, 50);
         },
 
         /**
