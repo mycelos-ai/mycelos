@@ -362,7 +362,9 @@ PY
     fi
 
     log "⇥  Tab-completion installed (bash, zsh, fish) — zero runtime cost"
-    case ":$FPATH:" in
+    # FPATH only exists in zsh. Under bash (which installs.sh runs in)
+    # ${FPATH:-} dodges 'unbound variable' under `set -u`.
+    case ":${FPATH:-}:" in
         *":$zsh_dir:"*) ;;
         *)
             log "   zsh users: add to ~/.zshrc so zsh finds the completion file:"
