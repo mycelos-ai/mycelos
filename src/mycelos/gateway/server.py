@@ -75,7 +75,20 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
     except Exception:
         return
 
-    mcp_mgr = mycelos.mcp_manager
+    # In two-container deployment, MCP subprocess management belongs to
+    # the proxy container — only the proxy can decrypt the credentials
+    # the subprocess needs. When MYCELOS_PROXY_URL is set, route every
+    # mcp_start through proxy_client.mcp_start instead of spawning the
+    # subprocess locally in the gateway (which would hit
+    # NotImplementedError when the MCP client tries to load the
+    # credential from the gateway-side DelegatingCredentialProxy).
+    from mycelos.connectors import http_tools as _http_tools
+    proxy_client = getattr(_http_tools, "_proxy_client", None)
+    use_proxy = proxy_client is not None
+
+    mcp_mgr = None
+    if not use_proxy:
+        mcp_mgr = mycelos.mcp_manager
     started = 0
 
     for connector in connectors:
@@ -126,12 +139,37 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
             continue
 
         try:
-            tools = mcp_mgr.connect(
-                connector_id=cid,
-                command=command,
-                env_vars=env_vars,
-                transport=transport,
-            )
+            if use_proxy:
+                # Shell-split the command. The proxy expects a list of
+                # argv strings, same shape the MCP manager uses.
+                import shlex
+                argv = shlex.split(command) if isinstance(command, str) else list(command)
+                resp = proxy_client.mcp_start(
+                    connector_id=cid,
+                    command=argv,
+                    env_vars=env_vars,
+                    transport=transport,
+                )
+                if resp.get("error"):
+                    raise RuntimeError(resp["error"])
+                tools = resp.get("tools", [])
+                # Cache the tool list locally so gateway code that
+                # inspects list_tools() still sees what the proxy runs.
+                # The actual MCP calls go through proxy_client.mcp_call()
+                # at tool-call time — the local manager only serves as a
+                # read-only catalog in two-container mode.
+                mycelos.mcp_manager.register_remote_session(
+                    connector_id=cid,
+                    session_id=resp.get("session_id", ""),
+                    tools=tools,
+                )
+            else:
+                tools = mcp_mgr.connect(
+                    connector_id=cid,
+                    command=command,
+                    env_vars=env_vars,
+                    transport=transport,
+                )
             started += 1
             logger.info(
                 "MCP server '%s' started: %d tools discovered",

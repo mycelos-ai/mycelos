@@ -106,10 +106,34 @@ class MCPConnectorManager:
         return tools
 
     def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """Call an MCP tool by name. Thread-safe."""
+        """Call an MCP tool by name. Thread-safe.
+
+        Two paths:
+          - Local subprocess: go through the in-process client
+          - Remote session (Phase 1b, subprocess lives in the proxy):
+            call proxy_client.mcp_call with the stored session id
+        """
         tool = self._all_tools.get(tool_name)
         if tool is None:
             return {"error": f"MCP tool '{tool_name}' not found"}
+
+        if tool.get("_remote"):
+            # Strip the connector prefix — the proxy expects the bare
+            # tool name (what the MCP server itself knows).
+            session_id = tool.get("_session_id") or ""
+            bare_name = tool_name.split(".", 1)[-1] if "." in tool_name else tool_name
+            from mycelos.connectors import http_tools as _http_tools
+            proxy_client = getattr(_http_tools, "_proxy_client", None)
+            if proxy_client is None:
+                return {"error": "Remote MCP tool requires proxy_client (not configured)"}
+            try:
+                return proxy_client.mcp_call(
+                    session_id=session_id,
+                    tool=bare_name,
+                    arguments=arguments,
+                )
+            except Exception as e:
+                return {"error": f"Remote MCP tool call failed: {e}"}
 
         client = tool["client"]
 
@@ -132,8 +156,36 @@ class MCPConnectorManager:
         self._all_tools.clear()
 
     def list_connected(self) -> list[str]:
-        """List connected connector IDs."""
-        return list(self._clients.keys())
+        """List connected connector IDs — local clients and remote
+        sessions registered via register_remote_session combined."""
+        local = set(self._clients.keys())
+        remote = set(getattr(self, "_remote_sessions", {}).keys())
+        return sorted(local | remote)
+
+    def register_remote_session(
+        self, connector_id: str, session_id: str, tools: list[dict]
+    ) -> None:
+        """Register an MCP session that actually runs in the proxy
+        container. The gateway doesn't own the subprocess, but the
+        tools catalog still needs to be visible locally so Agents
+        (and list_tools()) know what's available. Tool calls route
+        through proxy_client.mcp_call at execution time.
+        """
+        if not hasattr(self, "_remote_sessions"):
+            self._remote_sessions: dict[str, str] = {}
+        self._remote_sessions[connector_id] = session_id
+        for tool in tools:
+            name = tool.get("name") if isinstance(tool, dict) else None
+            if not name:
+                continue
+            # Prefix with connector id (matches the local-client shape)
+            full_name = name if name.startswith(f"{connector_id}.") else f"{connector_id}.{name}"
+            self._all_tools[full_name] = {
+                "description": tool.get("description", "") if isinstance(tool, dict) else "",
+                "input_schema": tool.get("input_schema", {}) if isinstance(tool, dict) else {},
+                "_remote": True,
+                "_session_id": session_id,
+            }
 
     def list_tools(self) -> list[dict]:
         """List all available MCP tools with schemas."""
