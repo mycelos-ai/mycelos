@@ -140,3 +140,44 @@ def test_success_after_failure_keeps_last_error(registry: ConnectorRegistry):
     assert c["last_success_at"] is not None
     assert c["last_error"] == "transient glitch"
     assert c["last_error_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Operational state (derived)
+# ---------------------------------------------------------------------------
+
+
+def test_state_newly_registered_is_ready(registry: ConnectorRegistry):
+    """No telemetry yet + status=active → ready."""
+    registry.register("ddg", "DDG", "search", [])
+    assert registry.get("ddg")["operational_state"] == "ready"
+
+
+def test_state_after_success_is_healthy(registry: ConnectorRegistry):
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_success("ddg")
+    assert registry.get("ddg")["operational_state"] == "healthy"
+
+
+def test_state_after_failure_is_failing(registry: ConnectorRegistry):
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_failure("ddg", "boom")
+    assert registry.get("ddg")["operational_state"] == "failing"
+
+
+def test_state_recovers_to_healthy(registry: ConnectorRegistry):
+    """A fresh success after a failure flips back to healthy."""
+    import time
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_failure("ddg", "boom")
+    time.sleep(0.01)
+    registry.record_success("ddg")
+    assert registry.get("ddg")["operational_state"] == "healthy"
+
+
+def test_state_inactive_status_overrides_telemetry(registry: ConnectorRegistry):
+    """Disabled connectors are setup_incomplete regardless of past success."""
+    registry.register("ddg", "DDG", "search", [])
+    registry.record_success("ddg")
+    registry.set_status("ddg", "disabled")
+    assert registry.get("ddg")["operational_state"] == "setup_incomplete"

@@ -1683,6 +1683,130 @@ def setup_routes(api: FastAPI) -> None:
         mycelos.audit.log("connector.removed", details={"connector": connector_id}, user_id=_resolve_user_id(request))
         return {"status": "removed", "connector": connector_id}
 
+    @api.get("/api/connectors/{connector_id}/tools")
+    async def connector_tools(request: Request, connector_id: str) -> dict[str, Any]:
+        """List the MCP tools exposed by one connector, with their
+        descriptions and current policy status. Powers the Tool
+        Transparency panel in the Connectors page.
+
+        Returns { tools: [{name, description, policy, blocked_reason}], ... }.
+        A tool is ``blocked`` when the PolicyEngine would return
+        ``"never"`` for it — that's the canonical reason an agent can
+        see but not use a tool.
+        """
+        mycelos = api.state.mycelos
+        existing = mycelos.connector_registry.get(connector_id)
+        if not existing:
+            return JSONResponse({"error": f"Connector '{connector_id}' not found"}, status_code=404)
+
+        user_id = _resolve_user_id(request)
+        prefix = f"{connector_id}."
+        mcp_mgr = getattr(mycelos, "_mcp_manager", None)
+        raw_tools: list[dict[str, Any]] = []
+        if mcp_mgr is not None:
+            try:
+                raw_tools = [t for t in mcp_mgr.list_tools() if t["name"].startswith(prefix)]
+            except Exception as e:
+                return {"connector": connector_id, "tools": [], "error": str(e)}
+
+        policy = mycelos.policy_engine
+        tools_out: list[dict[str, Any]] = []
+        for t in raw_tools:
+            decision = None
+            try:
+                decision = policy.evaluate(user_id, None, t["name"])
+            except Exception:
+                decision = None
+            blocked = decision == "never"
+            tools_out.append({
+                "name": t["name"][len(prefix):],
+                "full_name": t["name"],
+                "description": t.get("description", ""),
+                "policy": decision or "default",
+                "blocked": blocked,
+            })
+
+        return {
+            "connector": connector_id,
+            "operational_state": existing.get("operational_state"),
+            "last_success_at": existing.get("last_success_at"),
+            "last_error": existing.get("last_error"),
+            "last_error_at": existing.get("last_error_at"),
+            "tools": tools_out,
+        }
+
+    @api.post("/api/connectors/{connector_id}/test")
+    async def test_connector(request: Request, connector_id: str) -> dict[str, Any]:
+        """Run a live connectivity check on a connector.
+
+        Uses the shape of the connector to pick the right probe:
+          * telegram → ``getMe`` via the proxy
+          * MCP-backed connectors → ``tools/list`` on the running session
+          * everything else → a 'not testable' hint
+
+        Every outcome flows through connector_registry.record_* so the
+        panel and Doctor see fresh telemetry immediately.
+        """
+        mycelos = api.state.mycelos
+        existing = mycelos.connector_registry.get(connector_id)
+        if not existing:
+            return JSONResponse({"error": f"Connector '{connector_id}' not found"}, status_code=404)
+
+        ctype = (existing.get("connector_type") or "").lower()
+        user_id = _resolve_user_id(request)
+
+        def _ok(detail: str, **extra) -> dict[str, Any]:
+            mycelos.connector_registry.record_success(connector_id)
+            mycelos.audit.log(
+                "connector.test_ok",
+                details={"connector": connector_id, **extra},
+                user_id=user_id,
+            )
+            return {"ok": True, "connector": connector_id, "detail": detail, **extra}
+
+        def _fail(detail: str, **extra) -> dict[str, Any]:
+            mycelos.connector_registry.record_failure(connector_id, detail)
+            mycelos.audit.log(
+                "connector.test_failed",
+                details={"connector": connector_id, "error": detail[:200], **extra},
+                user_id=user_id,
+            )
+            return {"ok": False, "connector": connector_id, "detail": detail, **extra}
+
+        # ── Telegram ────────────────────────────────────────────
+        if connector_id == "telegram" or ctype in ("telegram", "channel"):
+            from mycelos.channels.telegram import call_telegram_api
+            data = call_telegram_api(mycelos, "getMe", http_method="GET", timeout=5)
+            if data.get("ok"):
+                bot = data.get("result", {}) or {}
+                return _ok(
+                    f"Bot '{bot.get('first_name', '?')}' (@{bot.get('username', '?')}) reachable",
+                    bot_username=bot.get("username"),
+                    bot_name=bot.get("first_name"),
+                )
+            return _fail(data.get("description", "unknown error"))
+
+        # ── MCP-backed ─────────────────────────────────────────
+        mcp_mgr = getattr(mycelos, "_mcp_manager", None)
+        if mcp_mgr is not None:
+            prefix = f"{connector_id}."
+            try:
+                tools = [t for t in mcp_mgr.list_tools() if t["name"].startswith(prefix)]
+            except Exception as e:
+                return _fail(f"tools/list failed: {e}")
+            if tools:
+                return _ok(f"{len(tools)} tool(s) loaded", tool_count=len(tools))
+            return _fail(
+                "No tools discovered. The MCP session may not be running — "
+                "check 'mycelos logs gateway' for startup errors."
+            )
+
+        return {
+            "ok": None,
+            "connector": connector_id,
+            "detail": "No test available for this connector type.",
+        }
+
     # ── Channels ───────────────────────────────────────────────
 
     @api.post("/api/channels")

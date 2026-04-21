@@ -338,6 +338,91 @@ def test_connector_add_duplicate_returns_409(client: TestClient):
     assert resp.status_code == 409
 
 
+def test_connector_list_exposes_operational_state(client: TestClient):
+    """Every row in /api/connectors surfaces the derived operational_state
+    so the Connectors UI can render a status badge without a second query."""
+    app = client.app.state.mycelos
+    app.connector_registry.register("probe", "Probe", "search", [])
+    resp = client.get("/api/connectors")
+    assert resp.status_code == 200
+    rows = resp.json()
+    match = next((r for r in rows if r["id"] == "probe"), None)
+    assert match is not None
+    assert match["operational_state"] == "ready"
+
+
+def test_connector_test_unknown_404(client: TestClient):
+    resp = client.post("/api/connectors/does-not-exist/test")
+    assert resp.status_code == 404
+
+
+def test_connector_test_telegram_uses_helper(client: TestClient):
+    """POST /api/connectors/telegram/test calls call_telegram_api and
+    records the outcome against the connector row."""
+    from unittest.mock import patch
+    app = client.app.state.mycelos
+    app.connector_registry.register("telegram", "Telegram", "channel", [])
+
+    with patch(
+        "mycelos.channels.telegram.call_telegram_api",
+        return_value={"ok": True, "result": {"first_name": "TestBot", "username": "tbot"}},
+    ):
+        resp = client.post("/api/connectors/telegram/test")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert "TestBot" in body["detail"]
+    # Telemetry lands on the row
+    row = app.connector_registry.get("telegram")
+    assert row["last_success_at"] is not None
+    assert row["operational_state"] == "healthy"
+
+
+def test_connector_test_telegram_records_failure(client: TestClient):
+    from unittest.mock import patch
+    app = client.app.state.mycelos
+    app.connector_registry.register("telegram", "Telegram", "channel", [])
+
+    with patch(
+        "mycelos.channels.telegram.call_telegram_api",
+        return_value={"ok": False, "description": "Unauthorized (401)"},
+    ):
+        resp = client.post("/api/connectors/telegram/test")
+
+    body = resp.json()
+    assert body["ok"] is False
+    assert "Unauthorized" in body["detail"]
+    row = app.connector_registry.get("telegram")
+    assert row["operational_state"] == "failing"
+    assert "Unauthorized" in (row.get("last_error") or "")
+
+
+def test_connector_tools_panel_returns_tools(client: TestClient):
+    """GET /api/connectors/{id}/tools renders the MCP tool list plus the
+    telemetry the UI needs for the transparency panel."""
+    from unittest.mock import MagicMock
+    app = client.app.state.mycelos
+    app.connector_registry.register("gh", "GitHub", "mcp", [])
+
+    fake_mcp = MagicMock()
+    fake_mcp.list_tools.return_value = [
+        {"name": "gh.list_issues", "description": "List GitHub issues"},
+        {"name": "gh.create_pr", "description": "Open a pull request"},
+        {"name": "other.unrelated", "description": "Should be filtered out"},
+    ]
+    app._mcp_manager = fake_mcp
+
+    resp = client.get("/api/connectors/gh/tools")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["connector"] == "gh"
+    names = {t["name"] for t in body["tools"]}
+    assert names == {"list_issues", "create_pr"}
+    # operational_state comes through for the panel header
+    assert body["operational_state"] in {"ready", "healthy", "failing", "setup_incomplete"}
+
+
 def test_credential_add_returns_200(client: TestClient):
     """POST /api/credentials should accept valid credential (not 422)."""
     resp = client.post("/api/credentials", json={

@@ -36,7 +36,7 @@ class ConnectorRegistry:
             self._notifier.notify_change(f"Connector registered: {connector_id}", "connector_register")
 
     def get(self, connector_id: str) -> dict | None:
-        """Get a connector by ID with its capabilities."""
+        """Get a connector by ID with its capabilities and derived state."""
         row = self._storage.fetchone(
             "SELECT * FROM connectors WHERE id = ?", (connector_id,)
         )
@@ -48,10 +48,12 @@ class ConnectorRegistry:
             (connector_id,),
         )
         result["capabilities"] = [c["capability"] for c in caps]
+        result["operational_state"] = self._operational_state(result)
         return result
 
     def list_connectors(self, status: str | None = None) -> list[dict]:
-        """List connectors, optionally filtered by status, with capabilities."""
+        """List connectors (with capabilities and derived state),
+        optionally filtered by status."""
         if status:
             rows = self._storage.fetchall(
                 "SELECT * FROM connectors WHERE status = ? ORDER BY created_at",
@@ -69,8 +71,40 @@ class ConnectorRegistry:
                 (row["id"],),
             )
             entry["capabilities"] = [c["capability"] for c in caps]
+            entry["operational_state"] = self._operational_state(entry)
             result.append(entry)
         return result
+
+    def _operational_state(self, row: dict) -> str:
+        """Derive a user-facing state from the row's telemetry columns.
+
+        Deliberately coarse — four values, no state machine. This is what
+        the UI badges and the Doctor page render. Fine-grained lifecycle
+        transitions (discovered → credentialed → reachable → tools loaded)
+        come and go too fast to persist; we compute from the durable
+        columns instead.
+
+        - setup_incomplete — the connector row says 'draft' or a required
+          credential is missing. User still has work to do.
+        - ready          — configured but never successfully called.
+                           Newly added connector or one that's never been
+                           exercised.
+        - healthy        — last call succeeded (or last success is more
+                           recent than last error).
+        - failing        — last event was an error (no success yet, or
+                           error timestamp >= success timestamp).
+        """
+        if row.get("status") in ("draft", "inactive", "disabled"):
+            return "setup_incomplete"
+
+        last_ok = row.get("last_success_at")
+        last_err = row.get("last_error_at")
+
+        if not last_ok and not last_err:
+            return "ready"
+        if last_err and (not last_ok or last_err >= last_ok):
+            return "failing"
+        return "healthy"
 
     def set_status(self, connector_id: str, status: str) -> None:
         """Update a connector's status."""
