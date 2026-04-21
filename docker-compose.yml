@@ -13,6 +13,7 @@ services:
     container_name: mycelos-proxy
     environment:
       - MYCELOS_ROLE=proxy
+      - MYCELOS_DATA_DIR=/data
       - MYCELOS_PROXY_PORT=9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
     volumes:
@@ -49,6 +50,7 @@ services:
       - ${MYCELOS_DATA_DIR:-./data}:/data
     environment:
       - MYCELOS_ROLE=gateway
+      - MYCELOS_DATA_DIR=/data
       - MYCELOS_PROXY_URL=http://proxy:9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
     networks:
