@@ -77,3 +77,6 @@ docs/local-notes/
 
 # Git worktrees (created by subagent-driven-development workflow)
 .worktrees/
+
+# Claude Code session state (locks, caches)
+.claude/
