@@ -48,9 +48,10 @@ def test_demo_fast_shows_getting_started():
     runner = CliRunner()
     result = runner.invoke(demo_cmd, ["--fast", "--lang", "en"])
     output = result.output
-    assert "pip install mycelos" in output
-    assert "mycelos init" in output
-    assert "mycelos serve" in output
+    # Default install path is the Docker one-liner — no more pip+init.
+    assert "install.sh" in output
+    assert "localhost:9100" in output
+    assert "mycelos doctor" in output
 
 
 def test_demo_fast_shows_github():
