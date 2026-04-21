@@ -43,7 +43,11 @@ services:
       proxy:
         condition: service_healthy
     ports:
-      - "${MYCELOS_PORT:-9100}:9100"
+      # Bind to localhost only by default — Mycelos has no authentication
+      # (outside of optional MYCELOS_PASSWORD Basic Auth) until Phase 2.
+      # To expose on the LAN, override MYCELOS_BIND=0.0.0.0 in .env AND
+      # set a strong MYCELOS_PASSWORD.
+      - "${MYCELOS_BIND:-127.0.0.1}:${MYCELOS_PORT:-9100}:9100"
     volumes:
       # Gateway owns the full data dir except the master key (separate
       # bind-mount on the proxy, not visible here).
@@ -53,6 +57,10 @@ services:
       - MYCELOS_DATA_DIR=/data
       - MYCELOS_PROXY_URL=http://proxy:9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
+      # Optional — protect the Gateway with HTTP Basic Auth. Strongly
+      # recommended the moment you expose the port beyond localhost,
+      # because Passkey-based auth does not ship until Phase 2.
+      - MYCELOS_PASSWORD=${MYCELOS_PASSWORD:-}
     networks:
       # Phase 1b: gateway is off the default (internet-capable) network.
       # Every outbound call flows through the proxy container or fails.

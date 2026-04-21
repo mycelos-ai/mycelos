@@ -1,8 +1,10 @@
 # Mycelos — The AI That Grows With You
 
-![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue) ![License MIT](https://img.shields.io/badge/license-MIT-green) ![Tests 2000+](https://img.shields.io/badge/tests-2000%2B-brightgreen)
+![Version v0.3.0](https://img.shields.io/badge/version-v0.3.0-blue) ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue) ![License MIT](https://img.shields.io/badge/license-MIT-green) ![Tests 2300+](https://img.shields.io/badge/tests-2300%2B-brightgreen)
 
 A self-hosted, security-first agent operating system. Your data stays local, cloud LLMs are tools — not your storage.
+
+> **v0.3 is single-user, localhost-by-default.** The Docker installer binds the Gateway to `127.0.0.1`. Passkey authentication ships in Phase 2 — until then, exposing Mycelos on the LAN or the public internet requires `MYCELOS_BIND=0.0.0.0` plus a strong `MYCELOS_PASSWORD` (HTTP Basic Auth) and is on you to secure further (reverse proxy, TLS, firewall). If you're not sure, leave it on localhost.
 
 <p align="center">
   <img src="screenshots/21-knowledge-graph-fullscreen.png" alt="Mycelos Knowledge Graph" width="700">

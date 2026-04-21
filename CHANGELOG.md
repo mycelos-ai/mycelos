@@ -1,5 +1,54 @@
 # Changelog
 
+## v0.3.0 — 2026-04-21
+
+First tagged public release. Baseline for self-hosted single-user
+deployment on localhost.
+
+### Highlights
+- **Two-container Docker deployment** with hard security isolation
+  (Phase 1b). The master key lives only in the proxy container; the
+  gateway holds no plaintext credentials and has no direct internet
+  route. Every outbound call — LLM, HTTP, MCP, Telegram — flows
+  through the proxy.
+- **Zero-question installer** (`scripts/install.sh` / `install.ps1`).
+  Idempotent re-runs upgrade the stack, install a `mycelos` CLI
+  wrapper into `~/.local/bin`, write static tab-completion for bash /
+  zsh / fish, and preserve `.master_key` + `.env` every time.
+- **Host-side stack operations via the wrapper**: `mycelos update`
+  (pull + up), `restart`, `logs`, `shell`, `stop`. `mycelos doctor`
+  reports when a new release is available.
+- **Agent toolkit preloaded** — beautifulsoup4, lxml, openpyxl,
+  python-docx, Pillow, pymupdf. Heavy ML stacks stay opt-in through a
+  custom image.
+- **Gateway binds to `127.0.0.1` by default.** Exposing on the LAN
+  requires `MYCELOS_BIND=0.0.0.0` plus `MYCELOS_PASSWORD` (HTTP Basic
+  Auth). Passkey authentication is Phase 2.
+
+### Fixes this week
+- `fix(prompt)` — Mycelos stops asking for API keys that are already
+  stored; configured LLM providers are now in the system prompt.
+- `fix(reminders)` — user timezone is detected from the browser,
+  passed into the prompt, and `note_write` rejects `remind_at` in the
+  past. "Remind me tomorrow 9am" in a UTC container no longer fires
+  immediately.
+- `fix(prompt)` — Mycelos always addresses the user in second person
+  instead of narrating about them in the third.
+- `fix(chat)` — the native scrollbar is reachable again on very long
+  assistant messages (the fixed composer was overlapping the bottom
+  of the scroll region).
+- `fix(telegram)` — Telegram channel works under two-container
+  deployment. Stateless calls go through a new proxy URL-path
+  credential injection; the aiogram long-poll session materializes
+  its token once at startup via a narrow, bootstrap-window-gated
+  allow list.
+- `fix(proxy)` — unauthenticated `/healthz` so the Docker healthcheck
+  works without leaking operational detail.
+- `fix(compose)` — containers export `MYCELOS_DATA_DIR=/data` so the
+  in-container CLI finds the bind-mount.
+- `cleanup(frontend)` — removed a stale Next.js "Maicel" export that
+  was still reachable at `/out/` from the pre-rename era.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)

@@ -33,7 +33,8 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    from mycelos import __version__
+    assert __version__ in result.output
 
 
 def test_init_creates_database(tmp_path):
