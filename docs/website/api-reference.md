@@ -7,6 +7,12 @@ icon: api
 
 The Gateway exposes a RESTful HTTP API on port `9100`. All endpoints return JSON unless noted otherwise.
 
+## Authentication
+
+When `MYCELOS_PASSWORD` is set in `.env`, every endpoint requires **HTTP Basic Auth**. Username is ignored; the password is checked against `MYCELOS_PASSWORD` in constant time. Set this as soon as you expose the gateway beyond `127.0.0.1` — there is no other authentication layer in v0.3 (passkey ships in Phase 2).
+
+`/api/health` and `/healthz` remain unauthenticated so Docker healthchecks and external probes can verify the service is up without a password.
+
 ## Chat
 
 | Method | Endpoint | Description |

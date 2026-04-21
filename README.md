@@ -111,11 +111,19 @@ If you prefer to see every file before it lands:
 ```bash
 git clone https://github.com/mycelos-ai/mycelos
 cd mycelos
+
+# 1. Copy .env template and fill in a random proxy token
 cp .env.example .env
-# Edit .env: set MYCELOS_PROXY_TOKEN to a random 32+ char string
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-mkdir -p data && python -c "import secrets; print(secrets.token_urlsafe(32))" > data/.master_key && chmod 600 data/.master_key
+python -c "import secrets; print('MYCELOS_PROXY_TOKEN=' + secrets.token_urlsafe(32))" >> .env
+# Open .env and remove the empty MYCELOS_PROXY_TOKEN= line above it
+
+# 2. Create the data dir with a master key and an empty DB file
+mkdir -p data
+python -c "import secrets; print(secrets.token_urlsafe(32))" > data/.master_key
+chmod 600 data/.master_key
 touch data/mycelos.db
+
+# 3. Launch the stack
 docker compose up -d
 ```
 
@@ -139,9 +147,9 @@ Your data stays untouched — only the container images are replaced.
 
 Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
 
-### With pip (single-process mode)
+### With pip (single-process mode — development only)
 
-For development or single-host use without Docker:
+> ⚠️ **This mode does not give you the v0.3 isolation model.** The master key lives on disk under `~/.mycelos/` and is loaded into the same process that serves the web UI. Use it for contributing to Mycelos or local experiments; use the Docker install for anything else.
 
 ```bash
 pip install mycelos
@@ -341,7 +349,7 @@ mycelos init
 ### Testing
 
 ```bash
-pytest -v                         # Full test suite (2000+ tests)
+pytest -v                         # Full test suite (2300+ tests)
 pytest tests/security/ -v         # Security invariant tests (must never break)
 pytest tests/test_config.py -v    # One module
 pytest --tb=short                 # Short tracebacks

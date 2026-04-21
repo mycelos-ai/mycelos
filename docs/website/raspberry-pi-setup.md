@@ -10,96 +10,82 @@ Mycelos runs beautifully on a Raspberry Pi — your own private AI assistant on 
 
 ## Requirements
 
-- Raspberry Pi 4 or 5 (4GB+ RAM recommended)
-- Python 3.12+
-- Node.js 18+ (for MCP connectors)
-- Ollama (optional, for local LLM — see [Ollama Guide](/docs/ollama-setup))
+- Raspberry Pi 4 or 5 (4GB+ RAM recommended, 8GB on the Pi 5 if you run anything besides Mycelos)
+- Raspberry Pi OS (64-bit)
+- **Docker + Compose v2** — see the [official install guide](https://docs.docker.com/engine/install/debian/)
+- Ollama on another machine (optional, for local LLM — see [Ollama Guide](/docs/ollama-setup))
+
+Nothing else needs to be on the Pi. Python, Node, and every runtime dependency ship inside the container image.
 
 ## Installation
 
 ```bash
-# Install Python 3.12+ (if not already available)
-sudo apt update
-sudo apt install python3.12 python3.12-pip nodejs npm
-
-# Install Mycelos
-pip install mycelos
-
-# Initialize
-export MYCELOS_MASTER_KEY=$(openssl rand -hex 32)
-mycelos init
+curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-## Network Access
+That's the whole install. It creates `./data/`, generates the master key + proxy token, pulls the Mycelos image, and brings up the gateway + proxy containers. Expect 1-2 minutes on a Pi 5 (image pull dominates).
 
-By default, Mycelos only listens on localhost. To access it from other devices:
+## Network access
+
+By default the gateway binds to `127.0.0.1` inside the Pi, which means no other device on your network can reach it yet. To open it up to your home network:
 
 ```bash
-# Listen on all interfaces (accessible from your home network)
-mycelos serve --host 0.0.0.0 --port 9100 --password your-secret-password
+cd ~/mycelos-new   # wherever install.sh placed docker-compose.yml
+nano .env
 ```
 
-Then open from any device on your network:
+Add or uncomment these two lines:
+
+```env
+MYCELOS_BIND=0.0.0.0
+MYCELOS_PASSWORD=a-long-random-password-you-pick-now
+```
+
+Then apply:
+
+```bash
+mycelos restart
+```
+
+Open from any device on your network:
+
 ```
 http://raspberrypi.local:9100
 ```
 
-Or use the IP address directly:
-```
-http://192.168.1.42:9100
-```
+…or the IP directly: `http://192.168.1.42:9100`. Your browser will ask for a username (leave blank) and the password you set.
 
-### Security Notes
+### Security notes
 
-- `--password` enables Basic Auth — recommended for network access
-- Your home router blocks external access (no internet exposure)
-- The password protects against other devices on your network (e.g., guests)
-- For extra security, bind to a specific IP: `--host 192.168.1.42`
+- **`MYCELOS_PASSWORD` is the only authentication in v0.3.** Make it long and random.
+- **LAN-only is the safe scope.** Your home router already blocks external access.
+- **Do not port-forward** the gateway to the public internet in v0.3 — put it behind a TLS-terminating reverse proxy (Caddy, Tailscale serve, Cloudflare tunnel) if you need off-LAN access.
+- Passkey-based web auth ships in Phase 2.
 
-## Autostart on Boot
+## Autostart on boot
 
-Create a systemd service so Mycelos starts automatically:
+Docker handles this automatically. The `docker-compose.yml` sets `restart: unless-stopped`, so both containers come back on reboot. No systemd unit needed.
 
-```bash
-sudo nano /etc/systemd/system/mycelos.service
-```
-
-```ini
-[Unit]
-Description=Mycelos AI Assistant
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-Environment=MYCELOS_MASTER_KEY=your-master-key-here
-ExecStart=/usr/local/bin/mycelos serve --host 0.0.0.0 --port 9100 --password your-password
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+If Docker itself doesn't start at boot:
 
 ```bash
-sudo systemctl enable mycelos
-sudo systemctl start mycelos
+sudo systemctl enable docker
 ```
 
-## Using with Ollama (Local LLM)
+## Using with Ollama (local LLM)
 
 > **Note:** Running LLMs directly on a Raspberry Pi is possible but very slow.
-> For a better local LLM experience, run Ollama on a **Mac Mini** (Apple Silicon)
-> or another machine on your network, and point Mycelos to it:
-> `mycelos model add ollama --api-base http://mac-mini.local:11434`
+> For a usable local LLM experience, run Ollama on a **Mac Mini** (Apple Silicon)
+> or another GPU-capable machine on your network, and point Mycelos to it via the
+> web UI's provider setup.
 
-For a basic offline setup on the Pi:
+For a basic offline setup on the Pi itself:
 
 1. Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
 2. Pull a small model: `ollama pull gemma2:2b`
-3. Configure Mycelos to use Ollama (see [Ollama Guide](/docs/ollama-setup))
+3. Configure Mycelos to use it — see the [Ollama Guide](/docs/ollama-setup).
 
-### Recommended Models
+### Recommended models
 
 | Device | RAM | Model | Size | Speed |
 |--------|-----|-------|------|-------|
@@ -108,7 +94,7 @@ For a basic offline setup on the Pi:
 | **Mac Mini M1+** | **8GB+** | `gemma3:4b` | 3.3GB | **Fast** |
 | **Mac Mini M1+** | **16GB+** | `llama3:latest` | 4.7GB | **Fast** |
 
-**Recommended setup:** Run Mycelos on the Raspberry Pi (low power, always on) and Ollama on a Mac Mini on the same network. Best of both worlds.
+**Recommended setup:** run Mycelos on the Raspberry Pi (low power, always on) and Ollama on a Mac Mini on the same network.
 
 ## Troubleshooting
 
@@ -117,13 +103,14 @@ If something isn't working, use the built-in diagnostic tool:
 ```bash
 mycelos doctor              # Quick health check
 mycelos doctor --why        # LLM-powered diagnosis (interactive)
+mycelos logs -f             # Follow gateway + proxy logs
 ```
 
 The doctor analyzes your system state, audit logs, and configuration to find root causes.
 
 ## Tips
 
-- Use Telegram to chat with Mycelos from your phone (no browser needed)
-- Set up Mycelos as a `.local` mDNS service for easy discovery
-- Use a USB SSD instead of the SD card for better database performance
-- The Web UI works great on mobile browsers
+- Use **Telegram** to chat with Mycelos from your phone (no browser needed — see [connectors](/docs/connectors)).
+- Register the Pi with Bonjour/mDNS so `raspberrypi.local` resolves on iOS and macOS.
+- Put the data volume on a USB SSD instead of the SD card for better database performance: bind-mount your SSD path with `MYCELOS_DATA_DIR=/mnt/ssd/mycelos` in `.env`.
+- The web UI works well on mobile browsers — Mycelos is PWA-friendly.
