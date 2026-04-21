@@ -304,6 +304,61 @@ def check_organizer(app: "App") -> dict[str, Any]:
     }
 
 
+def check_update_available(app: "App") -> dict[str, Any]:
+    """Report whether a newer Mycelos release was seen by the daily
+    ModelUpdaterHandler. Reads the cached state — no network calls here,
+    so the doctor stays fast and works offline.
+    """
+    try:
+        cached = app.memory.get("default", "system", "system.update.latest")
+    except Exception as e:
+        return {
+            "category": "update",
+            "status": "unknown",
+            "details": f"could not read update cache: {e}",
+        }
+
+    if not cached:
+        return {
+            "category": "update",
+            "status": "ok",
+            "details": "no update check has run yet",
+        }
+
+    # memory.get deserializes JSON transparently; guard both shapes.
+    if isinstance(cached, str):
+        try:
+            import json as _json
+            cached = _json.loads(cached)
+        except ValueError:
+            return {
+                "category": "update",
+                "status": "unknown",
+                "details": "cached update state is malformed",
+            }
+
+    current = cached.get("current_version") or "?"
+    latest = cached.get("latest_version") or "?"
+    url = cached.get("release_url") or ""
+
+    if not cached.get("update_available"):
+        return {
+            "category": "update",
+            "status": "ok",
+            "details": f"up to date ({current})",
+        }
+
+    hint = " — run 'mycelos update' to pull the new image."
+    return {
+        "category": "update",
+        "status": "warning",
+        "details": f"new version available: {current} → {latest}{hint}",
+        "current_version": current,
+        "latest_version": latest,
+        "release_url": url,
+    }
+
+
 def run_health_checks(
     app: "App", gateway_url: str | None = "http://localhost:9100"
 ) -> list[dict[str, Any]]:
@@ -325,5 +380,6 @@ def run_health_checks(
         check_reminders(app),
         check_reminder_scheduler(app),
         check_schedules(app),
+        check_update_available(app),
     ])
     return results

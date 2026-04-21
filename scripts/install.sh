@@ -125,7 +125,43 @@ install_cli_shortcut() {
 #!/usr/bin/env bash
 # Mycelos CLI shortcut — installed by scripts/install.sh
 # Targets the stack at: $compose_path
-exec docker compose -f "$compose_path" exec gateway mycelos "\$@"
+#
+# Most subcommands are forwarded to the in-container CLI. A handful
+# of "stack-level" actions must run on the HOST (docker itself cannot
+# pull or restart its own running container), so they short-circuit
+# the forward and run here directly.
+set -e
+
+MYCELOS_COMPOSE="$compose_path"
+
+case "\$1" in
+    update)
+        shift
+        cd "\$(dirname "\$MYCELOS_COMPOSE")"
+        docker compose -f "\$MYCELOS_COMPOSE" pull
+        exec docker compose -f "\$MYCELOS_COMPOSE" up -d "\$@"
+        ;;
+    restart)
+        shift
+        exec docker compose -f "\$MYCELOS_COMPOSE" restart "\$@"
+        ;;
+    logs)
+        shift
+        exec docker compose -f "\$MYCELOS_COMPOSE" logs "\$@"
+        ;;
+    shell)
+        exec docker compose -f "\$MYCELOS_COMPOSE" exec gateway bash
+        ;;
+    stop)
+        # Docker-level stop overrides the old in-container 'mycelos stop'
+        # which was a single-container-era command; in the two-container
+        # world 'stop' means 'stop the stack'.
+        exec docker compose -f "\$MYCELOS_COMPOSE" stop
+        ;;
+    *)
+        exec docker compose -f "\$MYCELOS_COMPOSE" exec gateway mycelos "\$@"
+        ;;
+esac
 EOF
     chmod +x "$wrapper"
 
@@ -197,6 +233,23 @@ PY
     python3 - <<'PY'
 import json, os
 tree = json.loads(os.environ["MYCELOS_TREE_JSON"])
+
+# Host-side shortcuts the wrapper intercepts before forwarding to the
+# container. Merged into the Click-derived tree so tab-completion sees
+# them as regular top-level commands. 'stop' already exists in Click
+# and is deliberately reused — the wrapper overrides its behavior.
+HOST_SHORTCUTS = {
+    "update":  {"subcommands": {}, "options": []},
+    "restart": {"subcommands": {"gateway": {"subcommands": {}, "options": []},
+                                "proxy":   {"subcommands": {}, "options": []}},
+                "options": []},
+    "logs":    {"subcommands": {"gateway": {"subcommands": {}, "options": []},
+                                "proxy":   {"subcommands": {}, "options": []}},
+                "options": ["--follow", "--tail"]},
+    "shell":   {"subcommands": {}, "options": []},
+}
+for name, node in HOST_SHORTCUTS.items():
+    tree["subcommands"].setdefault(name, node)
 
 def cmds_at(path):
     node = tree

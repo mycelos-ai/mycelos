@@ -113,11 +113,12 @@ def _run_check(app, category: str, fix: bool) -> None:
         "reminders": checks.check_reminders,
         "schedules": checks.check_schedules,
         "organizer": checks.check_organizer,
+        "update": checks.check_update_available,
     }.get(category)
 
     if not check_fn:
         console.print(f"  [red]Unknown category: {category}[/red]")
-        console.print(f"  Available: storage, sqlite_vec, credentials, telegram, reminders, schedules, organizer")
+        console.print(f"  Available: storage, sqlite_vec, credentials, telegram, reminders, schedules, organizer, update")
         return
 
     if category == "server":
