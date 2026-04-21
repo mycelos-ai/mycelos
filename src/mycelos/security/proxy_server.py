@@ -49,6 +49,12 @@ class HttpProxyRequest(BaseModel):
     timeout: int = 30
     inject_credential: str | None = None
     inject_as: str | None = None  # "bearer" | "header:{name}" | "url_path"
+    # For stateless verification flows (e.g. the Telegram setup wizard
+    # testing a token before it's stored), the caller can pass the
+    # secret inline. The proxy performs the same SSRF validation and
+    # URL/header substitution as inject_credential, but without a
+    # credential-store lookup. Never logs the value.
+    inline_credential: str | None = None
 
 
 class HttpProxyResponse(BaseModel):
@@ -354,6 +360,9 @@ def create_proxy_app() -> FastAPI:
         # only touches the path/query.
         outbound_url = req.url
 
+        # Resolve the secret value to inject. Either lookup by service name
+        # via the credential store, or take it inline from the request.
+        api_key: str | None = None
         if req.inject_credential:
             credential_proxy = _get_credential_proxy()
             if credential_proxy:
@@ -361,26 +370,28 @@ def create_proxy_app() -> FastAPI:
                     cred = credential_proxy.get_credential(req.inject_credential, user_id=user_id)
                     if cred and cred.get("api_key"):
                         api_key = cred["api_key"]
-                        inject_as = req.inject_as or "bearer"
-                        if inject_as == "bearer":
-                            outbound_headers["Authorization"] = f"Bearer {api_key}"
-                        elif inject_as.startswith("header:"):
-                            header_name = inject_as[len("header:"):]
-                            outbound_headers[header_name] = api_key
-                        elif inject_as == "url_path":
-                            # Substitute the literal '{credential}' placeholder
-                            # in the URL path/query with the raw token. We do
-                            # NOT url-encode: Telegram bot tokens are already
-                            # URL-safe (digits:base64url) and the provider
-                            # expects them verbatim. Credentials that could
-                            # contain URL-reserved chars would need a
-                            # different injection path.
-                            outbound_url = outbound_url.replace("{credential}", api_key)
                 except Exception:
                     return JSONResponse(
                         {"error": f"Credential injection failed for '{req.inject_credential}' — denied (fail-closed)"},
                         status_code=502,
                     )
+        elif req.inline_credential:
+            api_key = req.inline_credential
+
+        if api_key:
+            inject_as = req.inject_as or "bearer"
+            if inject_as == "bearer":
+                outbound_headers["Authorization"] = f"Bearer {api_key}"
+            elif inject_as.startswith("header:"):
+                header_name = inject_as[len("header:"):]
+                outbound_headers[header_name] = api_key
+            elif inject_as == "url_path":
+                # Substitute '{credential}' in the URL path/query with the
+                # raw token. No url-encode: Telegram bot tokens are
+                # URL-safe (digits:base64url) and the provider expects
+                # them verbatim. Credentials with URL-reserved chars
+                # would need a different injection path.
+                outbound_url = outbound_url.replace("{credential}", api_key)
 
         # SSRF validation on the resolved URL
         try:

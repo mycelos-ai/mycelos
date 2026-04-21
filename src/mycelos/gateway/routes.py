@@ -2320,8 +2320,10 @@ def setup_routes(api: FastAPI) -> None:
 
         Validates the token via getMe, then tries getUpdates to find
         the user's chat ID. Handles conflict with running long-polling.
+        Routed through the SecurityProxy in two-container mode — the
+        gateway never opens a direct socket to api.telegram.org.
         """
-        import httpx
+        from mycelos.channels.telegram import call_telegram_api_with_token
         mycelos = api.state.mycelos
         body = await request.json()
         token = (body.get("token") or "").strip()
@@ -2330,67 +2332,60 @@ def setup_routes(api: FastAPI) -> None:
 
         mycelos.audit.log("telegram.setup.check_started", user_id="default", details={})
 
-        base = f"https://api.telegram.org/bot{token}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Step 1: Validate token via getMe
-            try:
-                r = await client.get(f"{base}/getMe")
-                me = r.json()
-            except Exception as e:
-                mycelos.audit.log(
-                    "telegram.setup.check_failed",
-                    user_id="default",
-                    details={"stage": "getMe", "error_type": type(e).__name__},
-                )
-                return {"error": f"Cannot reach Telegram: {_scrub_token(str(e), token)}"}
+        # Step 1: Validate token via getMe
+        me = call_telegram_api_with_token(
+            mycelos, token, "getMe", http_method="GET", timeout=10,
+        )
+        if not me.get("ok"):
+            desc = me.get("description", "Invalid bot token")
+            mycelos.audit.log(
+                "telegram.setup.check_failed",
+                user_id="default",
+                details={"stage": "getMe"},
+            )
+            return {"error": _scrub_token(desc, token)}
 
-            if not me.get("ok"):
-                return {"error": _scrub_token(me.get("description", "Invalid bot token"), token)}
+        bot_name = me.get("result", {}).get("first_name", "Bot")
+        bot_username = me.get("result", {}).get("username", "")
 
-            bot_name = me.get("result", {}).get("first_name", "Bot")
-            bot_username = me.get("result", {}).get("username", "")
+        # Step 2: Try getUpdates to find chat ID
+        chat_id = None
+        updates_data = call_telegram_api_with_token(
+            mycelos, token, "getUpdates",
+            payload={"limit": 100, "timeout": 1},
+            http_method="GET", timeout=10,
+        )
 
-            # Step 2: Try getUpdates to find chat ID
-            chat_id = None
-            updates_data = {"result": []}
-
-            try:
-                r = await client.get(f"{base}/getUpdates", params={"limit": 100, "timeout": 1})
-                updates_data = r.json()
-            except Exception:
-                pass  # getUpdates may fail due to conflict — that's OK
-
-            if not updates_data.get("ok") and "Conflict" in updates_data.get("description", ""):
-                # Long-polling is running — stop temporarily and retry
-                tg_channel = getattr(api.state, "_telegram_channel", None)
-                if tg_channel and hasattr(tg_channel, "stop"):
-                    try:
-                        await tg_channel.stop()
-                    except Exception:
-                        pass
-                import asyncio
-                await asyncio.sleep(1)
+        if not updates_data.get("ok") and "Conflict" in (updates_data.get("description") or ""):
+            # Long-polling is running — stop temporarily and retry
+            tg_channel = getattr(api.state, "_telegram_channel", None)
+            if tg_channel and hasattr(tg_channel, "stop"):
                 try:
-                    r = await client.get(f"{base}/getUpdates", params={"limit": 100, "timeout": 2})
-                    updates_data = r.json()
+                    await tg_channel.stop()
                 except Exception:
                     pass
-                # Restart channel
-                if tg_channel and hasattr(tg_channel, "start"):
-                    try:
-                        await tg_channel.start()
-                    except Exception:
-                        pass
+            import asyncio
+            await asyncio.sleep(1)
+            updates_data = call_telegram_api_with_token(
+                mycelos, token, "getUpdates",
+                payload={"limit": 100, "timeout": 2},
+                http_method="GET", timeout=10,
+            )
+            if tg_channel and hasattr(tg_channel, "start"):
+                try:
+                    await tg_channel.start()
+                except Exception:
+                    pass
 
-            # Find any chat ID from updates
-            results = updates_data.get("result", []) if updates_data.get("ok") else []
-            for update in reversed(results):
-                msg = update.get("message") or update.get("my_chat_member", {}).get("chat")
-                if msg and isinstance(msg, dict):
-                    chat = msg.get("chat", msg)
-                    if isinstance(chat, dict) and chat.get("id"):
-                        chat_id = str(chat["id"])
-                        break
+        # Find any chat ID from updates
+        results = updates_data.get("result", []) if updates_data.get("ok") else []
+        for update in reversed(results):
+            msg = update.get("message") or update.get("my_chat_member", {}).get("chat")
+            if msg and isinstance(msg, dict):
+                chat = msg.get("chat", msg)
+                if isinstance(chat, dict) and chat.get("id"):
+                    chat_id = str(chat["id"])
+                    break
 
         mycelos.audit.log(
             "telegram.setup.check_succeeded",
@@ -2407,8 +2402,12 @@ def setup_routes(api: FastAPI) -> None:
 
     @api.post("/api/telegram/verify")
     async def telegram_verify(request: Request) -> dict[str, Any]:
-        """Send a test message to verify the chat ID works."""
-        import httpx
+        """Send a test message to verify the chat ID works.
+
+        Routed through the SecurityProxy in two-container mode so the
+        gateway never opens a direct socket to api.telegram.org.
+        """
+        from mycelos.channels.telegram import call_telegram_api_with_token
         mycelos = api.state.mycelos
         body = await request.json()
         token = (body.get("token") or "").strip()
@@ -2416,26 +2415,22 @@ def setup_routes(api: FastAPI) -> None:
         if not token or not chat_id:
             return JSONResponse({"error": "token and chat_id required"}, status_code=400)
 
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                r = await client.post(url, json={
-                    "chat_id": chat_id,
-                    "text": "Mycelos connected! This bot is ready to use.",
-                })
-                data = r.json()
-            except Exception as e:
-                mycelos.audit.log(
-                    "telegram.setup.verify_failed",
-                    user_id="default",
-                    details={"error_type": type(e).__name__},
-                )
-                return {"error": f"Cannot reach Telegram: {_scrub_token(str(e), token)}"}
+        data = call_telegram_api_with_token(
+            mycelos, token, "sendMessage",
+            payload={
+                "chat_id": chat_id,
+                "text": "Mycelos connected! This bot is ready to use.",
+            },
+            timeout=10,
+        )
 
         if not data.get("ok"):
             desc = data.get("description", "Unknown error")
             if "chat not found" in desc.lower() or "CHAT_NOT_FOUND" in desc:
                 return {"error": "Chat ID not found. Make sure you sent /start to the bot first."}
+            mycelos.audit.log(
+                "telegram.setup.verify_failed", user_id="default", details={},
+            )
             return {"error": _scrub_token(desc, token)}
 
         mycelos.audit.log("telegram.setup.verify_succeeded", user_id="default", details={})

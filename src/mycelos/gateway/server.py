@@ -25,27 +25,49 @@ def _register_telegram_webhook(
 ) -> bool:
     """Register webhook URL with Telegram Bot API.
 
+    Routes through the SecurityProxy when present so the gateway never
+    opens a direct socket to api.telegram.org. Falls back to urllib in
+    single-container mode.
+
     Returns True if successful, False otherwise.
     """
-    import httpx
+    import json as _json
 
     payload: dict[str, str] = {"url": webhook_url}
     if webhook_secret:
         payload["secret_token"] = webhook_secret
 
+    url = f"https://api.telegram.org/bot{{credential}}/setWebhook"
     try:
-        resp = httpx.post(
-            f"https://api.telegram.org/bot{bot_token}/setWebhook",
-            json=payload,
-            timeout=10,
-        )
-        data = resp.json()
+        from mycelos.connectors import http_tools as _http_tools
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            resp = pc.http_post(
+                url,
+                body=payload,
+                inline_credential=bot_token,
+                inject_as="url_path",
+                timeout=10,
+            )
+            body = resp.get("body", "")
+            data = _json.loads(body) if body else {}
+        else:
+            import urllib.request
+            resolved = url.replace("{credential}", bot_token)
+            req = urllib.request.Request(
+                resolved,
+                data=_json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = _json.loads(r.read())
+
         if data.get("ok"):
             logger.info("Telegram webhook registered: %s", webhook_url)
             return True
-        else:
-            logger.error("Telegram setWebhook failed: %s", data.get("description", "unknown"))
-            return False
+        logger.error("Telegram setWebhook failed: %s", data.get("description", "unknown"))
+        return False
     except Exception as e:
         logger.error("Telegram webhook registration failed: %s", e)
         return False

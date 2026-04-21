@@ -77,6 +77,7 @@ class SecurityProxyClient:
 
     def http_get(self, url: str, headers: dict | None = None,
                  credential: str | None = None, inject_as: str | None = None,
+                 inline_credential: str | None = None,
                  timeout: int = 30,
                  user_id: str = "default", agent_id: str | None = None) -> dict:
         """Proxy a GET request through the SecurityProxy.
@@ -88,6 +89,11 @@ class SecurityProxyClient:
         - ``inject_as="header:X-Name"`` — adds a custom header
         - ``inject_as="url_path"`` — replaces the literal ``{credential}``
           token in the URL (e.g. Telegram's ``https://api.telegram.org/bot{credential}/…``)
+
+        ``inline_credential`` is for stateless verification flows — Telegram
+        setup-wizard testing a token before it's stored. The proxy
+        substitutes it the same way, just without a credential-store
+        lookup. Caller supplies the secret; proxy never persists it.
         """
         extra_headers: dict = {"X-User-Id": user_id}
         if agent_id:
@@ -99,16 +105,19 @@ class SecurityProxyClient:
             "timeout": timeout,
             "inject_credential": credential,
             "inject_as": inject_as,
+            "inline_credential": inline_credential,
         }, headers=extra_headers)
         return resp.json()
 
     def http_post(self, url: str, body=None, headers: dict | None = None,
                   credential: str | None = None, inject_as: str | None = None,
+                  inline_credential: str | None = None,
                   timeout: int = 30,
                   user_id: str = "default", agent_id: str | None = None) -> dict:
         """Proxy a POST request through the SecurityProxy.
 
-        See :meth:`http_get` for ``credential`` / ``inject_as`` semantics.
+        See :meth:`http_get` for ``credential`` / ``inject_as`` /
+        ``inline_credential`` semantics.
         """
         extra_headers: dict = {"X-User-Id": user_id}
         if agent_id:
@@ -121,6 +130,7 @@ class SecurityProxyClient:
             "timeout": timeout,
             "inject_credential": credential,
             "inject_as": inject_as,
+            "inline_credential": inline_credential,
         }, headers=extra_headers)
         return resp.json()
 

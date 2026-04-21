@@ -50,10 +50,23 @@ def discover_ollama_models(
     """
     try:
         import httpx
+        import json as _json
+        from mycelos.connectors import http_tools as _http_tools
 
-        resp = httpx.get(f"{url}/api/tags", timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            # Two-container mode: Ollama sits on the user's host. The
+            # gateway cannot reach it directly (mycelos-internal network).
+            resp = pc.http_get(f"{url}/api/tags", timeout=5)
+            body = resp.get("body", "")
+            if resp.get("status", 0) >= 400 or not body:
+                logger.debug("Ollama not reachable at %s (proxy status=%s)", url, resp.get("status"))
+                return []
+            data = _json.loads(body)
+        else:
+            resp = httpx.get(f"{url}/api/tags", timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
 
         result: list[OllamaModel] = []
         for m in data.get("models", []):
@@ -130,7 +143,12 @@ def is_ollama_running(url: str = "http://localhost:11434") -> bool:
     """
     try:
         import httpx
+        from mycelos.connectors import http_tools as _http_tools
 
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            resp = pc.http_get(url, timeout=3)
+            return resp.get("status", 0) == 200
         resp = httpx.get(url, timeout=3)
         return resp.status_code == 200
     except Exception:

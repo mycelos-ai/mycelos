@@ -785,6 +785,80 @@ def _record_telegram_outcome(app: Any, result: dict) -> None:
         logger.debug("telegram telemetry write failed", exc_info=True)
 
 
+def call_telegram_api_with_token(
+    app: Any,
+    token: str,
+    method: str,
+    payload: dict | None = None,
+    *,
+    http_method: str = "POST",
+    timeout: int = 10,
+) -> dict:
+    """Call the Telegram API with an inline token (not yet stored).
+
+    Used by the setup wizard's getMe / getUpdates / sendMessage
+    validation flow, where the user has just typed a token and we
+    need to probe it before persisting. Never stores or logs the
+    value. In two-container mode the proxy still substitutes and
+    validates SSRF; the gateway never sees api.telegram.org's IP.
+    """
+    import json as _json
+    import urllib.request
+
+    url = f"https://api.telegram.org/bot{{credential}}/{method}"
+
+    from mycelos.connectors import http_tools as _http_tools
+    pc = getattr(_http_tools, "_proxy_client", None)
+    if pc is not None:
+        try:
+            if http_method.upper() == "GET":
+                resp = pc.http_get(
+                    url,
+                    inline_credential=token,
+                    inject_as="url_path",
+                    timeout=timeout,
+                )
+            else:
+                resp = pc.http_post(
+                    url,
+                    body=payload or {},
+                    inline_credential=token,
+                    inject_as="url_path",
+                    timeout=timeout,
+                )
+        except Exception as e:
+            return {"ok": False, "description": f"proxy transport error: {e}"}
+
+        body = resp.get("body", "")
+        if not body:
+            return {"ok": False, "description": f"proxy returned empty body (HTTP {resp.get('status', 0)})"}
+        try:
+            parsed = _json.loads(body)
+            if isinstance(parsed, dict):
+                return parsed
+        except ValueError:
+            pass
+        return {"ok": False, "description": f"non-JSON response (HTTP {resp.get('status', 0)})"}
+
+    # Single-container fallback: open the socket ourselves.
+    resolved = url.replace("{credential}", token)
+    try:
+        data = _json.dumps(payload or {}).encode() if http_method.upper() == "POST" else None
+        req = urllib.request.Request(
+            resolved,
+            data=data,
+            headers={"Content-Type": "application/json"} if data else {},
+            method=http_method.upper(),
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            parsed = _json.loads(r.read())
+            if isinstance(parsed, dict):
+                return parsed
+            return {"ok": False, "description": "non-dict response"}
+    except Exception as e:
+        return {"ok": False, "description": str(e)}
+
+
 def call_telegram_api(
     app: Any,
     method: str,

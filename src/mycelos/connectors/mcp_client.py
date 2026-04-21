@@ -56,7 +56,26 @@ class MycelosMCPClient:
         self._context_stack: list[Any] = []  # for cleanup
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
+        """Connect to the MCP server.
+
+        In two-container deployment (``MYCELOS_PROXY_URL`` set) this
+        method refuses to run: the subprocess must live in the proxy
+        container, spawned via ``proxy_client.mcp_start``. A direct
+        stdio_client / streamablehttp_client would spawn the MCP
+        subprocess inside the gateway container — which has no
+        internet route AND no credential plaintext — recreating
+        the exact hole that bd2fe42 closed for the startup path.
+        Fail early and loudly instead of failing late and silently.
+        """
+        import os
+        if os.environ.get("MYCELOS_PROXY_URL"):
+            raise RuntimeError(
+                "MycelosMCPClient.connect() is not allowed in two-container "
+                "mode (MYCELOS_PROXY_URL is set). Route MCP subprocess "
+                "management through SecurityProxyClient.mcp_start so the "
+                "subprocess and its credentials stay inside the proxy "
+                "container."
+            )
         if self._transport == "http":
             await self._connect_http()
         else:
