@@ -140,6 +140,66 @@ EOF
     esac
 }
 
+install_cli_completion() {
+    # Shell tab-completion for the wrapper. Click renders a static
+    # dispatcher script per shell; at tab-press time the dispatcher
+    # calls our wrapper with _MYCELOS_COMPLETE=<shell>_complete, which
+    # means one docker-exec per tab press (~300 ms on a Pi 5). Not free,
+    # but Just Works across all subcommands and stays in sync when we
+    # add new ones — no parser to maintain here.
+    [ "$DRY_RUN" = 1 ] && return 0
+
+    local bin_dir="${HOME}/.local/bin"
+    local wrapper="${bin_dir}/mycelos"
+    [ -x "$wrapper" ] || return 0
+
+    local installed_any=0
+
+    # --- bash ---
+    # Prefer XDG-style bash-completion user location. It is picked up by
+    # bash-completion@2 automatically on zsh-less systems; on the Pi it
+    # is the canonical location.
+    local bash_target="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/mycelos"
+    if mkdir -p "$(dirname "$bash_target")" 2>/dev/null; then
+        if _MYCELOS_COMPLETE=bash_source "$wrapper" > "$bash_target" 2>/dev/null && [ -s "$bash_target" ]; then
+            installed_any=1
+        else
+            rm -f "$bash_target"
+        fi
+    fi
+
+    # --- zsh ---
+    # zsh picks up completions from any dir on \$fpath starting with _<name>.
+    # We write to ~/.local/share/zsh/site-functions and tell the user to
+    # add that to \$fpath if it's not already there.
+    local zsh_dir="${HOME}/.local/share/zsh/site-functions"
+    local zsh_target="${zsh_dir}/_mycelos"
+    if mkdir -p "$zsh_dir" 2>/dev/null; then
+        if _MYCELOS_COMPLETE=zsh_source "$wrapper" > "$zsh_target" 2>/dev/null && [ -s "$zsh_target" ]; then
+            installed_any=1
+        else
+            rm -f "$zsh_target"
+        fi
+    fi
+
+    # --- fish ---
+    local fish_target="${HOME}/.config/fish/completions/mycelos.fish"
+    if mkdir -p "$(dirname "$fish_target")" 2>/dev/null; then
+        if _MYCELOS_COMPLETE=fish_source "$wrapper" > "$fish_target" 2>/dev/null && [ -s "$fish_target" ]; then
+            installed_any=1
+        else
+            rm -f "$fish_target"
+        fi
+    fi
+
+    if [ "$installed_any" = "1" ]; then
+        log "⇥  Tab-completion installed (bash / zsh / fish where applicable)"
+        log "   zsh users: add '${zsh_dir}' to \$fpath in ~/.zshrc if it isn't there yet:"
+        log "     fpath=(${zsh_dir//$HOME/\$HOME} \$fpath); autoload -Uz compinit && compinit"
+        log "   Reopen your shell to activate."
+    fi
+}
+
 bring_up() {
     [ "$DRY_RUN" = 1 ] && { log "Dry run: skipping docker compose pull/up"; return; }
 
@@ -171,3 +231,4 @@ ensure_env
 ensure_compose
 install_cli_shortcut
 bring_up
+install_cli_completion
