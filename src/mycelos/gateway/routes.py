@@ -1687,7 +1687,8 @@ def setup_routes(api: FastAPI) -> None:
                 env_vars: dict[str, str] = {}
                 for cred_spec in recipe.credentials:
                     env_var = cred_spec["env_var"]
-                    env_vars[env_var] = f"credential:connector:{body.name}"
+                    # Credential key is the bare connector id (since b365963).
+                    env_vars[env_var] = f"credential:{body.name}"
                 tools = mcp_mgr.connect(
                     connector_id=body.name,
                     command=recipe.command,
