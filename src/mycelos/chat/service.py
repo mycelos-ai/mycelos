@@ -54,10 +54,11 @@ _WEB_UI_ONLY_TOOLS = {
     "show_credential_input",  # 143 tokens — renders secure credential input
 }
 
-# Connector-gated tools — only loaded when the corresponding connector is active.
-_CONNECTOR_GATED_TOOLS = {
-    "email": {"email_inbox", "email_search", "email_read", "email_send", "email_count"},
-}
+# Connector-gated tools — in-process tools that depend on a connector
+# being active. Currently empty: email migrated to MCP (served by
+# @n24q02m/better-email-mcp) and its tools are discovered automatically
+# via the MCP manager, not hard-coded here.
+_CONNECTOR_GATED_TOOLS: dict[str, set[str]] = {}
 
 
 def _get_chat_agent_tools(
@@ -94,7 +95,9 @@ def _get_chat_agent_tools(
         "note_update", "note_link",
         "note_done", "note_remind", "note_move",
         "file_analyze", "file_manage",
-        "email_inbox", "email_search", "email_read", "email_send", "email_count",
+        # Email tools removed — handled by @n24q02m/better-email-mcp
+        # (registered as an MCP connector). Agents reach them via
+        # connector_call, which is already in this allow list.
         "session_set", "session_list",
         "show_connector_setup", "show_credential_input",
     }
@@ -235,8 +238,8 @@ def _partition_tool_calls(tool_calls: list[dict]) -> list[list[dict]]:
     preserving order for write tools.
 
     Example:
-        [search_web, http_get, note_write, email_read, email_count]
-        → [[search_web, http_get], [note_write], [email_read, email_count]]
+        [search_web, http_get, note_write, note_read, note_search]
+        → [[search_web, http_get], [note_write], [note_read, note_search]]
     """
     from mycelos.tools.registry import ToolRegistry
 

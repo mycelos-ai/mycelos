@@ -213,7 +213,6 @@ class ToolRegistry:
 
         from mycelos.tools import agent as _agent
         from mycelos.tools import connector as _connector
-        from mycelos.tools import email as _email
         from mycelos.tools import filesystem as _filesystem
         from mycelos.tools import knowledge as _knowledge
         from mycelos.tools import memory as _memory
@@ -231,7 +230,8 @@ class ToolRegistry:
         _connector.register(cls)
         _system.register(cls)
         _agent.register(cls)
-        _email.register(cls)
+        # email_* in-process tools removed — replaced by the
+        # @n24q02m/better-email-mcp MCP server, registered as a recipe.
         _session.register(cls)
         _ui_widgets.register(cls)
 

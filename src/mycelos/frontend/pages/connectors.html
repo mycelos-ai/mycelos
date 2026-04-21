@@ -868,7 +868,7 @@
 
         // --- Services: built-in integrations (no MCP server, just credentials) ---
         services: [
-          { id: 'email', icon: '\uD83D\uDCE7', name: 'Email (IMAP/SMTP)', description: 'Read and send email \u2014 Gmail, Outlook, iCloud, Yahoo', credentials_needed: true, command: '' },
+          { id: 'email', icon: '\uD83D\uDCE7', name: 'Email', description: 'Gmail, Outlook, iCloud, Yahoo, Zoho, ProtonMail, custom IMAP \u2014 via @n24q02m/better-email-mcp', credentials_needed: true, command: 'npx -y @n24q02m/better-email-mcp' },
           { id: 'gmail', icon: '\uD83D\uDCE8', name: 'Gmail API', description: 'Full Gmail + Calendar + Drive via Google API', credentials_needed: true, command: '' },
         ],
 
@@ -1336,7 +1336,7 @@
             const res = await fetch('/api/chat', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-              body: JSON.stringify({ message: 'Test email connection — use email_inbox with limit 1', agent_id: 'mycelos' }),
+              body: JSON.stringify({ message: 'Test the email connection — call connector_call with connector_id=email, tool=messages, action=search, returnBody=false, limit=1.', agent_id: 'mycelos' }),
             });
             // Just check if the connector was stored successfully
             this.wizard.data.testDone = true;

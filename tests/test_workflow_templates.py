@@ -62,15 +62,20 @@ class TestTemplateYAMLs:
 
     def test_email_digest_is_read_only(self):
         data = yaml.safe_load((TEMPLATES_DIR / "email-digest.yaml").read_text())
-        assert "email_send" not in data.get("allowed_tools", [])
+        # Email now routes through the MCP connector, so a read-only
+        # template exposes connector_call but nothing that writes.
         assert "email.send" not in data.get("scope", [])
+        allowed = set(data.get("allowed_tools", []))
+        # connector_call is allowed (read surface); no explicit send tool.
+        assert "email_send" not in allowed
 
     def test_no_template_requires_nonexistent_tool(self):
         """All required tools should be valid tool names."""
         known_tools = {
             "note_list", "note_write", "note_search", "note_read", "note_update",
             "search_web", "search_news", "http_get",
-            "email_inbox", "email_search", "email_read", "email_send", "email_count",
+            "connector_call",  # MCP dispatch — used by email templates since the
+                               # @n24q02m/better-email-mcp migration (b365963+)
             "filesystem_read", "filesystem_write", "filesystem_list",
             "create_agent", "create_workflow", "handoff", "list_tools",
         }
@@ -119,7 +124,9 @@ class TestTemplateDiscovery:
         )
         assert email_digest is not None
         assert "email" in email_digest["requires"].get("connectors", [])
-        assert "email_inbox" in email_digest["requires"].get("tools", [])
+        # Templates now dispatch all email operations through
+        # connector_call against the MCP server.
+        assert "connector_call" in email_digest["requires"].get("tools", [])
 
 
 class TestPrerequisiteChecking:

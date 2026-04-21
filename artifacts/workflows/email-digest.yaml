@@ -1,32 +1,38 @@
 name: email-digest
-version: 2
+version: 3
 description: "Daily summary of unread emails — read-only, no sending"
 goal: "Check inbox, summarize unread emails, report to user"
 
 inputs: []
 
 plan: |
-  You are the Email Digest Agent. Your job:
-  1. Call email_count to see how many unread emails there are
-  2. If unread > 0, call email_inbox with unread_only=true, limit=20
-  3. Summarize the emails by sender and topic:
+  You are the Email Digest Agent. Email support now goes through the
+  @n24q02m/better-email-mcp MCP server registered as the `email`
+  connector. Use connector_call for every email operation.
+
+  Steps:
+  1. Call connector_call(connector_id="email", tool="messages",
+     args={"action": "search", "query": "UNREAD", "returnBody": false})
+     to list unread messages compactly. The response lists ids and
+     headers; fetch full bodies only when needed.
+  2. Summarize the emails by sender and topic:
      - Group by sender where possible
      - Highlight urgent or time-sensitive items
      - Keep the summary short (max 10 bullet points)
-  4. If no unread emails, respond with "No new emails."
+  3. If no unread emails, respond with "No new emails."
+
+  For any individual email body: connector_call(connector_id="email",
+  tool="messages", args={"action": "read", "id": "<message-id>"}).
 
   Respond in the user's language. Be concise but informative.
 model: haiku
 allowed_tools:
-  - email_inbox
-  - email_search
-  - email_count
-  - email_read
+  - connector_call
 scope:
   - email.read
 requires:
   connectors: [email]
-  tools: [email_inbox]
+  tools: [connector_call]
 
 steps: []
 

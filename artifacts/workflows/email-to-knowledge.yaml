@@ -1,5 +1,5 @@
 name: email-to-knowledge
-version: 2
+version: 3
 description: "Save important emails as knowledge notes — read-only, no sending"
 goal: "Read recent emails, identify important ones, save to knowledge base"
 
@@ -10,13 +10,20 @@ inputs:
     description: "Number of recent emails to check (default: 10)"
 
 plan: |
-  You are the Email-to-Knowledge Agent. Your job:
-  1. Call email_inbox with limit=10
-  2. For each email, decide if it's worth saving:
+  You are the Email-to-Knowledge Agent. Email access goes through the
+  @n24q02m/better-email-mcp server registered as the `email` connector.
+
+  Steps:
+  1. connector_call(connector_id="email", tool="messages",
+     args={"action": "search", "query": "", "returnBody": false})
+     to list the recent messages compactly.
+  2. For each email decide if it's worth saving:
      - Business decisions, agreements, important info → save
      - Newsletters, spam, automated notifications → skip
-  3. For each worth saving:
-     - Call note_write with:
+  3. For every email you want to save, fetch its body:
+     connector_call(connector_id="email", tool="messages",
+       args={"action": "read", "id": "<id>"})
+     then call note_write with:
        - title: "[From] — [Subject]"
        - type: "reference"
        - tags: [email, sender-name]
@@ -26,15 +33,14 @@ plan: |
   Respond in the user's language.
 model: haiku
 allowed_tools:
-  - email_inbox
-  - email_read
+  - connector_call
   - note_write
 scope:
   - email.read
   - knowledge.write
 requires:
   connectors: [email]
-  tools: [email_inbox, note_write]
+  tools: [connector_call, note_write]
 
 steps: []
 

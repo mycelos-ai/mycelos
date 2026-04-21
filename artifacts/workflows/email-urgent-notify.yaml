@@ -1,5 +1,5 @@
 name: email-urgent-notify
-version: 2
+version: 3
 description: "Forward urgent emails to Telegram — read-only, no sending"
 goal: "Check for urgent unread emails and notify via Telegram"
 
@@ -10,27 +10,35 @@ inputs:
     description: "Hours after which an unread email is considered possibly missed (default: 4)"
 
 plan: |
-  You are the Urgent Email Alert Agent. Your job:
-  1. Call email_inbox with unread_only=true, limit=20
-  2. For each email, assess urgency:
+  You are the Urgent Email Alert Agent. Email operations run through
+  the @n24q02m/better-email-mcp server exposed via the `email`
+  connector. Use connector_call for every email interaction.
+
+  Steps:
+  1. connector_call(connector_id="email", tool="messages",
+     args={"action": "search", "query": "UNREAD", "returnBody": false})
+     to list unread messages compactly.
+  2. For each message, assess urgency using subject + sender:
      - From a known contact/boss → urgent
      - Subject contains: urgent, ASAP, deadline, important → urgent
      - Older than 4 hours and unread → possibly missed
-  3. If urgent emails found, summarize briefly:
+  3. For anything borderline, fetch the body with:
+     connector_call(connector_id="email", tool="messages",
+       args={"action": "read", "id": "<id>"})
+  4. If urgent emails found, summarize briefly:
      "2 urgent emails: [sender] — [subject]"
-  4. If none: respond with nothing (empty response)
+  5. If none: respond with nothing (empty response)
 
   Be concise. Only report truly urgent items.
   Respond in the user's language.
 model: haiku
 allowed_tools:
-  - email_inbox
-  - email_read
+  - connector_call
 scope:
   - email.read
 requires:
   connectors: [email]
-  tools: [email_inbox]
+  tools: [connector_call]
 
 steps: []
 

@@ -128,18 +128,28 @@ RECIPES: dict[str, MCPRecipe] = {
     ),
     "email": MCPRecipe(
         id="email",
-        name="Email (IMAP/SMTP)",
-        description="Read and send email — works with Gmail, Outlook, iCloud, Yahoo, and any IMAP server",
-        command="",
-        transport="builtin",
+        name="Email (Gmail / Outlook / iCloud / IMAP)",
+        description=(
+            "Read, search, send, reply, forward, and organise email across Gmail, "
+            "Yahoo, iCloud, Outlook, Zoho, ProtonMail, and any custom IMAP host. "
+            "Runs as an MCP server inside the SecurityProxy container — credentials "
+            "never leave the proxy."
+        ),
+        command="npx -y @n24q02m/better-email-mcp",
+        transport="stdio",
         credentials=[{
-            "env_var": "EMAIL_CONFIG",
-            "name": "Email credentials (JSON)",
-            "help": "For Gmail: create app password at myaccount.google.com/apppasswords",
+            "env_var": "EMAIL_CREDENTIALS",
+            "name": "Email credentials (user@provider.com:app-password, comma-separated for multiple accounts)",
+            "help": (
+                "Format: user@gmail.com:app-password  "
+                "(comma-separated for multi-account, e.g. you@gmail.com:aaa,you@icloud.com:bbb). "
+                "Gmail/Yahoo/iCloud need an app password, not the login password. "
+                "Custom IMAP: user@example.com:password:imap.example.com"
+            ),
         }],
-        capabilities_preview=["email.read", "email.send", "email.search"],
+        capabilities_preview=["messages", "folders", "attachments", "send", "setup", "help"],
         category="communication",
-        requires_node=False,
+        requires_node=True,
     ),
     "gmail": MCPRecipe(
         id="gmail",
