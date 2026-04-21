@@ -212,8 +212,13 @@
                     <span x-show="ev.agent_id" class="text-[10px] text-[var(--on-surface-variant)]" x-text="'agent=' + ev.agent_id"></span>
                     <span x-show="ev.generation_id" class="text-[10px] text-[var(--on-surface-variant)]" x-text="'gen=' + ev.generation_id"></span>
                   </div>
-                  <div x-show="ev.details" class="text-[11px] text-[var(--on-surface-variant)] font-mono mt-0.5 truncate"
-                       x-text="formatDetails(ev.details)"></div>
+                  <div x-show="ev.details"
+                       class="text-[11px] text-[var(--on-surface-variant)] font-mono mt-0.5 cursor-pointer hover:text-[var(--on-surface)]"
+                       :class="!ev._expanded && 'truncate'"
+                       @click="ev._expanded = !ev._expanded"
+                       :title="ev._expanded ? 'Click to collapse' : 'Click to expand'"
+                       x-text="ev._expanded ? formatDetailsFull(ev.details) : formatDetails(ev.details)"
+                       :style="ev._expanded && 'white-space: pre-wrap; word-break: break-word;'"></div>
                 </div>
               </div>
             </template>
@@ -286,7 +291,7 @@
               limit: 200,
             });
             const data = await MycelosAPI.get('/api/audit/activity?' + params);
-            this.activityEvents = data.events || [];
+            this.activityEvents = (data.events || []).map(ev => ({ ...ev, _expanded: false }));
             this.activityCounts = data.counts || this.activityCounts;
           } catch (e) {
             this.activityError = (e && e.message) || String(e);
@@ -323,6 +328,21 @@
           try {
             const s = JSON.stringify(details);
             return s.length > 120 ? s.slice(0, 120) + '…' : s;
+          } catch {
+            return String(details);
+          }
+        },
+
+        /**
+         * Full, expanded form — pretty-printed JSON when possible. Shown
+         * when the user clicks a details line to see what was actually
+         * logged. No length cap.
+         */
+        formatDetailsFull(details) {
+          if (details == null) return '';
+          if (typeof details === 'string') return details;
+          try {
+            return JSON.stringify(details, null, 2);
           } catch {
             return String(details);
           }
