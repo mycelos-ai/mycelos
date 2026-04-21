@@ -220,11 +220,28 @@ class MycelosMCPClient:
                         cred = self._credential_proxy.get_credential(service)
                         if cred and "api_key" in cred:
                             env[env_var] = cred["api_key"]
-                    except Exception:
+                            logger.info(
+                                "Credential '%s' loaded for MCP server '%s' (env_var=%s, key_len=%d)",
+                                service, self.connector_id, env_var, len(cred["api_key"]),
+                            )
+                        else:
+                            logger.warning(
+                                "Credential '%s' not found for MCP server '%s' "
+                                "(proxy returned %s)",
+                                service, self.connector_id,
+                                "None" if cred is None else "dict without api_key",
+                            )
+                    except Exception as e:
                         logger.warning(
-                            "Failed to load credential '%s' for MCP server '%s'",
-                            service, self.connector_id,
+                            "Failed to load credential '%s' for MCP server '%s': %s",
+                            service, self.connector_id, e,
                         )
+                else:
+                    logger.warning(
+                        "No credential_proxy available for MCP server '%s' — "
+                        "env_var '%s' will not be injected",
+                        self.connector_id, env_var,
+                    )
             else:
                 env[env_var] = source
 

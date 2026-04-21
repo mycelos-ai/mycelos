@@ -33,11 +33,15 @@ def github_api(
     import json as _json
     from mycelos.connectors import http_tools as _http_tools
 
-    # Get token from credential proxy
+    # Get token from credential proxy (bare id since b365963;
+    # legacy 'connector:github' as fallback)
     token = None
     if credential_proxy:
         try:
-            cred = credential_proxy.get_credential("connector:github")
+            cred = (
+                credential_proxy.get_credential("github")
+                or credential_proxy.get_credential("connector:github")
+            )
             if cred and cred.get("api_key"):
                 token = cred["api_key"]
         except Exception:

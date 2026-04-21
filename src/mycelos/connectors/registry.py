@@ -52,9 +52,14 @@ def register_builtin_tools(
         )
     )
 
-    # Brave Search: key injected via closure if credential proxy is available
+    # Brave Search: key injected via closure if credential proxy is available.
+    # Key namespace unified in b365963 — bare id; legacy prefixed key kept as
+    # fallback so old installs don't lose their config.
     if credential_proxy:
-        cred = credential_proxy.get_credential("connector:web-search-brave")
+        cred = (
+            credential_proxy.get_credential("web-search-brave")
+            or credential_proxy.get_credential("connector:web-search-brave")
+        )
         if cred and cred.get("api_key"):
             brave_key = cred["api_key"]
 
