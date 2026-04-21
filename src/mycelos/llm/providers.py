@@ -103,10 +103,15 @@ _GATEWAY_PREFIXES = (
 _REGION_PREFIXES = re.compile(r"^(eu|us|au|jp|apac|global|ca|cn)\.")
 
 # Model name patterns to skip (non-chat modes, special variants).
+# 'container' is an OpenAI Code-Interpreter sandbox billing line, not a
+# chat model — but litellm's cost map lists it without a mode, so the
+# provider filter lets it through. 'codex' is a tool-use specialist
+# not meant as a general chat default.
 _SKIP_PATTERNS = re.compile(
     r"(realtime|audio-preview|transcribe|tts|speech|image|embed|"
     r"moderation|search-preview|computer-use|deep-research|"
-    r"native-audio|rerank|completion|live-)"
+    r"native-audio|rerank|completion|live-|^container$|/container$|"
+    r"codex)"
 )
 
 # Tier sort order: opus first, sonnet second, haiku last.
