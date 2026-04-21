@@ -141,63 +141,182 @@ EOF
 }
 
 install_cli_completion() {
-    # Shell tab-completion for the wrapper. Click renders a static
-    # dispatcher script per shell; at tab-press time the dispatcher
-    # calls our wrapper with _MYCELOS_COMPLETE=<shell>_complete, which
-    # means one docker-exec per tab press (~300 ms on a Pi 5). Not free,
-    # but Just Works across all subcommands and stays in sync when we
-    # add new ones — no parser to maintain here.
+    # Static tab-completion for the wrapper. We introspect the Click
+    # command tree ONCE in the running gateway container, then write
+    # hand-rolled shell completions that need no docker-exec at tab
+    # press. Dynamic values (agent names, connector IDs, session UUIDs)
+    # are deliberately NOT completed — the command tree is what actually
+    # benefits from tab-completion; values users usually know already.
+    #
+    # Refresh cadence: a re-run of install.sh (which you do to update
+    # the Docker image anyway) picks up any new commands the new image
+    # ships.
     [ "$DRY_RUN" = 1 ] && return 0
 
     local bin_dir="${HOME}/.local/bin"
     local wrapper="${bin_dir}/mycelos"
     [ -x "$wrapper" ] || return 0
 
-    local installed_any=0
+    log "⇥  Extracting CLI command tree from the gateway container..."
+    local tree
+    tree="$(docker compose exec -T gateway python - <<'PY'
+import json
+from mycelos.cli.main import cli
 
-    # --- bash ---
-    # Prefer XDG-style bash-completion user location. It is picked up by
-    # bash-completion@2 automatically on zsh-less systems; on the Pi it
-    # is the canonical location.
-    local bash_target="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/mycelos"
-    if mkdir -p "$(dirname "$bash_target")" 2>/dev/null; then
-        if _MYCELOS_COMPLETE=bash_source "$wrapper" > "$bash_target" 2>/dev/null && [ -s "$bash_target" ]; then
-            installed_any=1
-        else
-            rm -f "$bash_target"
-        fi
+def walk(cmd):
+    node = {"subcommands": {}, "options": []}
+    for p in cmd.params:
+        for o in getattr(p, "opts", []) or []:
+            if o.startswith("--"):
+                node["options"].append(o)
+    if hasattr(cmd, "commands"):
+        for name, sub in cmd.commands.items():
+            node["subcommands"][name] = walk(sub)
+    return node
+
+print(json.dumps(walk(cli)))
+PY
+    )" 2>/dev/null
+    if [ -z "$tree" ]; then
+        log "   (failed to extract — skipping completion install)"
+        return 0
     fi
 
-    # --- zsh ---
-    # zsh picks up completions from any dir on \$fpath starting with _<name>.
-    # We write to ~/.local/share/zsh/site-functions and tell the user to
-    # add that to \$fpath if it's not already there.
+    # Render completion scripts from the JSON tree via an inlined
+    # Python script on the host (no network, no extra deps).
+    local bash_target="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/mycelos"
     local zsh_dir="${HOME}/.local/share/zsh/site-functions"
     local zsh_target="${zsh_dir}/_mycelos"
-    if mkdir -p "$zsh_dir" 2>/dev/null; then
-        if _MYCELOS_COMPLETE=zsh_source "$wrapper" > "$zsh_target" 2>/dev/null && [ -s "$zsh_target" ]; then
-            installed_any=1
-        else
-            rm -f "$zsh_target"
-        fi
-    fi
-
-    # --- fish ---
     local fish_target="${HOME}/.config/fish/completions/mycelos.fish"
-    if mkdir -p "$(dirname "$fish_target")" 2>/dev/null; then
-        if _MYCELOS_COMPLETE=fish_source "$wrapper" > "$fish_target" 2>/dev/null && [ -s "$fish_target" ]; then
-            installed_any=1
-        else
-            rm -f "$fish_target"
-        fi
+    mkdir -p "$(dirname "$bash_target")" "$zsh_dir" "$(dirname "$fish_target")" 2>/dev/null
+
+    MYCELOS_TREE_JSON="$tree" \
+    MYCELOS_BASH_OUT="$bash_target" \
+    MYCELOS_ZSH_OUT="$zsh_target" \
+    MYCELOS_FISH_OUT="$fish_target" \
+    python3 - <<'PY'
+import json, os
+tree = json.loads(os.environ["MYCELOS_TREE_JSON"])
+
+def cmds_at(path):
+    node = tree
+    for p in path:
+        node = node["subcommands"].get(p)
+        if node is None:
+            return [], []
+    return sorted(node["subcommands"].keys()), sorted(set(node["options"]))
+
+# Collect all paths depth-first for switch statements
+def walk(node, path=()):
+    yield path, node
+    for name, sub in node["subcommands"].items():
+        yield from walk(sub, path + (name,))
+
+# --- bash ---
+# Case on the joined subcommand path; each branch emits the valid tokens.
+bash_branches = []
+for path, node in walk(tree):
+    tokens = sorted(set(list(node["subcommands"].keys()) + list(node["options"])))
+    key = " ".join(path) if path else ""
+    bash_branches.append(f'        "{key}") words="{" ".join(tokens)}" ;;')
+
+bash_script = """# Mycelos CLI tab-completion (static — refreshed by scripts/install.sh)
+_mycelos_complete() {
+    local cur prev words cword
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+
+    # Build the subcommand path: every word after "mycelos" that does
+    # not start with a dash, stopping when we hit the current cursor.
+    local path=""
+    local i
+    for (( i=1; i<COMP_CWORD; i++ )); do
+        local w="${COMP_WORDS[i]}"
+        [[ "$w" == -* ]] && continue
+        [[ -z "$path" ]] && path="$w" || path="$path $w"
+    done
+
+    local words=""
+    case "$path" in
+""" + "\n".join(bash_branches) + """
+    esac
+
+    COMPREPLY=( $(compgen -W "$words" -- "$cur") )
+}
+complete -F _mycelos_complete mycelos
+"""
+with open(os.environ["MYCELOS_BASH_OUT"], "w") as f:
+    f.write(bash_script)
+
+# --- zsh ---
+# Same strategy, but use _arguments / compadd.
+zsh_branches = []
+for path, node in walk(tree):
+    tokens = sorted(set(list(node["subcommands"].keys()) + list(node["options"])))
+    key = " ".join(path) if path else ""
+    # Quote each token for zsh.
+    quoted = " ".join(f"'{t}'" for t in tokens)
+    zsh_branches.append(f'        "{key}") _values "token" {quoted} ;;')
+
+zsh_script = """#compdef mycelos
+# Mycelos CLI tab-completion (static — refreshed by scripts/install.sh)
+
+_mycelos_complete() {
+    local path=""
+    local i
+    for (( i=2; i<=CURRENT-1; i++ )); do
+        local w="${words[i]}"
+        [[ "$w" == -* ]] && continue
+        [[ -z "$path" ]] && path="$w" || path="$path $w"
+    done
+
+    case "$path" in
+""" + "\n".join(zsh_branches) + """
+    esac
+}
+_mycelos_complete "$@"
+"""
+with open(os.environ["MYCELOS_ZSH_OUT"], "w") as f:
+    f.write(zsh_script)
+
+# --- fish ---
+# fish uses per-command "complete -c" lines. Emit one line per
+# (parent-path, child-token) pair with a -n gating condition.
+def path_cond(path):
+    if not path:
+        return '__fish_use_subcommand'
+    # expects every earlier token in sequence
+    return " ; and ".join([f"__fish_seen_subcommand_from {p}" for p in path])
+
+fish_lines = ["# Mycelos CLI tab-completion (static — refreshed by scripts/install.sh)"]
+for path, node in walk(tree):
+    cond = path_cond(path)
+    for sub in sorted(node["subcommands"].keys()):
+        fish_lines.append(f"complete -c mycelos -n '{cond}' -f -a '{sub}'")
+    for opt in sorted(set(node["options"])):
+        long = opt.lstrip("-")
+        fish_lines.append(f"complete -c mycelos -n '{cond}' -l '{long}'")
+
+with open(os.environ["MYCELOS_FISH_OUT"], "w") as f:
+    f.write("\n".join(fish_lines) + "\n")
+
+print("ok")
+PY
+
+    if [ $? -ne 0 ]; then
+        log "   (rendering failed — skipping)"
+        return 0
     fi
 
-    if [ "$installed_any" = "1" ]; then
-        log "⇥  Tab-completion installed (bash / zsh / fish where applicable)"
-        log "   zsh users: add '${zsh_dir}' to \$fpath in ~/.zshrc if it isn't there yet:"
-        log "     fpath=(${zsh_dir//$HOME/\$HOME} \$fpath); autoload -Uz compinit && compinit"
-        log "   Reopen your shell to activate."
-    fi
+    log "⇥  Tab-completion installed (bash, zsh, fish) — zero runtime cost"
+    case ":$FPATH:" in
+        *":$zsh_dir:"*) ;;
+        *)
+            log "   zsh users: add to ~/.zshrc so zsh finds the completion file:"
+            log "     fpath=(${zsh_dir//$HOME/\$HOME} \$fpath); autoload -Uz compinit && compinit"
+            ;;
+    esac
+    log "   Reopen your shell to activate. Re-run install.sh to refresh after an update."
 }
 
 bring_up() {
