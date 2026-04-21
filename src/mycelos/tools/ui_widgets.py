@@ -22,7 +22,7 @@ CONNECTOR_SETUP_SCHEMA = {
             "bypassing the LLM. Use this when the user wants to add a connector (Docker, "
             "Playwright, Email, etc.). Available connectors: email, telegram, github, "
             "playwright, postgres, notion, docker, slack, sentry, linear, chrome-devtools, "
-            "puppeteer, brave-search, sqlite, git, google-drive, mcp-memory."
+            "puppeteer, brave-search, sqlite, git, google-drive."
         ),
         "parameters": {
             "type": "object",

@@ -898,9 +898,12 @@
             { id: 'linear', name: 'Linear', description: 'Manage Linear issues, projects, and teams', command: 'npx -y @anthropic-ai/mcp-linear', credentials_needed: true },
             { id: 'sentry', name: 'Sentry', description: 'Access Sentry issues and events for error tracking', command: 'npx -y @sentry/mcp-server-sentry', credentials_needed: true },
           ]},
-          { id: 'memory', icon: '\uD83E\uDDE0', label: 'Memory', connectors: [
-            { id: 'mcp-memory', name: 'Knowledge Graph', description: 'Persistent memory via knowledge graph \u2014 entities, relations, observations', command: 'npx -y @modelcontextprotocol/server-memory', credentials_needed: false },
-          ]},
+          // The @modelcontextprotocol/server-memory MCP was deliberately
+          // removed from the recipe list in v0.3 — its "Knowledge Graph"
+          // label overlapped confusingly with Mycelos's own memory +
+          // knowledge base subsystems. Users who explicitly want it can
+          // still register it manually:
+          //   /connector add mcp-memory npx -y @modelcontextprotocol/server-memory
         ],
 
         /**
