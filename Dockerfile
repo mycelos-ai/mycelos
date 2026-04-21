@@ -9,9 +9,13 @@
 
 FROM python:3.13-slim
 
-# Install Node.js (needed for MCP servers via npx) + gosu (for entrypoint user switch)
+# Install Node.js 24 via NodeSource (Debian Trixie's default is too old —
+# @n24q02m/better-email-mcp and its @modelcontextprotocol/mcp-core
+# dependency both require Node >= 24.15) + gosu (entrypoint user switch)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs npm curl gosu \
+    curl ca-certificates gnupg gosu \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

@@ -129,7 +129,7 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
             if recipe.transport == "stdio" and not recipe.command:
                 continue
             command = recipe.command
-            env_vars = {}
+            env_vars = dict(recipe.static_env)  # e.g. TRANSPORT_MODE=stdio
             for cred_spec in recipe.credentials:
                 env_var = cred_spec["env_var"]
                 env_vars[env_var] = f"credential:{cid}"

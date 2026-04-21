@@ -26,6 +26,11 @@ class MCPRecipe:
         # ["github.list_repos", "github.create_issue"] — approximate, real ones from discovery
     category: str = "tools"          # "tools", "search", "storage", "code"
     requires_node: bool = True       # Most MCP servers need npx
+    static_env: dict[str, str] = field(default_factory=dict)
+        # Non-secret env vars that always need to be set for the server
+        # to run (e.g. TRANSPORT_MODE=stdio for MCP servers that default
+        # to HTTP-relay when no env is set). Merged into the subprocess
+        # env alongside credential injection.
 
 
 # All available recipes
@@ -150,6 +155,11 @@ RECIPES: dict[str, MCPRecipe] = {
         capabilities_preview=["messages", "folders", "attachments", "send", "setup", "help"],
         category="communication",
         requires_node=True,
+        # The server defaults to a browser-based relay setup page when
+        # TRANSPORT_MODE is unset — that's the wrong shape for us.
+        # Pin it to stdio so it behaves as a normal MCP subprocess and
+        # reads EMAIL_CREDENTIALS from its env.
+        static_env={"TRANSPORT_MODE": "stdio"},
     ),
     "gmail": MCPRecipe(
         id="gmail",

@@ -60,7 +60,7 @@ class MCPConnectorManager:
         if recipe is None:
             raise ValueError(f"Unknown recipe: {recipe_id}")
 
-        env_vars = {}
+        env_vars = dict(recipe.static_env)  # non-secret env baked into the recipe
         for cred in recipe.credentials:
             env_vars[cred["env_var"]] = f"credential:{recipe_id}"
 

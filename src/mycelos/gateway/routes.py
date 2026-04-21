@@ -1685,7 +1685,7 @@ def setup_routes(api: FastAPI) -> None:
         # through proxy_client instead of spawning locally.
         if not is_builtin and recipe and recipe.command and recipe.transport == "stdio":
             try:
-                env_vars: dict[str, str] = {}
+                env_vars: dict[str, str] = dict(recipe.static_env)
                 for cred_spec in recipe.credentials:
                     env_var = cred_spec["env_var"]
                     env_vars[env_var] = f"credential:{body.name}"
