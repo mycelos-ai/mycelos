@@ -44,7 +44,7 @@ class KnowledgeIndexer:
         content: str = "",
         parent_path: str | None = None,
         reminder: bool = False,
-        remind_via: str = '["chat"]',
+        remind_via: str | None = None,
         source_file: str | None = None,
     ) -> int:
         """INSERT or UPDATE knowledge_notes row and sync FTS5 index.

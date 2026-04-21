@@ -86,6 +86,12 @@ For absolute-time reminders ("morgen 9 Uhr", "tomorrow 9am", "next Monday at 18:
 
 For date-based reminders: set due="2026-04-01" and reminder=true (checked daily at start-of-day).
 
+**Notification channels:** by default a reminder fires on every channel the user
+has configured (chat + Telegram if active + email if active). DO NOT pass
+`remind_via` unless the user explicitly says where to be notified ("nur per
+Telegram", "chat only", "via email"). Leaving `remind_via` unset is the right
+choice in 95% of cases — it means "notify me wherever you can reach me".
+
 NEVER say you cannot set timers or reminders — you CAN. Just use remind_in or remind_at in note_write.
 ONE tool call is enough — no need for a second note_remind call.
 

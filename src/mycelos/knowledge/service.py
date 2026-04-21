@@ -278,18 +278,14 @@ class KnowledgeBase:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(render_note(note), encoding="utf-8")
 
-        # Auto-populate remind_via based on active channels
-        remind_via = ["chat"]
-        if reminder:
-            try:
-                channels = self._app.storage.fetchall(
-                    "SELECT id FROM channels WHERE status = 'active'"
-                )
-                for ch in channels:
-                    if ch["id"] == "telegram" and "telegram" not in remind_via:
-                        remind_via.append("telegram")
-            except Exception:
-                pass
+        # remind_via is resolved at fire time by ReminderService, not here.
+        # Storing NULL means "notify every active channel"; the ReminderService
+        # falls back to its _default_channels() which re-reads the channels
+        # table. That way a user who adds Telegram AFTER the reminder was
+        # created still gets the notification on Telegram. Callers who want
+        # to pin a specific channel set should write remind_via on the note
+        # explicitly via the knowledge indexer.
+        remind_via_json = None
 
         # Index note
         content_hash = hashlib.md5(content.encode()).hexdigest()
@@ -305,7 +301,7 @@ class KnowledgeBase:
             content,
             parent_path=topic,
             reminder=reminder,
-            remind_via=json.dumps(remind_via),
+            remind_via=remind_via_json,
         )
 
         # Store links

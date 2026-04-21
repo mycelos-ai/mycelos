@@ -52,7 +52,14 @@ class TestSchema:
         row = db.fetchone("SELECT remind_via FROM knowledge_notes WHERE path = ?", ("tasks/test",))
         assert json.loads(row["remind_via"]) == ["chat", "telegram"]
 
-    def test_remind_via_defaults_to_chat(self, tmp_path):
+    def test_remind_via_defaults_to_null(self, tmp_path):
+        """New schema stores NULL when the caller doesn't specify channels.
+
+        The ReminderService resolves NULL at fire time to 'every active
+        channel' (chat always, plus telegram/email if they're configured).
+        This lets a user who adds Telegram AFTER setting a reminder still
+        get it on Telegram.
+        """
         from mycelos.storage.database import SQLiteStorage
         db = SQLiteStorage(tmp_path / "test.db")
         db.execute(
@@ -60,40 +67,70 @@ class TestSchema:
             ("tasks/test2", "Test2"),
         )
         row = db.fetchone("SELECT remind_via FROM knowledge_notes WHERE path = ?", ("tasks/test2",))
-        assert json.loads(row["remind_via"]) == ["chat"]
+        assert row["remind_via"] is None
 
 
 # ---------------------------------------------------------------------------
 # Auto-populate remind_via
 # ---------------------------------------------------------------------------
 
-class TestAutoPopulate:
-    def test_reminder_gets_chat_by_default(self, app, kb):
-        """Task with reminder=True gets remind_via=["chat"] by default."""
+class TestRemindViaSemantics:
+    """Notes are stored with remind_via=NULL by default; the ReminderService
+    resolves that to every currently-active channel at fire time."""
+
+    def test_write_stores_null_by_default(self, app, kb):
+        """kb.write() does not hardcode channels — NULL means 'decide at fire time'."""
         path = kb.write("Buy milk", "2L", type="task", reminder=True, due="2026-04-01")
         meta = kb._indexer.get_note_meta(path)
-        remind_via = json.loads(meta["remind_via"])
-        assert "chat" in remind_via
+        assert meta["remind_via"] is None
 
-    def test_reminder_includes_telegram_when_active(self, app, kb):
-        """If Telegram channel is active, remind_via includes telegram."""
-        # Register Telegram channel
+    def test_default_channels_chat_only_without_telegram(self, app, kb):
+        """No active channels beyond chat → default resolves to ['chat']."""
+        from mycelos.knowledge.reminder import ReminderService
+        rs = ReminderService(app)
+        assert rs._default_channels() == ["chat"]
+
+    def test_default_channels_includes_telegram_when_active(self, app, kb):
+        """Active Telegram channel → default resolves to chat + telegram."""
+        from mycelos.knowledge.reminder import ReminderService
         app.storage.execute(
             "INSERT OR IGNORE INTO channels (id, channel_type, status) VALUES (?, ?, ?)",
             ("telegram", "telegram", "active"),
         )
-        path = kb.write("Call dentist", "...", type="task", reminder=True, due="2026-04-01")
-        meta = kb._indexer.get_note_meta(path)
-        remind_via = json.loads(meta["remind_via"])
-        assert "chat" in remind_via
-        assert "telegram" in remind_via
+        rs = ReminderService(app)
+        defaults = rs._default_channels()
+        assert "chat" in defaults
+        assert "telegram" in defaults
 
-    def test_no_reminder_gets_default(self, app, kb):
-        """Task without reminder=True gets default remind_via."""
-        path = kb.write("Just a note", "...", type="note")
+    def test_existing_reminder_picks_up_telegram_added_later(self, app, kb):
+        """A reminder written BEFORE Telegram was configured must still
+        fire on Telegram once the channel becomes active — the whole point
+        of resolving remind_via at fire time."""
+        from mycelos.knowledge.reminder import ReminderService
+        path = kb.write("Call dentist", "...", type="task", reminder=True,
+                        due=date.today().isoformat())
+        # remind_via is NULL at rest
         meta = kb._indexer.get_note_meta(path)
-        remind_via = json.loads(meta["remind_via"])
-        assert remind_via == ["chat"]
+        assert meta["remind_via"] is None
+
+        # User configures Telegram afterwards
+        app.storage.execute(
+            "INSERT OR IGNORE INTO channels (id, channel_type, status) VALUES (?, ?, ?)",
+            ("telegram", "telegram", "active"),
+        )
+
+        # Mock LLM + telegram dispatch so check_and_notify can run
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "Reminder!"
+        mock_response.total_tokens = 5
+        mock_llm.complete.return_value = mock_response
+        app._llm = mock_llm
+
+        rs = ReminderService(app)
+        with patch.object(rs, "_send_telegram", return_value=True) as mock_tg:
+            rs.check_and_notify()
+            assert mock_tg.called, "telegram must be called even though the note has remind_via=NULL"
 
 
 # ---------------------------------------------------------------------------

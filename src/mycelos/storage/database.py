@@ -84,7 +84,7 @@ class SQLiteStorage:
             ("knowledge_notes", "reminder", "BOOLEAN DEFAULT FALSE"),
             ("knowledge_notes", "remind_at", "TEXT"),
             ("knowledge_notes", "reminder_fired_at", "TEXT"),
-            ("knowledge_notes", "remind_via", "TEXT DEFAULT '[\"chat\"]'"),
+            ("knowledge_notes", "remind_via", "TEXT"),
             ("knowledge_notes", "sort_order", "INTEGER DEFAULT 0"),
             ("agents", "system_prompt", "TEXT"),
             ("agents", "allowed_tools", "TEXT DEFAULT '[]'"),
@@ -105,6 +105,22 @@ class SQLiteStorage:
                     self._conn.commit()
                 except sqlite3.OperationalError:
                     pass  # Column might already exist in some edge case
+
+        # One-shot migration: earlier schema versions wrote '["chat"]' as
+        # the default remind_via for every new note, regardless of which
+        # channels the user had configured. That pins old reminders to
+        # chat-only even after the user adds Telegram. Rewrite those to
+        # NULL so the new "no instruction = all active channels" rule
+        # applies. Explicit user choices (rows that contain 'telegram'
+        # or 'email' in the JSON) are left alone.
+        try:
+            self._conn.execute(
+                "UPDATE knowledge_notes SET remind_via = NULL "
+                "WHERE remind_via = '[\"chat\"]'"
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
         # v3: organizer_suggestions table — idempotent.
         self._conn.executescript(

@@ -387,7 +387,7 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     reminder    BOOLEAN DEFAULT FALSE,               -- trigger notification when due
     remind_at   TEXT,                                -- ISO datetime: exact moment to fire the reminder
     reminder_fired_at TEXT,                          -- ISO datetime: set when dispatched or user-dismissed
-    remind_via  TEXT DEFAULT '["chat"]',             -- JSON: channels to notify ["chat","telegram","email"]
+    remind_via  TEXT,                                -- JSON array of channels; NULL = notify every active channel at fire time
     sort_order  INTEGER DEFAULT 0,                   -- manual ordering within topic
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at  TEXT,

@@ -146,6 +146,25 @@ class ReminderService:
             logger.warning("Unknown reminder channel: %s", channel)
             return False
 
+    def _default_channels(self) -> list[str]:
+        """Return the set of channels to notify when a reminder has no
+        explicit ``remind_via``. Chat is always in; Telegram is added when
+        its channel row is active; future channels (email, Slack) follow
+        the same pattern.
+        """
+        channels = ["chat"]
+        try:
+            rows = self._app.storage.fetchall(
+                "SELECT id FROM channels WHERE status = 'active'"
+            )
+            for row in rows:
+                cid = row.get("id") if isinstance(row, dict) else row["id"]
+                if cid == "telegram" and "telegram" not in channels:
+                    channels.append("telegram")
+        except Exception as e:
+            logger.warning("Could not enumerate active channels: %s", e)
+        return channels
+
     def _dispatch_chat(self, message: str) -> bool:
         """Store reminder for chat injection on next session message."""
         try:
@@ -215,13 +234,29 @@ class ReminderService:
         message = self.generate_message(tasks)
 
         # Collect all unique channels from all due tasks
+        # Resolve which channels this reminder fires on. If remind_via is
+        # explicitly set, we honour that exactly. If it's missing or empty,
+        # fall back to every active notification channel — chat is always
+        # available, telegram and email only when they're configured and
+        # active. This is the "no instruction = notify everywhere" rule
+        # so a user who adds Telegram AFTER setting a reminder still gets
+        # it on Telegram.
+        default_channels = self._default_channels()
         channels: set[str] = set()
         for t in tasks:
-            try:
-                rv = json.loads(t.get("remind_via", '["chat"]'))
-                channels.update(rv)
-            except (json.JSONDecodeError, TypeError):
-                channels.add("chat")
+            rv_raw = t.get("remind_via")
+            parsed: list[str] | None = None
+            if rv_raw:
+                try:
+                    candidate = json.loads(rv_raw)
+                    if isinstance(candidate, list) and candidate:
+                        parsed = [c for c in candidate if isinstance(c, str)]
+                except (json.JSONDecodeError, TypeError):
+                    parsed = None
+            if parsed:
+                channels.update(parsed)
+            else:
+                channels.update(default_channels)
 
         channels_succeeded: list[str] = []
         channels_failed: list[str] = []
