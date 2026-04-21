@@ -164,8 +164,9 @@ def test_keyed_connector_stores_credential(tmp_data_dir: Path) -> None:
                     app, "web-search-brave", CONNECTORS["web-search-brave"]
                 )
 
-        # Credential should be stored encrypted
-        cred = app.credentials.get_credential("connector:web-search-brave")
+        # Credential should be stored encrypted (bare connector id since
+        # b365963 — see CHANGELOG).
+        cred = app.credentials.get_credential("web-search-brave")
         assert cred is not None
         assert cred["api_key"] == "test-brave-key-123"
         assert cred["connector"] == "web-search-brave"

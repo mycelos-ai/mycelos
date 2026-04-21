@@ -94,8 +94,9 @@ class TestConnectorAddMCP:
         assert connector is not None
         assert "npx" in connector.get("description", "")
 
-        # Verify secret stored
-        cred = app.credentials.get_credential("connector:context7")
+        # Verify secret stored — since b365963, MCP creds live under the
+        # bare connector id (same namespace as channels + builtins).
+        cred = app.credentials.get_credential("context7")
         assert cred is not None
         assert cred["api_key"] == "test-api-key-123"
 
