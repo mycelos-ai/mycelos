@@ -129,6 +129,33 @@ class SQLiteStorage:
         except sqlite3.OperationalError:
             pass
 
+        # One-shot migration: earlier code wrote MCP-connector credentials
+        # under 'connector:<id>' while the MCP manager / SecurityProxy
+        # looked them up under '<id>'. Drop the prefix so every credential
+        # is keyed by the connector id a user actually sees. Existing bare
+        # rows (channels, builtins) are untouched; collisions (same id on
+        # both sides) skip the rename so we don't clobber a newer entry.
+        try:
+            self._conn.execute(
+                """UPDATE credentials
+                      SET service = SUBSTR(service, LENGTH('connector:') + 1)
+                    WHERE service LIKE 'connector:%'
+                      AND NOT EXISTS (
+                            SELECT 1 FROM credentials c2
+                             WHERE c2.user_id = credentials.user_id
+                               AND c2.label   = credentials.label
+                               AND c2.service = SUBSTR(credentials.service, LENGTH('connector:') + 1)
+                      )"""
+            )
+            # Anything that WOULD collide: drop the prefixed one, the bare
+            # row wins (it's newer in every case we've seen).
+            self._conn.execute(
+                "DELETE FROM credentials WHERE service LIKE 'connector:%'"
+            )
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         # v3: organizer_suggestions table — idempotent.
         self._conn.executescript(
             """

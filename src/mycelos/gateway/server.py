@@ -97,7 +97,7 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
             env_vars = {}
             for cred_spec in recipe.credentials:
                 env_var = cred_spec["env_var"]
-                env_vars[env_var] = f"credential:connector:{cid}"
+                env_vars[env_var] = f"credential:{cid}"
             transport = recipe.transport
         elif ctype == "mcp":
             # Custom MCP server — command stored in description as "MCP: <command>"
@@ -107,14 +107,18 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
             else:
                 logger.warning("Custom MCP connector '%s' has no command in description", cid)
                 continue
-            # Load stored credentials — use the env_var name from the credential
+            # Load stored credentials — bare connector id is the canonical
+            # key; fall back to the legacy 'connector:<id>' one for
+            # pre-migration rows so users don't lose config on upgrade.
             env_vars = {}
-            cred_key = f"connector:{cid}"
             try:
-                cred = mycelos.credentials.get_credential(cred_key)
+                cred = (
+                    mycelos.credentials.get_credential(cid)
+                    or mycelos.credentials.get_credential(f"connector:{cid}")
+                )
                 if cred and cred.get("api_key"):
                     env_var_name = cred.get("env_var", f"{cid.upper().replace('-', '_')}_API_KEY")
-                    env_vars[env_var_name] = f"credential:{cred_key}"
+                    env_vars[env_var_name] = f"credential:{cid}"
             except Exception:
                 pass
             transport = "stdio"

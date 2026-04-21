@@ -470,8 +470,16 @@ def create_proxy_app() -> FastAPI:
         for key, val in req.env_vars.items():
             if val.startswith("credential:") and credential_proxy:
                 service_name = val[len("credential:"):]
+                # Store and lookup disagreed historically: the gateway
+                # writes MCP connector creds under 'connector:<id>' while
+                # the MCP-manager looks them up as '<id>'. Try the bare
+                # name first (what the recipe asks for), then the
+                # 'connector:<id>' variant as a fallback so old rows and
+                # new rows both resolve.
                 try:
                     cred = credential_proxy.get_credential(service_name, user_id=user_id)
+                    if not (cred and cred.get("api_key")):
+                        cred = credential_proxy.get_credential(f"connector:{service_name}", user_id=user_id)
                     if cred and cred.get("api_key"):
                         resolved_env[key] = cred["api_key"]
                     else:

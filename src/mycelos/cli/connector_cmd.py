@@ -278,9 +278,14 @@ def _setup_connector(app: App, key: str, info: dict[str, Any]) -> None:
         f"[yellow]{info.get('key_help', t('connector.key_help'))}[/yellow]\n"
     )
 
-    # Check if already configured
-    service_name = f"connector:{key}"
-    existing = app.credentials.get_credential(service_name)
+    # Check if already configured — MCP connector credentials live under
+    # the bare connector id now; we still check the legacy prefixed key
+    # so configs stored before the migration are detected.
+    service_name = key
+    existing = (
+        app.credentials.get_credential(service_name)
+        or app.credentials.get_credential(f"connector:{key}")
+    )
     if existing:
         console.print(f"[green]{t('connector.already_configured')}[/green]")
         if not click.confirm(t("connector.reconfigure"), default=False):

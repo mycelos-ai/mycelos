@@ -1615,16 +1615,28 @@ def setup_routes(api: FastAPI) -> None:
         except Exception as e:
             return JSONResponse({"error": f"Failed to register connector: {e}"}, status_code=500)
 
-        # Store secret if provided — use service name directly for builtins
+        # Store secret if provided. Key stored under the bare connector
+        # name — both builtins (telegram, email) and MCP connectors share
+        # one namespace. The MCP subsystem substitutes `credential:<id>`
+        # in env_vars and the SecurityProxy resolves that via the bare
+        # name. Using 'connector:<id>' here would bypass the recipe's
+        # env_var convention and was the root cause of 'Failed to load
+        # credential connector:brave-search' log noise.
         if body.secret:
             try:
-                # Builtins + channels store credentials under the bare service
-                # name because the channel layer (e.g. telegram) looks them up
-                # with get_credential("telegram"), not "connector:telegram".
-                service_key = body.name if (is_builtin or is_channel) else f"connector:{body.name}"
-                env_var_name = f"{body.name.upper().replace('-', '_')}_API_KEY"
+                # Recipe-declared env_var name (e.g. BRAVE_API_KEY) if the
+                # connector is a known MCP recipe; otherwise derive from
+                # the name. This matters because the MCP server looks up
+                # a specific env-var, not a made-up one.
+                from mycelos.connectors.mcp_recipes import get_recipe as _get_recipe
+                recipe = _get_recipe(body.name)
+                if recipe and recipe.credentials:
+                    env_var_name = recipe.credentials[0].get("env_var", "")
+                else:
+                    env_var_name = f"{body.name.upper().replace('-', '_')}_API_KEY"
+
                 mycelos.credentials.store_credential(
-                    service_key,
+                    body.name,
                     {"api_key": body.secret, "env_var": env_var_name},
                     description=f"Credentials for {body.name}",
                 )

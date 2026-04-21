@@ -49,8 +49,11 @@ RECIPES: dict[str, MCPRecipe] = {
     "brave-search": MCPRecipe(
         id="brave-search",
         name="Brave Search",
-        description="Web search via Brave Search API",
-        command="npx -y @modelcontextprotocol/server-brave-search",
+        description="Web, images, videos, news + AI summaries via Brave Search API",
+        # Brave took the MCP server in-house in 2025; the old
+        # @modelcontextprotocol/server-brave-search package is deprecated
+        # and will refuse to start. The new package lives under @brave/.
+        command="npx -y @brave/brave-search-mcp-server",
         credentials=[{
             "env_var": "BRAVE_API_KEY",
             "name": "Brave Search API Key",

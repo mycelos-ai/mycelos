@@ -820,7 +820,7 @@ def _connector_add_smart(app: Any, args: list[str]) -> str:
         env_var_name = secret_vars[0]["name"] if secret_vars else f"{name.upper().replace('-', '_')}_API_KEY"
         try:
             app.credentials.store_credential(
-                f"connector:{name}",
+                name,
                 {"api_key": secret, "env_var": env_var_name},
                 description=f"API key for {name} MCP connector",
             )
