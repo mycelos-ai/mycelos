@@ -108,6 +108,52 @@ mycelos logs -f             # Follow gateway + proxy logs
 
 The doctor analyzes your system state, audit logs, and configuration to find root causes.
 
+### `pi5.local` pings but curl / the browser hangs from the Mac
+
+Happens on macOS when `ping pi5.local` succeeds but `curl http://pi5.local:9100` times out, while the IP works:
+
+```bash
+curl http://192.168.0.111:9100   # works
+curl http://pi5.local:9100       # hangs
+```
+
+Usually the Mac's mDNS responder is sitting on a stale record (often an IPv6 address that is no longer valid). Clear it:
+
+```bash
+# on the Mac
+sudo killall -HUP mDNSResponder
+sudo killall mDNSResponderHelper
+curl http://pi5.local:9100
+```
+
+If that doesn't help, force IPv4: `curl -4 http://pi5.local:9100`. For a permanent fix pin the hostname in `/etc/hosts` on the Mac:
+
+```bash
+sudo sh -c 'echo "192.168.0.111  pi5.local pi5" >> /etc/hosts'
+```
+
+### `pi5.local` resolves to a Docker address
+
+Avahi on the Pi announces `.local` on every interface by default — including Docker's virtual `vethX` interfaces, which confuses clients on the LAN. Restrict Avahi to the real LAN interface:
+
+```bash
+sudo sed -i 's/^#allow-interfaces=.*/allow-interfaces=eth0/' /etc/avahi/avahi-daemon.conf
+sudo systemctl restart avahi-daemon
+```
+
+(Change `eth0` to `wlan0` if the Pi is on Wi-Fi — `ip -br link | grep UP` shows which.)
+
+### Port 9100 open on the Pi but times out from the Mac
+
+After toggling `MYCELOS_BIND` in `.env`, Docker compose needs to recreate the container, not just restart it — the `ports:` mapping is set at container creation time:
+
+```bash
+cd ~/mycelos-new
+docker compose up -d --force-recreate
+```
+
+`mycelos update` also triggers a recreate via `docker compose pull && up -d`.
+
 ## Tips
 
 - Use **Telegram** to chat with Mycelos from your phone (no browser needed — see [connectors](/docs/connectors)).
