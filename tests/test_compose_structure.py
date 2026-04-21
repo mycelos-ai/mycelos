@@ -25,21 +25,25 @@ def test_gateway_does_not_mount_master_key(compose):
             "gateway must not mount the master key; proxy owns it"
 
 
-def test_proxy_mounts_master_key_readonly(compose):
+def test_proxy_mounts_data_dir(compose):
+    """Proxy needs the full /data directory — not just the .db file —
+    so SQLite WAL siblings stay visible and .master_key is reachable.
+    File-level bind mounts were dropped in 65ed1ff because the proxy
+    could not see the gateway's fresh writes (they live in the WAL
+    file, which a single-file bind does not expose).
+    """
     px = compose["services"]["proxy"]
-    found = False
+    found_data_dir = False
     for v in px.get("volumes", []):
         if isinstance(v, dict):
-            if ".master_key" in str(v.get("target", "")) or ".master_key" in str(v.get("source", "")):
-                assert v.get("read_only") is True, \
-                    f"proxy must mount .master_key read-only (got {v!r})"
-                found = True
+            if str(v.get("target", "")) == "/data":
+                found_data_dir = True
         else:
             s = str(v)
-            if ".master_key" in s:
-                assert ":ro" in s, f"proxy must mount .master_key read-only (got {s!r})"
-                found = True
-    assert found, "proxy must mount .master_key"
+            # short-form 'source:/data' or 'source:/data:...'
+            if ":/data" in s and ":/data/" not in s:
+                found_data_dir = True
+    assert found_data_dir, "proxy must mount the full /data directory"
 
 
 def test_gateway_has_proxy_url_and_token(compose):

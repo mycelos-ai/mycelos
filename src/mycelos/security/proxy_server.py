@@ -173,24 +173,22 @@ def create_proxy_app() -> FastAPI:
     def _get_storage(read_only: bool = True) -> Any | None:
         """Get a storage connection for the proxy process.
 
-        By default opens a read-only connection (safe for credential reads,
-        no cross-process locking). Pass read_only=False to get a writable
-        connection for credential writes (Phase 1b: proxy owns all writes).
-
-        Existing callers that pass no argument remain unchanged.
+        Always opens a read-write connection — the earlier RO connection
+        for reads caused a stale-WAL problem: once a credential was
+        written through the RW connection, the previously-opened RO
+        connection kept returning the pre-write snapshot and
+        'Failed to load credential <x>' fired even though the row was
+        in the DB. ``read_only`` stays on the signature so existing
+        call sites still compile; we just ignore it at the SQLite
+        level. Cross-process safety was never the reason for RO here
+        (Phase 1b writes come from the proxy process itself); it was a
+        leftover from the single-container era.
         """
         if not db_path_str:
             return None
-        if _state["_storage"] is None or _state.get("_storage_read_only") != read_only:
+        if _state["_storage"] is None:
             import sqlite3 as _sql3
-            if read_only:
-                conn = _sql3.connect(
-                    f"file:{db_path_str}?mode=ro",
-                    uri=True,
-                    timeout=5,
-                )
-            else:
-                conn = _sql3.connect(db_path_str, timeout=5)
+            conn = _sql3.connect(db_path_str, timeout=5)
             conn.row_factory = _sql3.Row
             conn.execute("PRAGMA busy_timeout=3000")
 
@@ -204,14 +202,12 @@ def create_proxy_app() -> FastAPI:
                     return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
                 def execute(self, sql, params=()):
                     cur = self._conn.execute(sql, params)
-                    if not read_only:
-                        self._conn.commit()  # autocommit each statement in RW mode
+                    self._conn.commit()  # autocommit each statement
                     return cur
                 def _get_connection(self):
                     return self._conn
 
             _state["_storage"] = _Storage(conn)
-            _state["_storage_read_only"] = read_only
         return _state["_storage"]
 
     def _get_credential_proxy() -> Any | None:
