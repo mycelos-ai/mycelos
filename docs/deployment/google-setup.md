@@ -4,10 +4,26 @@ Mycelos integrates with Google Workspace through three separate MCP
 servers, each running inside the SecurityProxy container. This keeps
 OAuth tokens out of the gateway process and out of the LLM's reach.
 
-This document covers the one-time setup. Once it's done, Gmail /
-Calendar / Drive connectors work the same as any other connector —
-click "Connect" in the UI, the server uses the stored credentials
-silently.
+**Happy path (via the web UI):**
+
+1. Open **Connectors → Google Workspace**.
+2. Click Gmail / Calendar / Drive.
+3. Follow the inline step-by-step guide in the dialog. It walks you
+   through creating a Google Cloud project, enabling APIs, configuring
+   the consent screen, and downloading `gcp-oauth.keys.json`.
+4. Paste the JSON into the dialog and click **Start OAuth consent**.
+5. Open the consent URL the dialog shows, sign in, accept the scopes.
+6. Done. Close the dialog; the connector is live.
+
+All three Google services share a single Google Cloud project, so
+steps 1–3 only happen once. This doc is a reference — you don't need
+to read it top-to-bottom to connect a Google service.
+
+## CLI fallback
+
+If the web UI isn't available (headless server, debugging, etc.),
+the same outcome can be reached by running the setup commands
+directly in the proxy container shell.
 
 ## What you'll end up with
 
