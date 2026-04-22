@@ -118,18 +118,80 @@ RECIPES: dict[str, MCPRecipe] = {
         capabilities_preview=["slack.post_message", "slack.list_channels"],
         category="tools",
     ),
+    "gmail": MCPRecipe(
+        id="gmail",
+        name="Gmail (via Google API)",
+        description=(
+            "Gmail with the full API surface — search, read, send, reply, "
+            "filters, labels, attachments. Runs as an MCP server inside the "
+            "SecurityProxy; OAuth tokens never leave the proxy container."
+        ),
+        command="npx -y @gongrzhe/server-gmail-autoauth-mcp",
+        transport="stdio",
+        credentials=[{
+            "env_var": "GMAIL_OAUTH_PATH",
+            "name": "Google Cloud OAuth credentials (JSON)",
+            "help": (
+                "Paste the contents of gcp-oauth.keys.json from the Google "
+                "Cloud Console (OAuth 2.0 Desktop app). First run triggers "
+                "a browser consent — see docs/deployment/google-setup.md."
+            ),
+        }],
+        capabilities_preview=[
+            "gmail_search", "gmail_read", "gmail_send", "gmail_labels",
+            "gmail_filters", "gmail_attachments",
+        ],
+        category="communication",
+        requires_node=True,
+    ),
+    "google-calendar": MCPRecipe(
+        id="google-calendar",
+        name="Google Calendar",
+        description=(
+            "Read, create, update, and delete Calendar events across all of "
+            "the user's calendars. Same OAuth project as Gmail/Drive but a "
+            "separate consent flow per service."
+        ),
+        command="npx -y @cocal/google-calendar-mcp",
+        transport="stdio",
+        credentials=[{
+            "env_var": "GOOGLE_OAUTH_CREDENTIALS",
+            "name": "Google Cloud OAuth credentials (JSON)",
+            "help": (
+                "Reuse the same gcp-oauth.keys.json from Gmail. First run "
+                "opens a browser for Calendar scope consent."
+            ),
+        }],
+        capabilities_preview=[
+            "list_calendars", "list_events", "create_event",
+            "update_event", "delete_event",
+        ],
+        category="communication",
+        requires_node=True,
+    ),
     "google-drive": MCPRecipe(
         id="google-drive",
         name="Google Drive",
-        description="Access Google Drive files",
-        command="npx -y @modelcontextprotocol/server-google-drive",
+        description=(
+            "List, read, search, and upload files in Google Drive. Shares "
+            "the OAuth project with Gmail and Calendar; each service runs "
+            "its own consent flow."
+        ),
+        command="npx -y @piotr-agier/google-drive-mcp",
+        transport="stdio",
         credentials=[{
-            "env_var": "GOOGLE_DRIVE_CREDENTIALS",
-            "name": "Google OAuth Credentials (JSON)",
-            "help": "Set up OAuth at https://console.cloud.google.com/",
+            "env_var": "GDRIVE_OAUTH_PATH",
+            "name": "Google Cloud OAuth credentials (JSON)",
+            "help": (
+                "Reuse the same gcp-oauth.keys.json. First run opens a "
+                "browser for Drive scope consent."
+            ),
         }],
-        capabilities_preview=["drive.list", "drive.read", "drive.search"],
+        capabilities_preview=[
+            "drive_list", "drive_read", "drive_search", "drive_upload",
+        ],
         category="storage",
+        requires_node=True,
     ),
     "email": MCPRecipe(
         id="email",
@@ -160,21 +222,6 @@ RECIPES: dict[str, MCPRecipe] = {
         # Pin it to stdio so it behaves as a normal MCP subprocess and
         # reads EMAIL_CREDENTIALS from its env.
         static_env={"TRANSPORT_MODE": "stdio"},
-    ),
-    "gmail": MCPRecipe(
-        id="gmail",
-        name="Gmail (via gog CLI)",
-        description="Full Gmail + Calendar + Drive access via Google API. Requires Google Cloud OAuth.",
-        command="",
-        transport="builtin",
-        credentials=[{
-            "env_var": "GOOGLE_OAUTH",
-            "name": "Google OAuth (via gog CLI)",
-            "help": "Install: brew install gogcli. Then: gog auth add your@gmail.com",
-        }],
-        capabilities_preview=["gmail.read", "gmail.send", "calendar.read", "drive.read"],
-        category="communication",
-        requires_node=False,
     ),
     "telegram": MCPRecipe(
         id="telegram",
