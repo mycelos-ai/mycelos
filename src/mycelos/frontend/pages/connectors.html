@@ -12,6 +12,7 @@
   <script src="/shared/tailwind-config.js"></script>
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
+  <script src="/shared/oauth_setup.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -828,6 +829,128 @@
       </div>
     </div>
 
+    <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_browser' -->
+    <div x-show="oauthDialog.open" x-cloak
+         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+         @click.self="closeOAuthDialog()">
+      <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b flex items-center justify-between">
+          <h2 class="text-lg font-semibold" x-text="'Connect ' + (oauthDialog.recipe?.name || '')"></h2>
+          <button @click="closeOAuthDialog()" class="text-gray-400 hover:text-gray-600">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <!-- Body: guide on left, actions on right -->
+        <div class="flex flex-1 overflow-hidden">
+          <!-- Guide panel -->
+          <div class="w-1/2 border-r overflow-y-auto p-6" x-show="oauthDialog.recipe?.setup_guide">
+            <h3 class="font-semibold mb-2" x-text="oauthDialog.recipe?.setup_guide?.title"></h3>
+            <p class="text-sm text-gray-600 mb-4" x-text="oauthDialog.recipe?.setup_guide?.intro"></p>
+            <ol class="space-y-3">
+              <template x-for="(step, idx) in (oauthDialog.recipe?.setup_guide?.steps || [])" :key="idx">
+                <li class="border rounded p-3 border-gray-200">
+                  <div class="flex items-start gap-2">
+                    <span class="text-xs font-mono bg-gray-200 rounded px-2 py-0.5 mt-0.5" x-text="idx + 1"></span>
+                    <div class="flex-1">
+                      <div class="font-medium text-sm" x-text="step.title"></div>
+                      <div class="text-sm text-gray-700 mt-1"
+                           x-html="(step.body || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')"></div>
+                      <a x-show="step.cta_url" :href="step.cta_url" target="_blank" rel="noopener"
+                         class="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline mt-2">
+                        <span x-text="step.cta_label || 'Open'"></span>
+                        <span class="material-symbols-outlined text-sm">open_in_new</span>
+                      </a>
+                    </div>
+                  </div>
+                </li>
+              </template>
+            </ol>
+          </div>
+
+          <!-- Action panel -->
+          <div class="flex-1 overflow-y-auto p-6 space-y-4">
+            <!-- Stage 1: Upload keys -->
+            <div x-show="!oauthDialog.sessionId">
+              <h3 class="font-semibold mb-2">Upload your gcp-oauth.keys.json</h3>
+              <p class="text-sm text-gray-600 mb-3">
+                After downloading from Google Cloud Console (step 4 on the left), paste the full JSON content here.
+              </p>
+              <textarea x-model="oauthDialog.keysJson"
+                        @input.debounce.500ms="validateOAuthKeys()"
+                        rows="8"
+                        placeholder='{"installed": {"client_id": "..."}}'
+                        class="w-full border rounded p-2 font-mono text-xs"></textarea>
+              <div x-show="oauthDialog.keysValid && oauthDialog.keysValid.ok"
+                   class="text-sm text-green-600 mt-2">
+                ✓ Valid desktop-app credential.
+              </div>
+              <div x-show="oauthDialog.keysValid && !oauthDialog.keysValid.ok"
+                   class="text-sm text-red-600 mt-2"
+                   x-text="oauthDialog.keysValid?.error"></div>
+
+              <button @click="submitOAuthKeysAndStart()"
+                      :disabled="oauthDialog.submitting || !(oauthDialog.keysValid && oauthDialog.keysValid.ok)"
+                      class="mt-3 px-4 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50">
+                <span x-show="!oauthDialog.submitting">Start OAuth consent</span>
+                <span x-show="oauthDialog.submitting">Starting…</span>
+              </button>
+            </div>
+
+            <!-- Stage 2: Consent -->
+            <div x-show="oauthDialog.sessionId && !oauthDialog.done" class="space-y-3">
+              <h3 class="font-semibold">Complete the consent in your browser</h3>
+
+              <div x-show="oauthDialog.consentUrl" class="border rounded p-4 bg-blue-50">
+                <p class="text-sm mb-2">Open this URL, sign in as the Test user you added, and accept the scopes:</p>
+                <a :href="oauthDialog.consentUrl" target="_blank" rel="noopener"
+                   class="block text-blue-600 hover:underline break-all text-sm font-mono">
+                  <span x-text="oauthDialog.consentUrl"></span>
+                </a>
+                <button @click="window.open(oauthDialog.consentUrl, '_blank')"
+                        class="mt-2 px-4 py-2 rounded bg-blue-600 text-white text-sm">Open in browser</button>
+              </div>
+
+              <div x-show="!oauthDialog.consentUrl" class="text-sm text-gray-500">
+                Waiting for the auth server to print a URL…
+              </div>
+
+              <details>
+                <summary class="cursor-pointer text-sm text-gray-500">Show subprocess log</summary>
+                <pre class="text-xs bg-gray-50 p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap"
+                     x-text="oauthDialog.stdout + oauthDialog.stderr"></pre>
+              </details>
+            </div>
+
+            <!-- Stage 3: Done -->
+            <div x-show="oauthDialog.done" class="space-y-3">
+              <div x-show="oauthDialog.exitCode === 0" class="border rounded p-4 bg-green-50">
+                <h3 class="font-semibold text-green-900">Connected</h3>
+                <p class="text-sm text-green-800 mt-1">
+                  OAuth token saved. You can close this dialog and start using the connector.
+                </p>
+                <button @click="closeOAuthDialog()"
+                        class="mt-3 px-4 py-2 rounded bg-blue-600 text-white text-sm">Done</button>
+              </div>
+              <div x-show="oauthDialog.exitCode !== 0 && oauthDialog.exitCode !== null"
+                   class="border rounded p-4 bg-red-50">
+                <h3 class="font-semibold text-red-900">Auth failed</h3>
+                <p class="text-sm text-red-800 mt-1">
+                  The subprocess exited with code <code x-text="oauthDialog.exitCode"></code>.
+                  Check the log for details.
+                </p>
+                <pre class="text-xs bg-white p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap"
+                     x-text="oauthDialog.stdout + oauthDialog.stderr"></pre>
+                <button @click="closeOAuthDialog()"
+                        class="mt-3 px-4 py-2 rounded border border-gray-300 text-sm">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Mobile navigation container (loaded by layout.js) -->
@@ -1396,6 +1519,13 @@
          * Otherwise, installs directly via API.
          */
         async installFromUseCase(connector) {
+          // Google connectors (and any future oauth_browser recipe) use
+          // the dedicated dialog instead of the plain secret form.
+          if (['gmail', 'google-calendar', 'google-drive'].includes(connector.id)) {
+            this.activeUseCase = null;
+            this.openOAuthDialog(connector.id);
+            return;
+          }
           if (connector.credentials_needed) {
             // Open manual form pre-filled with recipe data
             this.newConnector.name = connector.id;
@@ -1440,6 +1570,150 @@
           setTimeout(() => {
             this.toast.show = false;
           }, 3000);
+        },
+
+        // ── OAuth setup dialog state ──
+        oauthDialog: {
+          open: false,
+          recipeId: '',
+          recipe: null,
+          keysJson: '',
+          keysValid: null,
+          sessionId: '',
+          ws: null,
+          stdout: '',
+          stderr: '',
+          consentUrl: null,
+          done: false,
+          exitCode: null,
+          submitting: false,
+        },
+
+        async openOAuthDialog(recipeId) {
+          const resp = await fetch('/api/connectors/recipes/' + encodeURIComponent(recipeId));
+          if (!resp.ok) {
+            this.showToast && this.showToast('Failed to load recipe', 'error');
+            return;
+          }
+          const recipe = await resp.json();
+          Object.assign(this.oauthDialog, {
+            open: true,
+            recipeId,
+            recipe,
+            keysJson: '',
+            keysValid: null,
+            sessionId: '',
+            ws: null,
+            stdout: '',
+            stderr: '',
+            consentUrl: null,
+            done: false,
+            exitCode: null,
+            submitting: false,
+          });
+        },
+
+        closeOAuthDialog() {
+          if (this.oauthDialog.ws) {
+            this.oauthDialog.ws.close();
+            this.oauthDialog.ws = null;
+          }
+          if (this.oauthDialog.sessionId) {
+            fetch('/api/connectors/oauth/stop', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({session_id: this.oauthDialog.sessionId}),
+            }).catch(() => {});
+          }
+          this.oauthDialog.open = false;
+        },
+
+        async validateOAuthKeys() {
+          this.oauthDialog.keysValid = null;
+          try {
+            const resp = await fetch('/api/credentials/oauth-keys/validate', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({content: this.oauthDialog.keysJson}),
+            });
+            this.oauthDialog.keysValid = await resp.json();
+          } catch (e) {
+            this.oauthDialog.keysValid = {ok: false, error: 'Validation request failed: ' + (e.message || e)};
+          }
+        },
+
+        async submitOAuthKeysAndStart() {
+          this.oauthDialog.submitting = true;
+          const envVar = (this.oauthDialog.recipe?.credentials?.[0] || {}).env_var || '';
+          const credService = this.oauthDialog.recipeId + '-oauth-keys';
+          try {
+            // 1. Store the JSON as a credential.
+            await fetch('/api/credentials', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                service: credService,
+                secret: this.oauthDialog.keysJson,
+                label: 'default',
+                description: 'OAuth keys for ' + (this.oauthDialog.recipe?.name || this.oauthDialog.recipeId),
+              }),
+            });
+
+            // 2. Ask the gateway to start the auth subprocess.
+            const startResp = await fetch('/api/connectors/oauth/start', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                recipe_id: this.oauthDialog.recipeId,
+                env_vars: {[envVar]: 'credential:' + credService},
+              }),
+            });
+            if (!startResp.ok) {
+              this.oauthDialog.submitting = false;
+              this.showToast && this.showToast('Failed to start OAuth: HTTP ' + startResp.status, 'error');
+              return;
+            }
+            const body = await startResp.json();
+            this.oauthDialog.sessionId = body.session_id;
+
+            // 3. Open the WS and start streaming.
+            const self = this;
+            this.oauthDialog.ws = window.MycelosOAuthSetup.openOAuthStream(body.ws_url, {
+              onStdout(data) {
+                self.oauthDialog.stdout += data;
+                if (!self.oauthDialog.consentUrl) {
+                  const url = window.MycelosOAuthSetup.findOAuthUrl(self.oauthDialog.stdout + self.oauthDialog.stderr);
+                  if (url) self.oauthDialog.consentUrl = url;
+                }
+              },
+              onStderr(data) {
+                self.oauthDialog.stderr += data;
+                if (!self.oauthDialog.consentUrl) {
+                  const url = window.MycelosOAuthSetup.findOAuthUrl(self.oauthDialog.stdout + self.oauthDialog.stderr);
+                  if (url) self.oauthDialog.consentUrl = url;
+                }
+              },
+              onDone(code) {
+                self.oauthDialog.done = true;
+                self.oauthDialog.exitCode = code;
+                self.oauthDialog.submitting = false;
+                if (code === 0 && self.loadConnectors) self.loadConnectors();
+              },
+              onError() {
+                self.showToast && self.showToast('WebSocket error', 'error');
+                self.oauthDialog.submitting = false;
+              },
+            });
+          } catch (e) {
+            this.oauthDialog.submitting = false;
+            this.showToast && this.showToast('OAuth start failed: ' + (e.message || e), 'error');
+          }
+        },
+
+        sendOAuthStdin(text) {
+          if (this.oauthDialog.ws) {
+            this.oauthDialog.ws.send({type: 'stdin', data: text + '\n'});
+          }
         },
       };
     }
