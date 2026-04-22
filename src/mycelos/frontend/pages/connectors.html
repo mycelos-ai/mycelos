@@ -831,13 +831,13 @@
 
     <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_browser' -->
     <div x-show="oauthDialog.open" x-cloak
-         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+         class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
          @click.self="closeOAuthDialog()">
-      <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="bg-[var(--surface)] text-[var(--on-surface)] rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-[var(--outline-variant)]">
         <!-- Header -->
-        <div class="px-6 py-4 border-b flex items-center justify-between">
+        <div class="px-6 py-4 border-b border-[var(--outline-variant)] flex items-center justify-between">
           <h2 class="text-lg font-semibold" x-text="'Connect ' + (oauthDialog.recipe?.name || '')"></h2>
-          <button @click="closeOAuthDialog()" class="text-gray-400 hover:text-gray-600">
+          <button @click="closeOAuthDialog()" class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]">
             <span class="material-symbols-outlined">close</span>
           </button>
         </div>
@@ -845,20 +845,23 @@
         <!-- Body: guide on left, actions on right -->
         <div class="flex flex-1 overflow-hidden">
           <!-- Guide panel -->
-          <div class="w-1/2 border-r overflow-y-auto p-6" x-show="oauthDialog.recipe?.setup_guide">
+          <div class="w-1/2 border-r border-[var(--outline-variant)] overflow-y-auto p-6"
+               x-show="oauthDialog.recipe?.setup_guide">
             <h3 class="font-semibold mb-2" x-text="oauthDialog.recipe?.setup_guide?.title"></h3>
-            <p class="text-sm text-gray-600 mb-4" x-text="oauthDialog.recipe?.setup_guide?.intro"></p>
+            <p class="text-sm text-[var(--on-surface-variant)] mb-4"
+               x-text="oauthDialog.recipe?.setup_guide?.intro"></p>
             <ol class="space-y-3">
               <template x-for="(step, idx) in (oauthDialog.recipe?.setup_guide?.steps || [])" :key="idx">
-                <li class="border rounded p-3 border-gray-200">
+                <li class="border border-[var(--outline-variant)] rounded p-3 bg-[var(--surface-container)]">
                   <div class="flex items-start gap-2">
-                    <span class="text-xs font-mono bg-gray-200 rounded px-2 py-0.5 mt-0.5" x-text="idx + 1"></span>
+                    <span class="text-xs font-mono bg-[var(--surface-container-high)] text-[var(--on-surface)] rounded px-2 py-0.5 mt-0.5"
+                          x-text="idx + 1"></span>
                     <div class="flex-1">
                       <div class="font-medium text-sm" x-text="step.title"></div>
-                      <div class="text-sm text-gray-700 mt-1"
+                      <div class="text-sm text-[var(--on-surface-variant)] mt-1"
                            x-html="(step.body || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')"></div>
                       <a x-show="step.cta_url" :href="step.cta_url" target="_blank" rel="noopener"
-                         class="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline mt-2">
+                         class="inline-flex items-center gap-1 text-sm text-[var(--primary)] hover:underline mt-2">
                         <span x-text="step.cta_label || 'Open'"></span>
                         <span class="material-symbols-outlined text-sm">open_in_new</span>
                       </a>
@@ -874,25 +877,27 @@
             <!-- Stage 1: Upload keys -->
             <div x-show="!oauthDialog.sessionId">
               <h3 class="font-semibold mb-2">Upload your gcp-oauth.keys.json</h3>
-              <p class="text-sm text-gray-600 mb-3">
+              <p class="text-sm text-[var(--on-surface-variant)] mb-3">
                 After downloading from Google Cloud Console (step 4 on the left), paste the full JSON content here.
               </p>
               <textarea x-model="oauthDialog.keysJson"
                         @input.debounce.500ms="validateOAuthKeys()"
                         rows="8"
                         placeholder='{"installed": {"client_id": "..."}}'
-                        class="w-full border rounded p-2 font-mono text-xs"></textarea>
+                        class="input-field font-mono text-xs w-full"></textarea>
               <div x-show="oauthDialog.keysValid && oauthDialog.keysValid.ok"
-                   class="text-sm text-green-600 mt-2">
-                ✓ Valid desktop-app credential.
+                   class="text-sm mt-2 inline-flex items-center gap-1"
+                   style="color: #48c78e">
+                <span class="material-symbols-outlined text-base">check_circle</span>
+                Valid desktop-app credential.
               </div>
               <div x-show="oauthDialog.keysValid && !oauthDialog.keysValid.ok"
-                   class="text-sm text-red-600 mt-2"
+                   class="text-sm text-[var(--error)] mt-2"
                    x-text="oauthDialog.keysValid?.error"></div>
 
               <button @click="submitOAuthKeysAndStart()"
                       :disabled="oauthDialog.submitting || !(oauthDialog.keysValid && oauthDialog.keysValid.ok)"
-                      class="mt-3 px-4 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50">
+                      class="btn-primary mt-3 disabled:opacity-50 disabled:cursor-not-allowed">
                 <span x-show="!oauthDialog.submitting">Start OAuth consent</span>
                 <span x-show="oauthDialog.submitting">Starting…</span>
               </button>
@@ -902,48 +907,63 @@
             <div x-show="oauthDialog.sessionId && !oauthDialog.done" class="space-y-3">
               <h3 class="font-semibold">Complete the consent in your browser</h3>
 
-              <div x-show="oauthDialog.consentUrl" class="border rounded p-4 bg-blue-50">
-                <p class="text-sm mb-2">Open this URL, sign in as the Test user you added, and accept the scopes:</p>
+              <div x-show="oauthDialog.consentUrl"
+                   class="card border-l-2 border-l-[var(--primary)]">
+                <p class="text-sm mb-2 text-[var(--on-surface)]">
+                  Open this URL, sign in as the Test user you added, and accept the scopes:
+                </p>
                 <a :href="oauthDialog.consentUrl" target="_blank" rel="noopener"
-                   class="block text-blue-600 hover:underline break-all text-sm font-mono">
+                   class="block text-[var(--primary)] hover:underline break-all text-sm font-mono">
                   <span x-text="oauthDialog.consentUrl"></span>
                 </a>
                 <button @click="window.open(oauthDialog.consentUrl, '_blank')"
-                        class="mt-2 px-4 py-2 rounded bg-blue-600 text-white text-sm">Open in browser</button>
+                        class="btn-primary mt-2">Open in browser</button>
               </div>
 
-              <div x-show="!oauthDialog.consentUrl" class="text-sm text-gray-500">
+              <div x-show="!oauthDialog.consentUrl"
+                   class="text-sm text-[var(--on-surface-variant)] inline-flex items-center gap-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-[var(--primary)] animate-pulse"></span>
                 Waiting for the auth server to print a URL…
               </div>
 
               <details>
-                <summary class="cursor-pointer text-sm text-gray-500">Show subprocess log</summary>
-                <pre class="text-xs bg-gray-50 p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap"
+                <summary class="cursor-pointer text-sm text-[var(--on-surface-variant)] hover:text-[var(--on-surface)]">
+                  Show subprocess log
+                </summary>
+                <pre class="text-xs bg-[var(--surface-container)] text-[var(--on-surface)] p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap font-mono border border-[var(--outline-variant)]"
                      x-text="oauthDialog.stdout + oauthDialog.stderr"></pre>
               </details>
             </div>
 
             <!-- Stage 3: Done -->
             <div x-show="oauthDialog.done" class="space-y-3">
-              <div x-show="oauthDialog.exitCode === 0" class="border rounded p-4 bg-green-50">
-                <h3 class="font-semibold text-green-900">Connected</h3>
-                <p class="text-sm text-green-800 mt-1">
+              <div x-show="oauthDialog.exitCode === 0"
+                   class="card border-l-2"
+                   style="border-left-color: #48c78e">
+                <h3 class="font-semibold inline-flex items-center gap-2" style="color: #48c78e">
+                  <span class="material-symbols-outlined">check_circle</span>
+                  Connected
+                </h3>
+                <p class="text-sm text-[var(--on-surface-variant)] mt-1">
                   OAuth token saved. You can close this dialog and start using the connector.
                 </p>
-                <button @click="closeOAuthDialog()"
-                        class="mt-3 px-4 py-2 rounded bg-blue-600 text-white text-sm">Done</button>
+                <button @click="closeOAuthDialog()" class="btn-primary mt-3">Done</button>
               </div>
               <div x-show="oauthDialog.exitCode !== 0 && oauthDialog.exitCode !== null"
-                   class="border rounded p-4 bg-red-50">
-                <h3 class="font-semibold text-red-900">Auth failed</h3>
-                <p class="text-sm text-red-800 mt-1">
-                  The subprocess exited with code <code x-text="oauthDialog.exitCode"></code>.
+                   class="card border-l-2 border-l-[var(--error)]">
+                <h3 class="font-semibold text-[var(--error)] inline-flex items-center gap-2">
+                  <span class="material-symbols-outlined">error</span>
+                  Auth failed
+                </h3>
+                <p class="text-sm text-[var(--on-surface-variant)] mt-1">
+                  The subprocess exited with code
+                  <code class="font-mono bg-[var(--surface-container-high)] px-1 rounded"
+                        x-text="oauthDialog.exitCode"></code>.
                   Check the log for details.
                 </p>
-                <pre class="text-xs bg-white p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap"
+                <pre class="text-xs bg-[var(--surface-container)] text-[var(--on-surface)] p-2 mt-2 rounded max-h-32 overflow-y-auto whitespace-pre-wrap font-mono border border-[var(--outline-variant)]"
                      x-text="oauthDialog.stdout + oauthDialog.stderr"></pre>
-                <button @click="closeOAuthDialog()"
-                        class="mt-3 px-4 py-2 rounded border border-gray-300 text-sm">Close</button>
+                <button @click="closeOAuthDialog()" class="btn-secondary mt-3">Close</button>
               </div>
             </div>
           </div>
