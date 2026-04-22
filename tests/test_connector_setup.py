@@ -50,17 +50,6 @@ def test_github_connector_available() -> None:
     assert CONNECTORS["github"]["env_var"] == "GITHUB_PERSONAL_ACCESS_TOKEN"
 
 
-def test_google_connector_uses_gog() -> None:
-    """Google connector uses gog setup type (no API key needed)."""
-    assert "google" in CONNECTORS
-    google = CONNECTORS["google"]
-    assert google["setup_type"] == "gog"
-    assert google["requires_key"] is False
-    assert "google.gmail.read" in google["capabilities"]
-    assert "google.calendar.read" in google["capabilities"]
-    assert "google.drive.read" in google["capabilities"]
-
-
 def test_connector_list_command(tmp_data_dir: Path) -> None:
     """mycelos connector list shows available connectors."""
     from mycelos.app import App
@@ -83,7 +72,7 @@ def test_connector_list_command(tmp_data_dir: Path) -> None:
 
 
 def test_connector_list_shows_coming_soon(tmp_data_dir: Path) -> None:
-    """Coming-soon connectors appear in the list."""
+    """MCP-based connectors such as GitHub appear in the list."""
     from mycelos.app import App
 
     os.environ["MYCELOS_MASTER_KEY"] = "test-key-for-list"
@@ -96,7 +85,6 @@ def test_connector_list_shows_coming_soon(tmp_data_dir: Path) -> None:
             connector_cmd, ["list", "--data-dir", str(tmp_data_dir)]
         )
         assert result.exit_code == 0
-        assert "Gmail" in result.output
         assert "GitHub" in result.output
     finally:
         os.environ.pop("MYCELOS_MASTER_KEY", None)

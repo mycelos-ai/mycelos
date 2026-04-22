@@ -50,19 +50,6 @@ CONNECTORS: dict[str, dict[str, Any]] = {
         "capabilities": ["http.get", "http.post"],
         "category": "web",
     },
-    "google": {
-        "name": "Google (Gmail, Calendar, Drive)",
-        "description": "Access Gmail, Calendar, and Drive via gog CLI",
-        "requires_key": False,
-        "capabilities": [
-            "google.gmail.read",
-            "google.gmail.send",
-            "google.calendar.read",
-            "google.drive.read",
-        ],
-        "category": "google",
-        "setup_type": "gog",
-    },
     "telegram": {
         "name": "Telegram Bot",
         "description": "Chat with Mycelos via Telegram",
@@ -230,9 +217,6 @@ def _show_connector_menu(app: App) -> None:
 
 def _setup_connector(app: App, key: str, info: dict[str, Any]) -> None:
     """Set up a specific connector."""
-    if info.get("setup_type") == "gog":
-        _setup_gog_connector(app, key, info)
-        return
     if info.get("setup_type") == "telegram":
         _setup_telegram_connector(app, key, info)
         return
@@ -636,144 +620,3 @@ def _test_telegram_bot(token: str) -> None:
         console.print(f"[red]Connection failed: {e}[/red]")
 
 
-def _setup_gog_connector(app: App, key: str, info: dict[str, Any]) -> None:
-    """Set up Google services via gog CLI.
-
-    gog handles OAuth and token management in its own keyring.
-    Mycelos agents never see Google credentials.
-    """
-    from mycelos.connectors.google_tools import (
-        get_gog_accounts,
-        gmail_search,
-        is_gog_installed,
-    )
-
-    console.print(f"\n[bold]{t('connector.setup_title', name=info['name'])}[/bold]")
-    console.print(
-        f"[dim]{t('connector.gog_oauth')}[/dim]\n"
-    )
-
-    # Step 1: Check if gog is installed
-    if not is_gog_installed():
-        console.print(f"[yellow]{t('connector.gog_missing')}[/yellow]")
-        console.print(t("connector.gog_install"))
-        console.print(f"{t('connector.gog_more_info')}\n")
-        if click.confirm("Try to install gog now? (requires Homebrew)"):
-            import subprocess
-
-            try:
-                console.print(f"[dim]{t('connector.running_brew_install')}[/dim]")
-                result = subprocess.run(
-                    ["brew", "install", "gogcli"],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                if result.returncode == 0:
-                    console.print(f"[green]{t('connector.gog_installed')}[/green]")
-                else:
-                    console.print(
-                        f"[red]{t('connector.install_failed', error=result.stderr[:200])}[/red]"
-                    )
-                    console.print(t("connector.install_manually"))
-                    return
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                console.print(f"[red]{t('connector.homebrew_missing')}[/red]")
-                console.print(t("connector.install_gog_manually"))
-                return
-        else:
-            console.print(t("connector.install_and_retry"))
-            return
-
-    # Step 2: Check for connected accounts
-    accounts = get_gog_accounts()
-    if accounts:
-        console.print(f"[green]{t('connector.google_accounts_found', count=len(accounts))}[/green]")
-        for acc in accounts:
-            console.print(f"  - {acc}")
-    else:
-        console.print(f"[yellow]{t('connector.google_none')}[/yellow]")
-        console.print(
-            f"{t('connector.google_connect_with')}\n"
-        )
-        email = click.prompt(
-            "Enter your Gmail address (or 'skip' to do it later)",
-            default="skip",
-        )
-        if email != "skip":
-            import subprocess
-
-            console.print(f"\n[dim]{t('connector.running_gog_auth', email=email)}[/dim]")
-            console.print(
-                f"[dim]{t('connector.browser_signin')}[/dim]\n"
-            )
-            try:
-                subprocess.run(["gog", "auth", "add", email], timeout=120)
-                accounts = get_gog_accounts()
-                if email in str(accounts):
-                    console.print(f"\n[green]{t('connector.account_connected', email=email)}[/green]")
-                else:
-                    console.print(
-                        f"\n[yellow]{t('connector.account_maybe_not_connected', email=email)}[/yellow]"
-                    )
-                    return
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                console.print(
-                    f"[red]{t('connector.auth_failed')}[/red]"
-                )
-                return
-        else:
-            console.print(
-                t("connector.auth_later")
-            )
-            return
-
-    # Step 3: Register connector in DB
-    app.connector_registry.register(
-        connector_id=key,
-        name=info["name"],
-        connector_type=info["category"],
-        capabilities=info["capabilities"],
-        description=info.get("description"),
-        setup_type="gog",
-    )
-
-    # Step 4: Set policies for all capabilities
-    for cap in info["capabilities"]:
-        app.policy_engine.set_policy("default", None, cap, "always")
-    app.audit.log(
-        "connector.setup",
-        details={"connector": key, "capabilities": info["capabilities"]},
-    )
-    console.print(
-        f"\n{t('connector.capabilities_enabled', caps=', '.join(info['capabilities']))}"
-    )
-
-    # Step 4: Test Gmail access
-    if click.confirm("\nTest Gmail access now?", default=True):
-        console.print(f"[dim]{t('connector.searching_emails')}[/dim]")
-        result = gmail_search("newer_than:1d", max_results=3)
-        if "error" in result:
-            console.print(f"[red]{t('connector.test_failed', error=result['error'])}[/red]")
-        else:
-            threads = result.get("threads", result.get("messages", []))
-            if isinstance(threads, list):
-                console.print(
-                    f"[green]{t('connector.gmail_success_count', count=len(threads))}[/green]"
-                )
-            else:
-                console.print(
-                    f"[green]{t('connector.gmail_success')}[/green]"
-                )
-
-    # Create new config generation
-    app.config.apply_from_state(
-        state_manager=app.state_manager,
-        description=f"Connector '{info['name']}' eingerichtet",
-        trigger="connector_setup",
-    )
-
-    console.print(f"\n[green]{t('connector.ready', name=info['name'])}[/green]")
-    console.print(
-        f"[dim]{t('connector.gog_credentials_safe')}[/dim]"
-    )
