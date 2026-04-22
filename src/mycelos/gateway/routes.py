@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1591,6 +1591,113 @@ def setup_routes(api: FastAPI) -> None:
             "setup_guide": guide,
             "requires_node": recipe.requires_node,
         }
+
+    @api.post("/api/connectors/oauth/start")
+    async def oauth_start_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
+        """Start an OAuth auth subprocess in the proxy for a recipe.
+
+        Browser POSTs {recipe_id, env_vars}. Gateway resolves the recipe,
+        validates that the recipe uses oauth_browser setup flow, and
+        asks the proxy to spawn the recipe's oauth_cmd with the given
+        env_vars. Returns {session_id, ws_url} where ws_url is the
+        gateway-relative path the browser opens to stream subprocess
+        I/O (the gateway proxies that WS through to the proxy container).
+        """
+        from mycelos.connectors.mcp_recipes import get_recipe as get_r
+
+        recipe_id = payload.get("recipe_id", "")
+        env_vars = payload.get("env_vars", {}) or {}
+
+        recipe = get_r(recipe_id)
+        if recipe is None:
+            raise HTTPException(status_code=404, detail=f"Unknown recipe: {recipe_id}")
+        if recipe.setup_flow != "oauth_browser":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recipe '{recipe_id}' setup_flow is '{recipe.setup_flow}', not 'oauth_browser'",
+            )
+
+        mycelos = api.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            raise HTTPException(status_code=503, detail="Proxy not available")
+
+        result = proxy_client.oauth_start(
+            oauth_cmd=recipe.oauth_cmd,
+            env_vars=env_vars,
+        )
+        session_id = result.get("session_id", "")
+        return {
+            "session_id": session_id,
+            "ws_url": f"/api/connectors/oauth/stream/{session_id}",
+        }
+
+    @api.post("/api/connectors/oauth/stop")
+    async def oauth_stop_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
+        mycelos = api.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            raise HTTPException(status_code=503, detail="Proxy not available")
+        session_id = payload.get("session_id", "")
+        return proxy_client.oauth_stop(session_id=session_id)
+
+    @api.websocket("/api/connectors/oauth/stream/{session_id}")
+    async def oauth_stream_passthrough(websocket: WebSocket, session_id: str) -> None:
+        """Bidirectional WebSocket passthrough to the proxy's
+        /oauth/stream/{session_id}. Frames forwarded verbatim; the
+        gateway does not parse them. Upstream auth uses the proxy
+        bearer token the gateway already holds."""
+        import asyncio
+        import websockets as _ws_lib
+
+        mycelos = websocket.app.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            await websocket.close(code=4503)
+            return
+
+        # Mint the upstream WS URL and grab the auth token the
+        # proxy_client is already configured with.
+        ws_url = proxy_client.oauth_stream_url(session_id)
+        token = getattr(proxy_client, "_token", None) or getattr(proxy_client, "_auth_token", None)
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        await websocket.accept()
+
+        try:
+            async with _ws_lib.connect(ws_url, additional_headers=headers) as upstream:
+
+                async def client_to_proxy():
+                    try:
+                        while True:
+                            msg = await websocket.receive_text()
+                            await upstream.send(msg)
+                    except Exception:
+                        return
+
+                async def proxy_to_client():
+                    try:
+                        async for msg in upstream:
+                            if isinstance(msg, bytes):
+                                msg = msg.decode("utf-8", "replace")
+                            await websocket.send_text(msg)
+                    except Exception:
+                        return
+
+                done, pending = await asyncio.wait(
+                    [asyncio.create_task(client_to_proxy()),
+                     asyncio.create_task(proxy_to_client())],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+        except Exception:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     @api.get("/api/connectors")
     async def list_connectors() -> list[dict[str, Any]]:
