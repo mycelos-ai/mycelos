@@ -49,6 +49,13 @@ deployment on localhost.
 - `cleanup(frontend)` — removed a stale Next.js "Maicel" export that
   was still reachable at `/out/` from the pre-rename era.
 
+## Week 17 (2026)
+
+### Settings → Models: migration banner + provider winners
+- New endpoints: `GET /api/models/winners` (top per tier per provider, reusing `register_provider_models`), `GET /api/models/upgrades` (detects stale assignments when a newer model exists in the same provider+tier bucket, skips date-only bumps), `POST /api/models/migrate` (re-points selected agent / system-default slots to the new model and auto-registers it from the catalog if missing).
+- Settings page now surfaces an in-place banner (e.g. "Opus 4.5 → 4.7, 5 places use Opus 4.5") with per-assignment checkboxes so the user can opt out row-by-row before applying the upgrade.
+- Provider pill row (Anthropic / OpenAI / Gemini / Ollama / OpenRouter / All) with "winner" cards (one per tier) shown above the full table. Full table collapses behind a "Show all models" toggle.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)

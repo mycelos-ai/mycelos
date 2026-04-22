@@ -54,16 +54,27 @@
 
         language: 'en',
 
+        // ── Migration banner + Winners ──
+        upgrades: [],
+        upgradeSel: {},       // {old_id: Set(key)}  selected assignments per upgrade
+        upgradeBusy: {},      // {old_id: bool}
+        upgradeDone: {},      // {old_id: 'ok' | string}  post-migration result
+        winners: {},          // {provider_id: [model,...]}
+        providerPill: 'all',  // active filter pill
+        showFullTable: false, // show full table (opposite of winners-only view)
+
         async init() {
           // Load each section independently so one failure doesn't block all
           const safe = async (fn) => { try { return await fn(); } catch { return null; } };
 
-          const [modelsData, creds, configData, genData, updateData] = await Promise.all([
+          const [modelsData, creds, configData, genData, updateData, upgData, winData] = await Promise.all([
             safe(() => MycelosAPI.get('/api/models')),
             safe(() => MycelosAPI.get('/api/credentials')),
             safe(() => MycelosAPI.get('/api/config')),
             safe(() => MycelosAPI.get('/api/config/generations')),
             safe(() => MycelosAPI.get('/api/system/update-status')),
+            safe(() => MycelosAPI.get('/api/models/upgrades')),
+            safe(() => MycelosAPI.get('/api/models/winners')),
           ]);
           if (updateData) this.updateStatus = updateData;
 
@@ -71,6 +82,20 @@
             this.models = modelsData.models || [];
             this.agents = modelsData.agents || [];
             this.assignments = modelsData.assignments || [];
+          }
+          if (upgData) {
+            this.upgrades = upgData.upgrades || [];
+            // Pre-select every assignment by default — user opts out per row.
+            for (const u of this.upgrades) {
+              this.upgradeSel[u.old_id] = new Set((u.assignments || []).map(a => a.key));
+            }
+          }
+          if (winData) {
+            this.winners = winData.providers || {};
+            // Default pill: first provider that actually has winners.
+            const provOrder = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'custom'];
+            const first = provOrder.find(p => (this.winners[p] || []).length > 0);
+            if (first) this.providerPill = first;
           }
           if (creds) {
             this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
@@ -290,11 +315,101 @@
             this.models = modelsData.models || [];
             this.agents = modelsData.agents || [];
             this.assignments = modelsData.assignments || [];
+            // A fresh catalog may have introduced new upgrade suggestions.
+            const [upgData, winData] = await Promise.all([
+              MycelosAPI.get('/api/models/upgrades').catch(() => null),
+              MycelosAPI.get('/api/models/winners').catch(() => null),
+            ]);
+            if (upgData) {
+              this.upgrades = upgData.upgrades || [];
+              for (const u of this.upgrades) {
+                if (!this.upgradeSel[u.old_id]) {
+                  this.upgradeSel[u.old_id] = new Set((u.assignments || []).map(a => a.key));
+                }
+              }
+            }
+            if (winData) this.winners = winData.providers || {};
           } catch (e) {
             this.refreshResult = { error: e.message || 'Refresh failed' };
           } finally {
             this.refreshingModels = false;
           }
+        },
+
+        // ── Migration banner actions ──
+        isUpgradeKeyChecked(old_id, key) {
+          const s = this.upgradeSel[old_id];
+          return !!(s && s.has(key));
+        },
+        toggleUpgradeKey(old_id, key) {
+          const s = this.upgradeSel[old_id] || new Set();
+          if (s.has(key)) s.delete(key); else s.add(key);
+          this.upgradeSel[old_id] = new Set(s);  // trigger Alpine reactivity
+        },
+        selectedCount(old_id) {
+          const s = this.upgradeSel[old_id];
+          return s ? s.size : 0;
+        },
+        async migrateUpgrade(up) {
+          const keys = Array.from(this.upgradeSel[up.old_id] || []);
+          if (keys.length === 0) return;
+          this.upgradeBusy[up.old_id] = true;
+          try {
+            await MycelosAPI.post('/api/models/migrate', {
+              old_id: up.old_id,
+              new_id: up.new_id,
+              keys,
+            });
+            this.upgradeDone[up.old_id] = 'ok';
+            // Re-fetch models + upgrades + assignments so the rest of the
+            // page reflects the migration (the old entry may vanish now).
+            const [modelsData, upgData] = await Promise.all([
+              MycelosAPI.get('/api/models'),
+              MycelosAPI.get('/api/models/upgrades'),
+            ]);
+            if (modelsData) {
+              this.models = modelsData.models || [];
+              this.agents = modelsData.agents || [];
+              this.assignments = modelsData.assignments || [];
+            }
+            if (upgData) {
+              this.upgrades = upgData.upgrades || [];
+            }
+          } catch (e) {
+            this.upgradeDone[up.old_id] = e.message || 'Migration failed';
+          } finally {
+            this.upgradeBusy[up.old_id] = false;
+          }
+        },
+        dismissUpgrade(old_id) {
+          this.upgrades = this.upgrades.filter(u => u.old_id !== old_id);
+        },
+
+        // ── Winners pills + filter ──
+        providersWithWinners() {
+          const order = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'custom'];
+          return order.filter(p => (this.winners[p] || []).length > 0);
+        },
+        providerLabel(pid) {
+          const labels = {
+            anthropic: 'Anthropic',
+            openai: 'OpenAI',
+            gemini: 'Gemini',
+            openrouter: 'OpenRouter',
+            ollama: 'Ollama',
+            custom: 'Custom',
+          };
+          return labels[pid] || pid;
+        },
+        visibleWinners() {
+          if (this.providerPill === 'all') {
+            const all = [];
+            for (const pid of this.providersWithWinners()) {
+              for (const m of (this.winners[pid] || [])) all.push(m);
+            }
+            return all;
+          }
+          return this.winners[this.providerPill] || [];
         },
 
         startOverride(group) {
@@ -428,8 +543,126 @@
             <div x-show="refreshResult?.error" class="card py-2 px-3 text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
           </div>
 
+          <!-- ============================================= -->
+          <!-- Migration banner (newer version available)   -->
+          <!-- ============================================= -->
+          <template x-for="up in upgrades" :key="up.old_id">
+            <div class="card mb-4 border-l-2 border-l-[#48c78e] bg-[#48c78e]/5">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[#48c78e] mt-0.5">auto_fix_high</span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-headline text-sm font-semibold">
+                    Newer version available:
+                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--surface-container)]" x-text="up.old_id"></span>
+                    <span class="mx-1 text-[var(--on-surface-variant)]">→</span>
+                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[#48c78e]/15 text-[#48c78e]" x-text="up.new_id"></span>
+                  </div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-1">
+                    <span x-text="(up.assignments?.length || 0) + ' place' + ((up.assignments?.length || 0) === 1 ? '' : 's') + ' use ' + up.old_id + '. Update which?'"></span>
+                  </div>
+
+                  <!-- Per-assignment checkboxes -->
+                  <div class="mt-3 space-y-1.5">
+                    <template x-for="a in up.assignments" :key="a.key">
+                      <label class="flex items-center gap-2 text-xs cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          class="accent-[var(--primary)]"
+                          :checked="isUpgradeKeyChecked(up.old_id, a.key)"
+                          @change="toggleUpgradeKey(up.old_id, a.key)"
+                          :disabled="upgradeDone[up.old_id] === 'ok'">
+                        <span x-text="a.label"></span>
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono" x-show="a.priority > 1" x-text="'#' + a.priority"></span>
+                      </label>
+                    </template>
+                  </div>
+
+                  <!-- Action row -->
+                  <div class="flex items-center gap-2 mt-3">
+                    <button class="btn-primary text-xs"
+                            :disabled="upgradeBusy[up.old_id] || selectedCount(up.old_id) === 0 || upgradeDone[up.old_id] === 'ok'"
+                            @click="migrateUpgrade(up)">
+                      <span x-show="!upgradeBusy[up.old_id] && upgradeDone[up.old_id] !== 'ok'"
+                            x-text="'Update ' + selectedCount(up.old_id) + ' assignment' + (selectedCount(up.old_id) === 1 ? '' : 's')"></span>
+                      <span x-show="upgradeBusy[up.old_id]">Updating…</span>
+                      <span x-show="upgradeDone[up.old_id] === 'ok'">Updated</span>
+                    </button>
+                    <span x-show="upgradeDone[up.old_id] === 'ok'" class="text-[11px] text-[#48c78e] inline-flex items-center gap-1">
+                      <span class="material-symbols-outlined text-sm">check_circle</span>
+                      Migrated
+                    </span>
+                    <span x-show="upgradeDone[up.old_id] && upgradeDone[up.old_id] !== 'ok'"
+                          class="text-[11px] text-[var(--error)]"
+                          x-text="upgradeDone[up.old_id]"></span>
+                  </div>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]"
+                        @click="dismissUpgrade(up.old_id)" title="Dismiss">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ============================================= -->
+          <!-- Provider pills + winner cards                 -->
+          <!-- ============================================= -->
+          <div x-show="providersWithWinners().length > 0" class="mb-4">
+            <div class="flex items-center gap-2 flex-wrap mb-3">
+              <button
+                class="px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-label transition-colors"
+                :class="providerPill === 'all' ? 'bg-[var(--primary)] text-[var(--on-primary)]' : 'bg-[var(--surface-container)] text-[var(--on-surface-variant)] hover:bg-[var(--surface-container-high)]'"
+                @click="providerPill = 'all'">All</button>
+              <template x-for="pid in providersWithWinners()" :key="pid">
+                <button
+                  class="px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-label transition-colors"
+                  :class="providerPill === pid ? 'bg-[var(--primary)] text-[var(--on-primary)]' : 'bg-[var(--surface-container)] text-[var(--on-surface-variant)] hover:bg-[var(--surface-container-high)]'"
+                  @click="providerPill = pid"
+                  x-text="providerLabel(pid)"></button>
+              </template>
+              <button
+                class="ml-auto text-[11px] text-[var(--on-surface-variant)] hover:text-[var(--primary)] inline-flex items-center gap-1"
+                @click="showFullTable = !showFullTable">
+                <span class="material-symbols-outlined text-sm" x-text="showFullTable ? 'expand_less' : 'expand_more'"></span>
+                <span x-text="showFullTable ? 'Hide full table' : 'Show all models'"></span>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <template x-for="m in visibleWinners()" :key="m.id">
+                <div class="card">
+                  <div class="flex items-start justify-between mb-2">
+                    <div class="flex-1 min-w-0">
+                      <div class="font-headline text-sm font-semibold truncate" x-text="m.name || m.id"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] font-mono truncate" x-text="m.id"></div>
+                    </div>
+                    <span class="status-badge" :class="{
+                      'status-badge--active': m.tier === 'fast' || m.tier === 'haiku',
+                      'status-badge--success': m.tier === 'balanced' || m.tier === 'sonnet',
+                      'status-badge--proposed': m.tier === 'quality' || m.tier === 'reasoning' || m.tier === 'opus',
+                    }" x-text="m.tier"></span>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <div class="text-[9px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Provider</div>
+                      <div class="truncate" x-text="providerLabel(m.provider) || m.provider"></div>
+                    </div>
+                    <div>
+                      <div class="text-[9px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">In / Out $/1K</div>
+                      <div class="font-mono truncate">
+                        <span x-text="m.input_cost_per_1k != null ? m.input_cost_per_1k.toFixed(4) : '—'"></span>
+                        <span class="text-[var(--on-surface-variant)]"> / </span>
+                        <span x-text="m.output_cost_per_1k != null ? m.output_cost_per_1k.toFixed(4) : '—'"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Models Table -->
-          <div class="card overflow-x-auto">
+          <div x-show="providersWithWinners().length === 0 || showFullTable" class="card overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-[var(--on-surface-variant)] text-[10px] uppercase tracking-wider font-label">

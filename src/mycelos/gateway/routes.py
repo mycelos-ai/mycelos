@@ -2143,6 +2143,275 @@ def setup_routes(api: FastAPI) -> None:
         result = mycelos.model_updater.run("default")
         return result
 
+    @api.get("/api/models/winners")
+    async def model_winners() -> dict[str, Any]:
+        """Top-3-per-provider 'winners' that the auto-setup picks.
+
+        Reuses register_provider_models's logic: filters out legacy
+        models, sorts newest-version-first within each tier, and
+        returns the same one-per-tier set the onboarding flow would
+        pick on a fresh install. Used by Settings → Models to render
+        the prominent recipes-style cards before the full table.
+
+        Shape: ``{provider_id: [{id, tier, ...}]}`` per provider that
+        has any winner. Providers with no current-generation models
+        (e.g. ollama before discovery) return an empty list.
+        """
+        from mycelos.llm.providers import PROVIDERS, get_provider_models
+
+        result: dict[str, list[dict[str, Any]]] = {}
+        for provider_id in PROVIDERS:
+            try:
+                catalog = get_provider_models(provider_id) or []
+            except Exception:
+                catalog = []
+            picked: list[dict[str, Any]] = []
+            seen_tiers: set[str] = set()
+            for m in catalog:
+                if m.tier and m.tier not in seen_tiers:
+                    picked.append({
+                        "id": m.id,
+                        "name": m.name,
+                        "provider": m.provider,
+                        "tier": m.tier,
+                        "input_cost_per_1k": m.input_cost_per_1k,
+                        "output_cost_per_1k": m.output_cost_per_1k,
+                        "max_context": m.max_context,
+                    })
+                    seen_tiers.add(m.tier)
+            if picked:
+                result[provider_id] = picked
+        return {"providers": result}
+
+    def _is_date_only_bump(old_id: str, new_id: str) -> bool:
+        """True when old_id and new_id only differ by a trailing date.
+
+        Matches patterns like ``gpt-5.4-2026-03-05`` vs. ``gpt-5.4-2026-04-15``
+        (or single bare ``...-20260305`` variants). Same base, different
+        date-stamp → weekly spam rather than a real upgrade, so we skip
+        surfacing it in the migration banner.
+        """
+        date_suffix = re.compile(r"[-_](\d{4}-\d{2}-\d{2}|\d{8})$")
+        old_base = date_suffix.sub("", old_id)
+        new_base = date_suffix.sub("", new_id)
+        if old_base == new_base and old_base != old_id:
+            return True
+        return False
+
+    @api.get("/api/models/upgrades")
+    async def model_upgrades() -> dict[str, Any]:
+        """Detect which currently-registered models have a newer version
+        in the same (provider, tier) bucket, and which agent / system /
+        workflow assignments use the old one.
+
+        For each old model that has a newer counterpart we return:
+            {
+              "old_id": "anthropic/claude-opus-4-5",
+              "new_id": "anthropic/claude-opus-4-7",
+              "tier":   "opus",
+              "provider": "anthropic",
+              "assignments": [
+                  {"key": "agent:mycelos:execution", "label": "Mycelos · execution",
+                   "agent_id": "mycelos", "purpose": "execution", "priority": 1},
+                  {"key": "system::execution",       "label": "System default · execution", ...},
+              ],
+            }
+
+        Sorted by 'most assignments first' so the UI prioritizes the
+        upgrade with the broadest impact. Date-suffix-only bumps
+        (e.g. gpt-5.4-2026-03-05 → gpt-5.4-2026-04-15) are excluded —
+        only major / minor version jumps qualify, otherwise users get
+        spammed weekly.
+        """
+        from mycelos.llm.providers import (
+            get_provider_models,
+            _version_key,
+        )
+
+        mycelos = api.state.mycelos
+        registered_rows = mycelos.storage.fetchall(
+            "SELECT id, provider, tier FROM llm_models"
+        )
+        registered_ids = {r["id"] for r in registered_rows}
+
+        # Group registered models by (provider, tier)
+        by_bucket: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for r in registered_rows:
+            if not r.get("provider") or not r.get("tier"):
+                continue
+            by_bucket.setdefault((r["provider"], r["tier"]), []).append(dict(r))
+
+        # Find candidate upgrades by inspecting providers we have.
+        upgrades: list[dict[str, Any]] = []
+        seen_provs: set[str] = set()
+        for prov, tier in by_bucket:
+            seen_provs.add(prov)
+
+        for prov in seen_provs:
+            try:
+                catalog = get_provider_models(prov) or []
+            except Exception:
+                continue
+            # Latest per tier from catalog.
+            latest_per_tier: dict[str, str] = {}
+            for m in catalog:
+                if m.tier and m.tier not in latest_per_tier:
+                    latest_per_tier[m.tier] = m.id
+
+            for tier, latest_id in latest_per_tier.items():
+                bucket = by_bucket.get((prov, tier), [])
+                for row in bucket:
+                    if row["id"] == latest_id:
+                        continue
+                    # Old version — check if 'latest' is genuinely newer
+                    # by version key, not just a date-suffix sibling.
+                    if _version_key(latest_id) >= _version_key(row["id"]):
+                        # latest_id sorts later (= older with our negated
+                        # version key) than the row → not an upgrade.
+                        continue
+                    if _is_date_only_bump(row["id"], latest_id):
+                        continue
+                    # Find which assignments still pin this old model.
+                    rows = mycelos.storage.fetchall(
+                        """SELECT a.agent_id, a.purpose, a.priority,
+                                  COALESCE(g.name, a.agent_id) AS agent_name
+                             FROM agent_llm_models a
+                             LEFT JOIN agents g ON g.id = a.agent_id
+                            WHERE a.model_id = ?""",
+                        (row["id"],),
+                    )
+                    assignments = []
+                    for slot in rows:
+                        agent_id = slot["agent_id"]
+                        purpose = slot.get("purpose") or "execution"
+                        if agent_id is None:
+                            label = f"System default · {purpose}"
+                            key = f"system::{purpose}"
+                        else:
+                            label = f"{slot.get('agent_name') or agent_id} · {purpose}"
+                            key = f"agent:{agent_id}:{purpose}"
+                        assignments.append({
+                            "key": key,
+                            "label": label,
+                            "agent_id": agent_id,
+                            "purpose": purpose,
+                            "priority": slot.get("priority", 1),
+                        })
+                    if not assignments:
+                        # No live use of the old model — nothing to migrate.
+                        continue
+                    upgrades.append({
+                        "old_id": row["id"],
+                        "new_id": latest_id,
+                        "tier": tier,
+                        "provider": prov,
+                        "new_already_registered": latest_id in registered_ids,
+                        "assignments": assignments,
+                    })
+
+        upgrades.sort(key=lambda u: -len(u["assignments"]))
+        return {"upgrades": upgrades}
+
+    @api.post("/api/models/migrate")
+    async def migrate_model(payload: dict[str, Any]) -> dict[str, Any]:
+        """Replace one model with another across the selected assignment slots.
+
+        Body: ``{"old_id": "...", "new_id": "...", "keys": [
+            "system::execution", "agent:mycelos:execution", ...
+        ]}``
+
+        Atomic per-slot: if the new model isn't in the registry yet,
+        register it first using the catalog metadata. Selected slots
+        get re-pointed; unselected ones are left alone — that's the
+        explicit-opt-out the user picked in the UI.
+        """
+        from mycelos.llm.providers import get_provider_models
+
+        mycelos = api.state.mycelos
+        old_id = payload.get("old_id") or ""
+        new_id = payload.get("new_id") or ""
+        keys = payload.get("keys") or []
+        if not old_id or not new_id or not isinstance(keys, list):
+            return JSONResponse(
+                {"error": "old_id, new_id, and keys[] required"}, status_code=400
+            )
+
+        # Ensure the new model exists in llm_models — if the registry hasn't
+        # synced it yet, pick the metadata from the catalog and register on
+        # the fly so the assignment FK is satisfiable.
+        if not mycelos.model_registry.get_model(new_id):
+            provider = new_id.split("/", 1)[0] if "/" in new_id else ""
+            target = None
+            if provider:
+                for m in get_provider_models(provider) or []:
+                    if m.id == new_id:
+                        target = m
+                        break
+            if target is None:
+                return JSONResponse(
+                    {"error": f"Cannot register unknown model '{new_id}'"},
+                    status_code=400,
+                )
+            mycelos.model_registry.add_model(
+                model_id=target.id,
+                provider=target.provider,
+                tier=target.tier,
+                input_cost_per_1k=target.input_cost_per_1k,
+                output_cost_per_1k=target.output_cost_per_1k,
+                max_context=target.max_context,
+            )
+
+        # Apply the migration slot-by-slot.
+        migrated: list[str] = []
+        for key in keys:
+            parts = key.split(":")
+            if len(parts) != 3:
+                continue
+            kind, agent_id_raw, purpose = parts
+            if kind not in ("agent", "system"):
+                continue
+            if kind == "system":
+                # Replace any system-default row (agent_id IS NULL) that
+                # currently points at old_id, preserving priority.
+                rows = mycelos.storage.fetchall(
+                    """SELECT priority FROM agent_llm_models
+                        WHERE agent_id IS NULL AND purpose = ? AND model_id = ?""",
+                    (purpose, old_id),
+                )
+                for r in rows:
+                    mycelos.storage.execute(
+                        """UPDATE agent_llm_models
+                              SET model_id = ?
+                            WHERE agent_id IS NULL
+                              AND purpose = ?
+                              AND model_id = ?
+                              AND priority = ?""",
+                        (new_id, purpose, old_id, r["priority"]),
+                    )
+                migrated.append(key)
+            else:
+                rows = mycelos.storage.fetchall(
+                    """SELECT priority FROM agent_llm_models
+                        WHERE agent_id = ? AND purpose = ? AND model_id = ?""",
+                    (agent_id_raw, purpose, old_id),
+                )
+                for r in rows:
+                    mycelos.storage.execute(
+                        """UPDATE agent_llm_models
+                              SET model_id = ?
+                            WHERE agent_id = ? AND purpose = ?
+                              AND model_id = ? AND priority = ?""",
+                        (new_id, agent_id_raw, purpose, old_id, r["priority"]),
+                    )
+                migrated.append(key)
+
+        mycelos.audit.log("models.migrated", details={
+            "old_id": old_id,
+            "new_id": new_id,
+            "keys": migrated,
+        })
+        return {"status": "migrated", "old_id": old_id, "new_id": new_id, "keys": migrated}
+
     @api.put("/api/models/system-defaults")
     async def update_system_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         """Replace the system-wide default model chain for a given purpose.
