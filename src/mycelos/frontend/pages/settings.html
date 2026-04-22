@@ -411,6 +411,32 @@
           this.connectError = null;
           this.connectResult = null;
         },
+
+        async removeProviderCredential(provider) {
+          // Ollama has no credential row — the URL lives in memory, not the
+          // credential store. Treat 'remove' there as a no-op with a hint.
+          if (provider === 'ollama') {
+            alert('Ollama has no API key — to disconnect, just stop the Ollama server or change the URL on the next Connect.');
+            return;
+          }
+          try {
+            await MycelosAPI.delete('/api/credentials/' + encodeURIComponent(provider) + '?label=default');
+            // Refresh credential list so the tile flips back to unconnected.
+            const creds = await MycelosAPI.get('/api/credentials').catch(() => null);
+            if (creds) {
+              this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+            }
+            // Winners/upgrades don't change because registered models stay put.
+            // But if the active pill is the one we just removed, drop back to 'all'.
+            if (!this.hasCredentialFor(this.providerPill)) {
+              const fallback = this.providersWithWinners();
+              this.providerPill = fallback[0] || 'all';
+            }
+          } catch (e) {
+            alert('Remove failed: ' + (e?.message || 'unknown error'));
+          }
+        },
+
         cancelConnect() {
           this.connectProvider = null;
           this.connectInput = '';
@@ -634,7 +660,7 @@
               supported: [
                 { id: 'anthropic', label: 'Anthropic', hint: 'API key', icon: 'psychology' },
                 { id: 'openai',    label: 'OpenAI',    hint: 'API key', icon: 'smart_toy' },
-                { id: 'gemini',    label: 'Gemini',    hint: 'API key', icon: 'sparkles' },
+                { id: 'gemini',    label: 'Gemini',    hint: 'API key', icon: 'auto_awesome' },
                 { id: 'openrouter',label: 'OpenRouter',hint: 'API key', icon: 'alt_route' },
                 { id: 'ollama',    label: 'Ollama',    hint: 'Local URL', icon: 'hub' },
               ],
@@ -653,23 +679,33 @@
 
             <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
               <template x-for="p in supported" :key="p.id">
-                <button
-                  class="card flex flex-col items-start gap-1 p-3 text-left transition-colors"
-                  :class="hasCredentialFor(p.id)
-                          ? 'opacity-60 cursor-default'
-                          : 'hover:bg-[var(--surface-container-high)]'"
-                  :disabled="hasCredentialFor(p.id)"
-                  @click="openConnect(p.id)">
-                  <span class="material-symbols-outlined text-sm text-[var(--primary)]" x-text="p.icon"></span>
-                  <div class="font-headline text-xs font-semibold" x-text="p.label"></div>
-                  <div class="text-[10px] text-[var(--on-surface-variant)]">
-                    <span x-show="!hasCredentialFor(p.id)" x-text="p.hint"></span>
-                    <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1">
-                      <span class="material-symbols-outlined text-[11px] text-[#48c78e]">check_circle</span>
-                      Connected
-                    </span>
-                  </div>
-                </button>
+                <div class="card p-3 relative hover:bg-[var(--surface-container-high)] transition-colors">
+                  <button
+                    class="flex flex-col items-start gap-1 w-full text-left"
+                    @click="openConnect(p.id)"
+                    :title="hasCredentialFor(p.id)
+                            ? 'Replace ' + p.label + ' ' + (p.id === 'ollama' ? 'URL' : 'API key')
+                            : 'Connect ' + p.label">
+                    <span class="material-symbols-outlined text-sm text-[var(--primary)]" x-text="p.icon"></span>
+                    <div class="font-headline text-xs font-semibold" x-text="p.label"></div>
+                    <div class="text-[10px] text-[var(--on-surface-variant)]">
+                      <span x-show="!hasCredentialFor(p.id)" x-text="p.hint"></span>
+                      <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1 text-[#48c78e]">
+                        <span class="material-symbols-outlined text-[11px]">check_circle</span>
+                        <span>Connected · click to replace</span>
+                      </span>
+                    </div>
+                  </button>
+
+                  <!-- Remove (only for cloud providers that actually have a credential row) -->
+                  <button
+                    x-show="hasCredentialFor(p.id) && p.id !== 'ollama'"
+                    class="absolute top-1.5 right-1.5 text-[var(--on-surface-variant)] hover:text-[var(--error)] p-1 rounded"
+                    @click.stop="removeProviderCredential(p.id)"
+                    :title="'Remove ' + p.label + ' credential'">
+                    <span class="material-symbols-outlined text-[14px]">delete</span>
+                  </button>
+                </div>
               </template>
             </div>
 
@@ -678,7 +714,7 @@
               <div class="flex items-center justify-between">
                 <div>
                   <p class="font-headline text-sm font-semibold">
-                    Connect
+                    <span x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
                     <span x-text="connectProvider === 'ollama' ? 'Ollama' :
                                   connectProvider === 'anthropic' ? 'Anthropic' :
                                   connectProvider === 'openai' ? 'OpenAI' :
@@ -688,7 +724,9 @@
                   <p class="text-[11px] text-[var(--on-surface-variant)]"
                      x-text="connectProvider === 'ollama'
                              ? 'Enter the URL where your Ollama server is running.'
-                             : 'Paste your API key. It is encrypted at rest and never sent to the LLM.'"></p>
+                             : (hasCredentialFor(connectProvider)
+                                ? 'Paste the new API key. The old one is overwritten.'
+                                : 'Paste your API key. It is encrypted at rest and never sent to the LLM.')"></p>
                 </div>
                 <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="cancelConnect()" title="Cancel">
                   <span class="material-symbols-outlined text-sm">close</span>
@@ -705,14 +743,14 @@
                 <button class="btn-primary text-xs"
                         :disabled="connectBusy || !connectInput"
                         @click="submitConnect()">
-                  <span x-show="!connectBusy">Connect</span>
-                  <span x-show="connectBusy">Connecting…</span>
+                  <span x-show="!connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
+                  <span x-show="connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replacing…' : 'Connecting…'"></span>
                 </button>
                 <button class="btn-secondary text-xs" @click="cancelConnect()">Cancel</button>
                 <span x-show="connectResult && connectResult.ok"
                       class="text-[11px] text-[#48c78e] inline-flex items-center gap-1">
                   <span class="material-symbols-outlined text-sm">check_circle</span>
-                  Connected — <span x-text="(connectResult?.models || []).length + ' model' + ((connectResult?.models || []).length === 1 ? '' : 's') + ' added'"></span>
+                  <span x-text="'Saved — ' + (connectResult?.models || []).length + ' model' + ((connectResult?.models || []).length === 1 ? '' : 's') + ' available'"></span>
                 </span>
               </div>
             </div>
