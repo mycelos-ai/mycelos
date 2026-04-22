@@ -164,6 +164,9 @@ def create_proxy_app() -> FastAPI:
         "_stt_service": None,
         # Maps session_id → connector_id for MCP sessions started via /mcp/start
         "_mcp_sessions": {},
+        # Maps session_id → {"proc": Popen, "user_id": str, "oauth_cmd": str}
+        # for OAuth auth subprocesses started via /oauth/start
+        "_oauth_sessions": {},
         # Tracks which credentials have already been bootstrapped this session
         "_bootstrapped": set(),
         "start_time": time.time(),
@@ -602,6 +605,138 @@ def create_proxy_app() -> FastAPI:
             })
 
         return JSONResponse({"ok": True})
+
+    # ---------------------------------------------------------------------------
+    # POST /oauth/start  — spawn an OAuth auth subprocess
+    # ---------------------------------------------------------------------------
+
+    @app.post("/oauth/start")
+    async def oauth_start(request: Request) -> JSONResponse:
+        """Spawn an OAuth auth subprocess and return a session id.
+
+        The caller (gateway passthrough) provides `oauth_cmd` from a
+        recipe and `env_vars` to forward to the subprocess (with
+        `credential:<service>` references resolved here). The process
+        keeps running; the WebSocket at /oauth/stream/{session_id}
+        ferries stdout/stderr/stdin. Callers must eventually call
+        /oauth/stop to clean up.
+        """
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body = await request.json()
+        oauth_cmd: str = body.get("oauth_cmd", "")
+        env_vars: dict = body.get("env_vars", {}) or {}
+
+        # Narrow the blast radius: only npx-based commands are accepted.
+        # Our recipes exclusively use `npx -y <pkg> auth`; an attacker
+        # with a stolen proxy token should not be able to spawn arbitrary
+        # processes via this endpoint.
+        import shlex
+        parts = shlex.split(oauth_cmd)
+        if not parts or parts[0] != "npx":
+            return JSONResponse(
+                {"error": "oauth_cmd must start with 'npx' — recipe validation"},
+                status_code=400,
+            )
+
+        # Resolve credential:<service> references in env_vars.
+        resolved_env = dict(os.environ)
+        credential_proxy = _get_credential_proxy()
+        for key, val in env_vars.items():
+            if isinstance(val, str) and val.startswith("credential:") and credential_proxy:
+                service = val[len("credential:"):]
+                try:
+                    cred = credential_proxy.get_credential(service, user_id=user_id)
+                    if not cred or not cred.get("api_key"):
+                        cred = credential_proxy.get_credential(f"connector:{service}", user_id=user_id)
+                except Exception:
+                    cred = None
+                if not cred or not cred.get("api_key"):
+                    return JSONResponse(
+                        {"error": f"Credential '{service}' not found — fail-closed"},
+                        status_code=502,
+                    )
+                resolved_env[key] = cred["api_key"]
+            else:
+                resolved_env[key] = str(val)
+
+        import subprocess
+        import secrets
+        try:
+            proc = subprocess.Popen(
+                parts,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=resolved_env,
+                bufsize=0,
+            )
+        except Exception as e:
+            logger.error("oauth_start subprocess spawn failed: %s", e)
+            return JSONResponse({"error": "subprocess spawn failed"}, status_code=500)
+
+        session_id = f"oauth-{secrets.token_hex(6)}"
+        _state["_oauth_sessions"][session_id] = {
+            "proc": proc,
+            "user_id": user_id,
+            "oauth_cmd": oauth_cmd,
+        }
+
+        storage = _get_storage()
+        if storage:
+            _write_audit(storage, "proxy.oauth_started", user_id, {
+                "session_id": session_id,
+                "oauth_cmd": oauth_cmd,
+            })
+
+        return JSONResponse({"session_id": session_id})
+
+    # ---------------------------------------------------------------------------
+    # POST /oauth/stop  — terminate an OAuth auth subprocess
+    # ---------------------------------------------------------------------------
+
+    @app.post("/oauth/stop")
+    async def oauth_stop(request: Request) -> JSONResponse:
+        """Terminate the OAuth subprocess for `session_id`.
+
+        Idempotent — a missing session returns status=not_found (200),
+        not an error, so the frontend can call stop on cleanup without
+        knowing whether it's already gone.
+        """
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body = await request.json()
+        session_id: str = body.get("session_id", "")
+        sess = _state["_oauth_sessions"].pop(session_id, None)
+        if sess is None:
+            return JSONResponse({"status": "not_found"}, status_code=200)
+
+        proc = sess["proc"]
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+        storage = _get_storage()
+        if storage:
+            _write_audit(storage, "proxy.oauth_stopped", user_id, {
+                "session_id": session_id,
+            })
+
+        return JSONResponse({"status": "stopped"})
 
     # ---------------------------------------------------------------------------
     # POST /llm/complete

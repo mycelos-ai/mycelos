@@ -163,6 +163,27 @@ class SecurityProxyClient:
         """Terminate an active MCP session."""
         self._request("POST", "/mcp/stop", json={"session_id": session_id})
 
+    def oauth_start(self, oauth_cmd: str, env_vars: dict, user_id: str = "default") -> dict:
+        """Spawn an OAuth auth subprocess in the proxy. Returns {session_id}.
+
+        Pair this with the WebSocket at /oauth/stream/{session_id} to
+        actually interact with the process. Always call oauth_stop when
+        done — subprocesses don't auto-clean on client disconnect.
+        """
+        resp = self._request("POST", "/oauth/start", json={
+            "oauth_cmd": oauth_cmd,
+            "env_vars": env_vars,
+        }, headers={"X-User-Id": user_id})
+        return resp.json()
+
+    def oauth_stop(self, session_id: str, user_id: str = "default") -> dict:
+        """Terminate an OAuth session. Idempotent — stopping an unknown
+        or already-stopped session returns status=not_found (200)."""
+        resp = self._request("POST", "/oauth/stop", json={
+            "session_id": session_id,
+        }, headers={"X-User-Id": user_id})
+        return resp.json()
+
     def llm_complete(self, model: str, messages: list[dict],
                      tools: list[dict] | None = None, stream: bool = False,
                      user_id: str = "default", agent_id: str | None = None,
