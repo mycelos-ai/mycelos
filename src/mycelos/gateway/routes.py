@@ -1556,6 +1556,42 @@ def setup_routes(api: FastAPI) -> None:
 
     # ── Connectors ────────────────────────────────────────────
 
+    @api.get("/api/connectors/recipes/{recipe_id}")
+    async def get_recipe(recipe_id: str) -> dict[str, Any]:
+        """Recipe metadata + resolved setup guide in one roundtrip.
+
+        Used by the frontend setup dialog to decide which flow to render
+        (plain 'secret' vs. 'oauth_browser' wizard) and to show the
+        platform-specific preparation steps inline.
+        """
+        from mycelos.connectors.mcp_recipes import get_recipe as get_r
+        from mycelos.connectors.oauth_setup_guides import get_setup_guide
+
+        recipe = get_r(recipe_id)
+        if recipe is None:
+            raise HTTPException(status_code=404, detail=f"Unknown recipe: {recipe_id}")
+
+        guide = (
+            get_setup_guide(recipe.oauth_setup_guide_id)
+            if recipe.oauth_setup_guide_id
+            else None
+        )
+        return {
+            "id": recipe.id,
+            "name": recipe.name,
+            "description": recipe.description,
+            "command": recipe.command,
+            "transport": recipe.transport,
+            "category": recipe.category,
+            "credentials": recipe.credentials,
+            "capabilities_preview": recipe.capabilities_preview,
+            "setup_flow": recipe.setup_flow,
+            "oauth_cmd": recipe.oauth_cmd,
+            "oauth_setup_guide_id": recipe.oauth_setup_guide_id,
+            "setup_guide": guide,
+            "requires_node": recipe.requires_node,
+        }
+
     @api.get("/api/connectors")
     async def list_connectors() -> list[dict[str, Any]]:
         """List all connectors with MCP tool count."""
