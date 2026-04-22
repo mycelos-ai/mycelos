@@ -80,3 +80,10 @@ docs/local-notes/
 
 # Claude Code session state (locks, caches)
 .claude/
+
+# Stray screenshots dropped into the repo root for chat context (not
+# meant to be committed). Real screenshots belong in screenshots/.
+/WhatsApp*.jpeg
+/WhatsApp*.jpg
+/WhatsApp*.png
+/Screenshot*.png

@@ -110,6 +110,47 @@
     })();
   </script>
   <script>
+    // Bridge for the inline-action fallback in renderMarkdown(): when an
+    // LLM emits its tool call as quoted text instead of using the tool-
+    // use channel, the user gets a clickable button that re-asks the
+    // model — this time with an explicit instruction to dispatch the
+    // tool properly. The retry posts a normal chat message, so the
+    // session, agent, and SSE wiring all work unchanged.
+    window.__retryToolCall = function(btn) {
+      const fn = btn.getAttribute('data-fn') || '';
+      const argsRaw = btn.getAttribute('data-args') || '{}';
+      let args = {};
+      try { args = JSON.parse(argsRaw); } catch (e) { args = {}; }
+      // Find a meaningful argument to mention to the user (e.g. the
+      // connector_id or service); fall back to the function name.
+      const keyArg = args.connector_id || args.service || '';
+      const intent = keyArg
+        ? `Please invoke the ${fn} tool for ${keyArg}. Use the tool-use channel — do not write the action as text.`
+        : `Please invoke the ${fn} tool now. Use the tool-use channel — do not write the action as text.`;
+      // Use the page's Alpine app to send the message — finds the chat
+      // root via x-data and dispatches sendMessage().
+      const root = document.querySelector('[x-data]');
+      if (root && root._x_dataStack) {
+        for (const scope of root._x_dataStack) {
+          if (typeof scope.sendMessage === 'function') {
+            scope.sendMessage(intent);
+            btn.disabled = true;
+            btn.textContent = 'Retrying…';
+            return;
+          }
+        }
+      }
+      // Fallback: plain POST.
+      fetch('/api/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: intent, agent_id: 'mycelos'}),
+      });
+      btn.disabled = true;
+      btn.textContent = 'Retrying…';
+    };
+  </script>
+  <script>
     // Alpine.js store for cross-component state sharing (chat <-> right panel)
     document.addEventListener('alpine:init', () => {
       Alpine.store('chat', {
@@ -914,6 +955,44 @@
 
     function renderMarkdown(text) {
       if (!text) return '';
+
+      // Defensive: some LLMs emit "[action] type: functions.<name> args:
+      // {...} [/action]" as plain text instead of using the native tool-
+      // call channel. Surface that as a clickable button so the user
+      // doesn't see a useless instruction line.
+      // The proper fix is server-side (force a real tool_call retry) but
+      // this catches the symptom at render time.
+      const actionRe = /\[action\]\s*type:\s*functions\.([\w_]+)\s*args:\s*({[^}]*})\s*\[\/action\]/i;
+      const actionMatch = text.match(actionRe);
+      if (actionMatch) {
+        const fnName = actionMatch[1];
+        let argsText = actionMatch[2].trim();
+        // Try to coerce single-quoted JS-object-literal-ish into JSON.
+        try {
+          argsText = argsText
+            .replace(/([\{,]\s*)([A-Za-z_][\w]*)\s*:/g, '$1"$2":')
+            .replace(/'/g, '"');
+        } catch (e) { /* ignore — fall through with original */ }
+        const actionLabel = fnName.replace(/_/g, ' ');
+        // Render the surrounding text plus a clickable button. The
+        // button calls window.__retryToolCall(fnName, argsJson) which
+        // posts a synthetic chat message asking the model to try
+        // again — same effect as the user re-asking.
+        const before = text.slice(0, actionMatch.index).trim();
+        const after = text.slice(actionMatch.index + actionMatch[0].length).trim();
+        const safeArgs = argsText.replace(/"/g, '&quot;');
+        return (
+          (before ? before + '<br><br>' : '') +
+          '<button class="mycelos-retry-action" ' +
+            'onclick="window.__retryToolCall(this)" ' +
+            `data-fn="${fnName}" data-args="${safeArgs}" ` +
+            'style="background:var(--primary);color:white;padding:0.5rem 1rem;border-radius:0.5rem;border:none;cursor:pointer;font-size:0.875rem;">' +
+            '▶ ' + actionLabel +
+          '</button>' +
+          (after ? '<br><br>' + after : '')
+        );
+      }
+
       let html;
       if (typeof marked !== 'undefined') {
         html = marked.parse(text);
