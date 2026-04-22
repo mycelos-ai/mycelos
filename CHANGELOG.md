@@ -54,7 +54,8 @@ deployment on localhost.
 ### Settings → Models: migration banner + provider winners
 - New endpoints: `GET /api/models/winners` (top per tier per provider, reusing `register_provider_models`), `GET /api/models/upgrades` (detects stale assignments when a newer model exists in the same provider+tier bucket, skips date-only bumps), `POST /api/models/migrate` (re-points selected agent / system-default slots to the new model and auto-registers it from the catalog if missing).
 - Settings page now surfaces an in-place banner (e.g. "Opus 4.5 → 4.7, 5 places use Opus 4.5") with per-assignment checkboxes so the user can opt out row-by-row before applying the upgrade.
-- Provider pill row (Anthropic / OpenAI / Gemini / Ollama / OpenRouter / All) with "winner" cards (one per tier) shown above the full table. Full table collapses behind a "Show all models" toggle.
+- Provider pill row (Anthropic / OpenAI / Gemini / Ollama / OpenRouter / All) with "winner" cards (one per tier) shown above the full table. Full table collapses behind a "Show all models" toggle. Pills are hidden for providers without stored credentials — pointing users at a model they can't actually call is noise.
+- "Connect a provider" row on the Models page itself: one button per supported provider (Anthropic, OpenAI, Gemini, OpenRouter, Ollama), each opening a slim form (API key or Ollama URL) that calls the existing `/api/setup` endpoint. Already-connected providers render as a greyed-out "Connected" state so the row doubles as an at-a-glance status.
 
 ## Week 16 (2026)
 

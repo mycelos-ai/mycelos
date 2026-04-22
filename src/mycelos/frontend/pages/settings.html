@@ -388,10 +388,79 @@
         // ── Winners pills + filter ──
         hasCredentialFor(provider) {
           // Ollama and custom are credential-free (local URL, manual setup).
-          if (provider === 'ollama' || provider === 'custom') return true;
+          if (provider === 'custom') return true;
+          if (provider === 'ollama') {
+            // Consider Ollama 'connected' once we have any ollama model registered
+            // — this is how setup signals that the user wired up an Ollama URL.
+            return (this.models || []).some(m => (m.provider || '') === 'ollama');
+          }
           const list = Array.isArray(this.credentials) ? this.credentials : [];
           return list.some(c => (c.service || '').toLowerCase() === provider);
         },
+
+        // ── Connect-provider UX (bootstrap from the Models page) ──
+        connectProvider: null,   // 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'ollama'
+        connectInput: '',         // API key or Ollama URL depending on provider
+        connectBusy: false,
+        connectError: null,
+        connectResult: null,
+
+        openConnect(provider) {
+          this.connectProvider = provider;
+          this.connectInput = provider === 'ollama' ? 'http://localhost:11434' : '';
+          this.connectError = null;
+          this.connectResult = null;
+        },
+        cancelConnect() {
+          this.connectProvider = null;
+          this.connectInput = '';
+          this.connectError = null;
+          this.connectBusy = false;
+        },
+        async submitConnect() {
+          if (!this.connectProvider || !this.connectInput) return;
+          this.connectBusy = true;
+          this.connectError = null;
+          try {
+            const body = this.connectProvider === 'ollama'
+              ? { ollama_url: this.connectInput.trim() }
+              : { api_key: this.connectInput.trim(), provider_id: this.connectProvider };
+            const res = await MycelosAPI.post('/api/setup', body);
+            this.connectResult = res;
+            // Refresh everything the Models section depends on.
+            const [modelsData, creds, upgData, winData] = await Promise.all([
+              MycelosAPI.get('/api/models').catch(() => null),
+              MycelosAPI.get('/api/credentials').catch(() => null),
+              MycelosAPI.get('/api/models/upgrades').catch(() => null),
+              MycelosAPI.get('/api/models/winners').catch(() => null),
+            ]);
+            if (modelsData) {
+              this.models = modelsData.models || [];
+              this.agents = modelsData.agents || [];
+              this.assignments = modelsData.assignments || [];
+            }
+            if (creds) {
+              this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+            }
+            if (upgData) this.upgrades = upgData.upgrades || [];
+            if (winData) {
+              this.winners = winData.providers || {};
+              // Jump the filter onto the provider we just connected.
+              if (this.hasCredentialFor(this.connectProvider)) {
+                this.providerPill = this.connectProvider;
+              }
+            }
+            // Close the form.
+            this.connectProvider = null;
+            this.connectInput = '';
+          } catch (e) {
+            // FastAPI wraps SetupError in HTTPException(400) — prefer body.detail.
+            this.connectError = (e && e.message) || 'Connection failed';
+          } finally {
+            this.connectBusy = false;
+          }
+        },
+
         providersWithWinners() {
           // Only show providers that (a) have winner models AND (b) are credentialed.
           // Without a key the user can't actually use the model, so showing it is noise.
@@ -555,6 +624,98 @@
               </button>
             </div>
             <div x-show="refreshResult?.error" class="card py-2 px-3 text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
+          </div>
+
+          <!-- ============================================= -->
+          <!-- Connect a provider (bootstrap + add more)    -->
+          <!-- ============================================= -->
+          <div
+            x-data="{
+              supported: [
+                { id: 'anthropic', label: 'Anthropic', hint: 'API key', icon: 'psychology' },
+                { id: 'openai',    label: 'OpenAI',    hint: 'API key', icon: 'smart_toy' },
+                { id: 'gemini',    label: 'Gemini',    hint: 'API key', icon: 'sparkles' },
+                { id: 'openrouter',label: 'OpenRouter',hint: 'API key', icon: 'alt_route' },
+                { id: 'ollama',    label: 'Ollama',    hint: 'Local URL', icon: 'hub' },
+              ],
+            }"
+            class="mb-4"
+            x-show="supported.some(p => !hasCredentialFor(p.id)) || providersWithWinners().length === 0"
+          >
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <p class="font-headline text-sm font-semibold">Connect a provider</p>
+                <p class="text-[11px] text-[var(--on-surface-variant)]">
+                  Add a key to see that provider's models below.
+                </p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <template x-for="p in supported" :key="p.id">
+                <button
+                  class="card flex flex-col items-start gap-1 p-3 text-left transition-colors"
+                  :class="hasCredentialFor(p.id)
+                          ? 'opacity-60 cursor-default'
+                          : 'hover:bg-[var(--surface-container-high)]'"
+                  :disabled="hasCredentialFor(p.id)"
+                  @click="openConnect(p.id)">
+                  <span class="material-symbols-outlined text-sm text-[var(--primary)]" x-text="p.icon"></span>
+                  <div class="font-headline text-xs font-semibold" x-text="p.label"></div>
+                  <div class="text-[10px] text-[var(--on-surface-variant)]">
+                    <span x-show="!hasCredentialFor(p.id)" x-text="p.hint"></span>
+                    <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1">
+                      <span class="material-symbols-outlined text-[11px] text-[#48c78e]">check_circle</span>
+                      Connected
+                    </span>
+                  </div>
+                </button>
+              </template>
+            </div>
+
+            <!-- Inline connect form (shown when a button is clicked) -->
+            <div x-show="connectProvider" x-transition class="card mt-3 space-y-3">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="font-headline text-sm font-semibold">
+                    Connect
+                    <span x-text="connectProvider === 'ollama' ? 'Ollama' :
+                                  connectProvider === 'anthropic' ? 'Anthropic' :
+                                  connectProvider === 'openai' ? 'OpenAI' :
+                                  connectProvider === 'gemini' ? 'Gemini' :
+                                  connectProvider === 'openrouter' ? 'OpenRouter' : connectProvider"></span>
+                  </p>
+                  <p class="text-[11px] text-[var(--on-surface-variant)]"
+                     x-text="connectProvider === 'ollama'
+                             ? 'Enter the URL where your Ollama server is running.'
+                             : 'Paste your API key. It is encrypted at rest and never sent to the LLM.'"></p>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="cancelConnect()" title="Cancel">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+              <input
+                :type="connectProvider === 'ollama' ? 'url' : 'password'"
+                class="input-field"
+                :placeholder="connectProvider === 'ollama' ? 'http://localhost:11434' : 'sk-...'"
+                x-model="connectInput"
+                @keydown.enter="submitConnect()">
+              <div x-show="connectError" class="text-xs text-[var(--error)]" x-text="connectError"></div>
+              <div class="flex items-center gap-2">
+                <button class="btn-primary text-xs"
+                        :disabled="connectBusy || !connectInput"
+                        @click="submitConnect()">
+                  <span x-show="!connectBusy">Connect</span>
+                  <span x-show="connectBusy">Connecting…</span>
+                </button>
+                <button class="btn-secondary text-xs" @click="cancelConnect()">Cancel</button>
+                <span x-show="connectResult && connectResult.ok"
+                      class="text-[11px] text-[#48c78e] inline-flex items-center gap-1">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Connected — <span x-text="(connectResult?.models || []).length + ' model' + ((connectResult?.models || []).length === 1 ? '' : 's') + ' added'"></span>
+                </span>
+              </div>
+            </div>
           </div>
 
           <!-- ============================================= -->
