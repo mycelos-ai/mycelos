@@ -128,13 +128,14 @@ def classify_tier(model_id: str) -> str:
         One of "opus", "sonnet", or "haiku".
     """
     lower = model_id.lower()
-    if "opus" in lower:
+    if "opus" in lower or "pro" in lower:
         return "opus"
-    # Reasoning models (o1, o3, o4) are high-tier -- check before "mini"
+    # Reasoning models (o1, o3, o4) are high-tier — check before "mini"
     # since "o4-mini" should still be opus.
-    if re.match(r"^o[134]", lower):
+    if re.match(r"^o[134]", lower) or "/o1" in lower or "/o3" in lower or "/o4" in lower:
         return "opus"
-    if "haiku" in lower or "mini" in lower or "flash" in lower:
+    # Compact / cost-tier names across providers.
+    if "haiku" in lower or "mini" in lower or "nano" in lower or "flash" in lower:
         return "haiku"
     return "sonnet"  # default
 
@@ -243,9 +244,37 @@ def _get_litellm_models(provider: str) -> list[ModelInfo]:
     # (which is typically the alias without date suffix).
     deduped = _deduplicate_models(current)
 
-    # Sort by tier (opus first), then alphabetically.
-    deduped.sort(key=lambda m: (_TIER_ORDER.get(m.tier, 1), m.id))
+    # Sort by tier (opus first), then by version *descending* so the
+    # newest model in each tier is the first match. Auto-setup picks
+    # 'first match per tier', which would otherwise hand the user a
+    # stale pick like gpt-5 instead of gpt-5.4. _version_key extracts
+    # numeric segments so '5.4' beats '5' and '4.6' beats '4.5'.
+    deduped.sort(key=lambda m: (_TIER_ORDER.get(m.tier, 1), _version_key(m.id)))
     return deduped
+
+
+def _version_key(model_id: str) -> tuple:
+    """Sort key that puts newer model versions first.
+
+    Returns a tuple of negated numeric tokens so Python's natural sort
+    yields descending version order. Falls back to lexicographic on
+    the leftover non-numeric tail. '4.5' beats '4', 'gpt-5.4' beats
+    'gpt-5', and dated suffixes like '-2025-08-15' tie-break newest-
+    first as well.
+    """
+    nums = re.findall(r"\d+(?:\.\d+)?", model_id)
+    parsed: list[float] = []
+    for n in nums:
+        try:
+            parsed.append(float(n))
+        except ValueError:
+            pass
+    # Negate so Python's ascending sort delivers descending versions.
+    neg = tuple(-x for x in parsed)
+    # Pad to a fixed width so two ids with different number-counts
+    # don't compare lexicographically by length.
+    pad = (0,) * (8 - len(neg)) if len(neg) < 8 else ()
+    return neg + pad + (model_id,)
 
 
 # Provider-specific legacy patterns. Models whose id matches are considered
@@ -260,7 +289,10 @@ LEGACY_PATTERNS: dict[str, re.Pattern] = {
         r"claude-(3|3\.5|3\.7|4-|4\.1|opus-4-1|opus-4-20|sonnet-4-20|4-opus|4-sonnet)"
     ),
     "openai": re.compile(
-        r"(gpt-3|gpt-4-|gpt-4o-2024|chatgpt|gpt-4\.5)"
+        # GPT-5 family went GA in 2025. Treat the entire GPT-4 line
+        # (incl. 4o, 4.1, 4.5) as legacy — auto-setup should land on
+        # gpt-5* by default. The o1/o3/o4 reasoning models stay current.
+        r"(gpt-3|gpt-4|chatgpt)"
     ),
     "gemini": re.compile(
         r"gemini-(1|2\.0|pro$|ultra)"
