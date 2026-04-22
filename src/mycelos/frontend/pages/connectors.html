@@ -869,7 +869,6 @@
         // --- Services: built-in integrations (no MCP server, just credentials) ---
         services: [
           { id: 'email', icon: '\uD83D\uDCE7', name: 'Email', description: 'Gmail, Outlook, iCloud, Yahoo, Zoho, ProtonMail, custom IMAP \u2014 via @n24q02m/better-email-mcp', credentials_needed: true, command: 'npx -y @n24q02m/better-email-mcp' },
-          { id: 'gmail', icon: '\uD83D\uDCE8', name: 'Gmail API', description: 'Full Gmail + Calendar + Drive via Google API', credentials_needed: true, command: '' },
         ],
 
         // --- MCP Connectors: real MCP servers ---
@@ -889,7 +888,11 @@
           ]},
           { id: 'files', icon: '\uD83D\uDCC1', label: 'Files', connectors: [
             { id: 'filesystem', name: 'Filesystem', description: 'Read and write files in allowed directories', command: 'npx -y @modelcontextprotocol/server-filesystem', credentials_needed: false },
-            { id: 'google-drive', name: 'Google Drive', description: 'Access Google Drive files', command: 'npx -y @modelcontextprotocol/server-google-drive', credentials_needed: true },
+          ]},
+          { id: 'google', icon: '\uD83C\uDF31', label: 'Google Workspace', connectors: [
+            { id: 'gmail', name: 'Gmail', description: 'Search, read, send, filters, labels, attachments via the Gmail API', command: 'npx -y @gongrzhe/server-gmail-autoauth-mcp', credentials_needed: true },
+            { id: 'google-calendar', name: 'Google Calendar', description: 'List, create, update, delete events across all calendars', command: 'npx -y @cocal/google-calendar-mcp', credentials_needed: true },
+            { id: 'google-drive', name: 'Google Drive', description: 'List, read, search, and upload files in Drive', command: 'npx -y @piotr-agier/google-drive-mcp', credentials_needed: true },
           ]},
           { id: 'dev', icon: '\uD83D\uDCBB', label: 'Development', connectors: [
             { id: 'github', name: 'GitHub', description: 'Repositories, Issues, Pull Requests, Code Search', command: '', credentials_needed: true },
@@ -1208,8 +1211,7 @@
           if (this.isConnectorInstalled(svc.id)) return;
           this.showAddForm = false;
           this.activeUseCase = null;
-          // Gmail uses the email wizard (same IMAP/SMTP flow, auto-detects Gmail)
-          const wizardType = svc.id === 'gmail' ? 'email' : svc.id;
+          const wizardType = svc.id;
           this.wizard = {
             active: true, type: wizardType, step: 1,
             totalSteps: 3,
