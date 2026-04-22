@@ -31,6 +31,22 @@ class MCPRecipe:
         # to run (e.g. TRANSPORT_MODE=stdio for MCP servers that default
         # to HTTP-relay when no env is set). Merged into the subprocess
         # env alongside credential injection.
+    setup_flow: str = "secret"
+        # "secret" (default): single password-style input for API key.
+        # "oauth_browser": render the OAuth-keys upload + browser-consent
+        # wizard. Frontend switches dialog based on this value.
+    oauth_cmd: str = ""
+        # Non-empty only when setup_flow == "oauth_browser". The command
+        # the proxy spawns on "Start OAuth consent" — e.g.
+        # "npx -y @gongrzhe/server-gmail-autoauth-mcp auth". stdout/stderr
+        # is streamed to the web UI; the user follows the URL the command
+        # prints.
+    oauth_setup_guide_id: str = ""
+        # Key into the oauth_setup_guides registry (e.g. "google_cloud").
+        # Non-empty only when setup_flow == "oauth_browser". The guide
+        # describes prerequisites like "create a Google Cloud project,
+        # enable the Gmail API, download gcp-oauth.keys.json" as a
+        # step-by-step wizard.
 
 
 # All available recipes
@@ -143,6 +159,9 @@ RECIPES: dict[str, MCPRecipe] = {
         ],
         category="communication",
         requires_node=True,
+        setup_flow="oauth_browser",
+        oauth_cmd="npx -y @gongrzhe/server-gmail-autoauth-mcp auth",
+        oauth_setup_guide_id="google_cloud",
     ),
     "google-calendar": MCPRecipe(
         id="google-calendar",
@@ -168,6 +187,9 @@ RECIPES: dict[str, MCPRecipe] = {
         ],
         category="communication",
         requires_node=True,
+        setup_flow="oauth_browser",
+        oauth_cmd="npx -y @cocal/google-calendar-mcp auth",
+        oauth_setup_guide_id="google_cloud",
     ),
     "google-drive": MCPRecipe(
         id="google-drive",
@@ -192,6 +214,9 @@ RECIPES: dict[str, MCPRecipe] = {
         ],
         category="storage",
         requires_node=True,
+        setup_flow="oauth_browser",
+        oauth_cmd="npx -y @piotr-agier/google-drive-mcp auth",
+        oauth_setup_guide_id="google_cloud",
     ),
     "email": MCPRecipe(
         id="email",
