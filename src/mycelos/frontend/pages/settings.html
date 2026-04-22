@@ -92,10 +92,10 @@
           }
           if (winData) {
             this.winners = winData.providers || {};
-            // Default pill: first provider that actually has winners.
-            const provOrder = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'custom'];
-            const first = provOrder.find(p => (this.winners[p] || []).length > 0);
-            if (first) this.providerPill = first;
+            // Default pill: first *credentialed* provider that has winners.
+            // (providersWithWinners() already filters to credentialed ones.)
+            const provs = this.providersWithWinners();
+            if (provs.length > 0) this.providerPill = provs[0];
           }
           if (creds) {
             this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
@@ -386,9 +386,19 @@
         },
 
         // ── Winners pills + filter ──
+        hasCredentialFor(provider) {
+          // Ollama and custom are credential-free (local URL, manual setup).
+          if (provider === 'ollama' || provider === 'custom') return true;
+          const list = Array.isArray(this.credentials) ? this.credentials : [];
+          return list.some(c => (c.service || '').toLowerCase() === provider);
+        },
         providersWithWinners() {
+          // Only show providers that (a) have winner models AND (b) are credentialed.
+          // Without a key the user can't actually use the model, so showing it is noise.
           const order = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'custom'];
-          return order.filter(p => (this.winners[p] || []).length > 0);
+          return order.filter(p =>
+            (this.winners[p] || []).length > 0 && this.hasCredentialFor(p)
+          );
         },
         providerLabel(pid) {
           const labels = {
@@ -402,13 +412,17 @@
           return labels[pid] || pid;
         },
         visibleWinners() {
+          const credentialed = this.providersWithWinners();
           if (this.providerPill === 'all') {
             const all = [];
-            for (const pid of this.providersWithWinners()) {
+            for (const pid of credentialed) {
               for (const m of (this.winners[pid] || [])) all.push(m);
             }
             return all;
           }
+          // If the selected pill lost its credential (deleted mid-session),
+          // show nothing rather than stale winners.
+          if (!credentialed.includes(this.providerPill)) return [];
           return this.winners[this.providerPill] || [];
         },
 
