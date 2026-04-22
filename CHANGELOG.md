@@ -61,6 +61,13 @@ deployment on localhost.
 - `fix(model-registry)` — Bedrock/Vertex aliases no longer leak into Anthropic/OpenAI. `sync_from_litellm` now trusts `info['litellm_provider']` from the LiteLLM catalog instead of guessing the provider from the model-name shape, and shares the same gateway/region prefix filters with `get_provider_models` (single source of truth). Cured the "new model discovered: anthropic/anthropic.claude-mythos-preview" false positive — Mythos is a Bedrock-only alias that can't be called through the Anthropic API anyway.
 - Cleanup pass in the same sync drops previously mis-registered doubled-prefix aliases (`anthropic/anthropic.*`, `openai/openai.*`) from the registry — but only when no agent_llm_models row still references them, so live assignments are left alone for the user to retire manually.
 
+### Google via MCP (retiring the gog-CLI path)
+- Gmail, Google Calendar, and Google Drive each get a dedicated MCP recipe (`@gongrzhe/server-gmail-autoauth-mcp`, `@cocal/google-calendar-mcp`, `@piotr-agier/google-drive-mcp`), spawned inside the SecurityProxy container like every other MCP connector. The single gog-CLI `gmail` recipe (which was broken under two-container deployment — `gog` wasn't in the proxy image and the gateway has no direct internet anyway) is retired, and so are the five in-process `google.*` tool bindings in `connectors/registry.py`, the whole `_setup_gog_connector` path in the CLI, and the `gog_*` i18n keys.
+- The stale `@modelcontextprotocol/server-google-drive` reference (package was never published) is replaced by the real `@piotr-agier/google-drive-mcp`.
+- Connectors page gains a "Google Workspace" use-case group surfacing all three services as separate cards so users can enable only the scopes they need.
+- New doc: `docs/deployment/google-setup.md` walks through OAuth-keys creation, the shared Google Cloud project, the one-shot `npx ... auth` consent flow inside the proxy container, and the `localhost:3000` callback caveats for home-network (Raspberry Pi) deployments.
+- Three live integration tests under `tests/integration/test_*_mcp_live.py` catch upstream breaking changes before users do; all skip cleanly without credentials.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)

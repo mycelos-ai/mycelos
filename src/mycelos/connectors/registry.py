@@ -4,13 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from mycelos.connectors.google_tools import (
-    calendar_list,
-    calendar_today,
-    drive_list,
-    gmail_labels,
-    gmail_search,
-)
 from mycelos.connectors.http_tools import http_get, http_post
 from mycelos.connectors.search_tools import search_news, search_web, search_web_brave
 from mycelos.execution.tools import ToolDefinition, ToolRegistry
@@ -85,47 +78,5 @@ def register_builtin_tools(
             description="Search news using DuckDuckGo",
             handler=search_news,
             required_capability="search.news",
-        )
-    )
-
-    # Google tools via gog CLI (no credential proxy needed — gog handles OAuth)
-    registry.register(
-        ToolDefinition(
-            name="google.gmail.search",
-            description="Search Gmail for emails",
-            handler=gmail_search,
-            required_capability="google.gmail.read",
-        )
-    )
-    registry.register(
-        ToolDefinition(
-            name="google.gmail.labels",
-            description="List Gmail labels",
-            handler=gmail_labels,
-            required_capability="google.gmail.read",
-        )
-    )
-    registry.register(
-        ToolDefinition(
-            name="google.calendar.list",
-            description="List upcoming calendar events",
-            handler=calendar_list,
-            required_capability="google.calendar.read",
-        )
-    )
-    registry.register(
-        ToolDefinition(
-            name="google.calendar.today",
-            description="List today's events",
-            handler=calendar_today,
-            required_capability="google.calendar.read",
-        )
-    )
-    registry.register(
-        ToolDefinition(
-            name="google.drive.list",
-            description="List Google Drive files",
-            handler=drive_list,
-            required_capability="google.drive.read",
         )
     )
