@@ -55,3 +55,18 @@ def test_stale_google_drive_npm_package_is_gone() -> None:
     published. Make sure the replacement is in place."""
     r = RECIPES["google-drive"]
     assert "@modelcontextprotocol/server-google-drive" not in r.command
+
+
+def test_no_gog_tool_registrations_remain() -> None:
+    """The in-process google.* tools are being deleted in favor of MCP.
+    Make sure the registry doesn't still try to import or register them,
+    or the gateway will ImportError at startup."""
+    import inspect
+
+    import mycelos.connectors.registry as reg
+
+    src = inspect.getsource(reg)
+    assert "google_tools" not in src, "registry.py still imports google_tools"
+    assert "google.gmail.search" not in src, "old gmail tool still registered"
+    assert "google.calendar.list" not in src, "old calendar tool still registered"
+    assert "google.drive.list" not in src, "old drive tool still registered"
