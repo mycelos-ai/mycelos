@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1556,6 +1556,156 @@ def setup_routes(api: FastAPI) -> None:
 
     # ── Connectors ────────────────────────────────────────────
 
+    @api.get("/api/connectors/recipes/{recipe_id}")
+    async def get_recipe(recipe_id: str) -> dict[str, Any]:
+        """Recipe metadata + resolved setup guide in one roundtrip.
+
+        Used by the frontend setup dialog to decide which flow to render
+        (plain 'secret' vs. 'oauth_browser' wizard) and to show the
+        platform-specific preparation steps inline.
+        """
+        from mycelos.connectors.mcp_recipes import get_recipe as get_r
+        from mycelos.connectors.oauth_setup_guides import get_setup_guide
+
+        recipe = get_r(recipe_id)
+        if recipe is None:
+            raise HTTPException(status_code=404, detail=f"Unknown recipe: {recipe_id}")
+
+        guide = (
+            get_setup_guide(recipe.oauth_setup_guide_id)
+            if recipe.oauth_setup_guide_id
+            else None
+        )
+        return {
+            "id": recipe.id,
+            "name": recipe.name,
+            "description": recipe.description,
+            "command": recipe.command,
+            "transport": recipe.transport,
+            "category": recipe.category,
+            "credentials": recipe.credentials,
+            "capabilities_preview": recipe.capabilities_preview,
+            "setup_flow": recipe.setup_flow,
+            "oauth_cmd": recipe.oauth_cmd,
+            "oauth_setup_guide_id": recipe.oauth_setup_guide_id,
+            "setup_guide": guide,
+            "requires_node": recipe.requires_node,
+        }
+
+    @api.post("/api/connectors/oauth/start")
+    async def oauth_start_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
+        """Start an OAuth auth subprocess in the proxy for a recipe.
+
+        Browser POSTs {recipe_id, env_vars}. Gateway resolves the recipe,
+        validates that the recipe uses oauth_browser setup flow, and
+        asks the proxy to spawn the recipe's oauth_cmd with the given
+        env_vars. Returns {session_id, ws_url} where ws_url is the
+        gateway-relative path the browser opens to stream subprocess
+        I/O (the gateway proxies that WS through to the proxy container).
+        """
+        from mycelos.connectors.mcp_recipes import get_recipe as get_r
+
+        recipe_id = payload.get("recipe_id", "")
+        env_vars = payload.get("env_vars", {}) or {}
+
+        recipe = get_r(recipe_id)
+        if recipe is None:
+            raise HTTPException(status_code=404, detail=f"Unknown recipe: {recipe_id}")
+        if recipe.setup_flow != "oauth_browser":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recipe '{recipe_id}' setup_flow is '{recipe.setup_flow}', not 'oauth_browser'",
+            )
+
+        mycelos = api.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            raise HTTPException(status_code=503, detail="Proxy not available")
+
+        # Restrict env_vars to the keys the recipe actually declares.
+        # A compromised browser session should not be able to smuggle
+        # LD_PRELOAD, NODE_OPTIONS, etc. into the subprocess env through
+        # this endpoint — defense-in-depth over the proxy's npx allowlist.
+        allowed_env_keys = {c["env_var"] for c in recipe.credentials if c.get("env_var")}
+        filtered_env = {k: v for k, v in env_vars.items() if k in allowed_env_keys}
+
+        result = proxy_client.oauth_start(
+            oauth_cmd=recipe.oauth_cmd,
+            env_vars=filtered_env,
+        )
+        session_id = result.get("session_id", "")
+        return {
+            "session_id": session_id,
+            "ws_url": f"/api/connectors/oauth/stream/{session_id}",
+        }
+
+    @api.post("/api/connectors/oauth/stop")
+    async def oauth_stop_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
+        mycelos = api.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            raise HTTPException(status_code=503, detail="Proxy not available")
+        session_id = payload.get("session_id", "")
+        return proxy_client.oauth_stop(session_id=session_id)
+
+    @api.websocket("/api/connectors/oauth/stream/{session_id}")
+    async def oauth_stream_passthrough(websocket: WebSocket, session_id: str) -> None:
+        """Bidirectional WebSocket passthrough to the proxy's
+        /oauth/stream/{session_id}. Frames forwarded verbatim; the
+        gateway does not parse them. Upstream auth uses the proxy
+        bearer token the gateway already holds."""
+        import asyncio
+        import websockets as _ws_lib
+
+        mycelos = websocket.app.state.mycelos
+        proxy_client = getattr(mycelos, "proxy_client", None)
+        if proxy_client is None:
+            await websocket.close(code=4503)
+            return
+
+        # Mint the upstream WS URL and grab the auth token the
+        # proxy_client is already configured with.
+        ws_url = proxy_client.oauth_stream_url(session_id)
+        token = getattr(proxy_client, "_token", None) or getattr(proxy_client, "_auth_token", None)
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        await websocket.accept()
+
+        try:
+            async with _ws_lib.connect(ws_url, additional_headers=headers) as upstream:
+
+                async def client_to_proxy():
+                    try:
+                        while True:
+                            msg = await websocket.receive_text()
+                            await upstream.send(msg)
+                    except Exception:
+                        return
+
+                async def proxy_to_client():
+                    try:
+                        async for msg in upstream:
+                            if isinstance(msg, bytes):
+                                msg = msg.decode("utf-8", "replace")
+                            await websocket.send_text(msg)
+                    except Exception:
+                        return
+
+                done, pending = await asyncio.wait(
+                    [asyncio.create_task(client_to_proxy()),
+                     asyncio.create_task(proxy_to_client())],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+        except Exception:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
     @api.get("/api/connectors")
     async def list_connectors() -> list[dict[str, Any]]:
         """List all connectors with MCP tool count."""
@@ -2568,6 +2718,48 @@ def setup_routes(api: FastAPI) -> None:
             return {"status": "deleted", "service": service, "label": label}
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    @api.post("/api/credentials/oauth-keys/validate")
+    async def validate_oauth_keys(payload: dict[str, Any]) -> dict[str, Any]:
+        """Cheap shape-check on uploaded gcp-oauth.keys.json content.
+
+        Returns {ok: bool, kind?: str, error?: str}. Non-200 is reserved
+        for framework errors; validation failures are ok=False with a
+        human-readable message so the UI can keep showing the dialog.
+        """
+        import json as _json
+
+        content = payload.get("content", "")
+        if not content:
+            return {"ok": False, "error": "Empty content — paste the gcp-oauth.keys.json file."}
+        try:
+            data = _json.loads(content)
+        except _json.JSONDecodeError as e:
+            return {"ok": False, "error": f"Not valid JSON: {e}"}
+        if not isinstance(data, dict):
+            return {"ok": False, "error": "Top-level must be a JSON object."}
+        if "installed" in data and isinstance(data["installed"], dict):
+            inst = data["installed"]
+            if "client_id" in inst and "client_secret" in inst:
+                return {"ok": True, "kind": "desktop"}
+            return {"ok": False, "error": "Missing client_id or client_secret in 'installed' section."}
+        if "web" in data:
+            return {
+                "ok": False,
+                "error": (
+                    "This looks like a Web-app OAuth credential. Mycelos needs a "
+                    "Desktop-app credential. Go back to Cloud Console → Credentials "
+                    "→ Create credentials → OAuth client ID → Desktop app."
+                ),
+            }
+        return {
+            "ok": False,
+            "error": (
+                "File doesn't look like a gcp-oauth.keys.json. Expected a top-level "
+                "'installed' or 'web' key. Make sure you downloaded the OAuth-client JSON, "
+                "not the project's service-account key."
+            ),
+        }
 
     # ── Telegram Setup ──────────────────────────────────────────
 

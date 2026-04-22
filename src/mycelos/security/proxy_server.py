@@ -8,6 +8,7 @@ Credential injection is done here — credentials never leave this process.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -21,7 +22,7 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger("mycelos.proxy")
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import FastAPI, Form, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from mycelos.speech.transcription import SttError, SttRequest, SttService
@@ -164,6 +165,9 @@ def create_proxy_app() -> FastAPI:
         "_stt_service": None,
         # Maps session_id → connector_id for MCP sessions started via /mcp/start
         "_mcp_sessions": {},
+        # Maps session_id → {"proc": Popen, "user_id": str, "oauth_cmd": str}
+        # for OAuth auth subprocesses started via /oauth/start
+        "_oauth_sessions": {},
         # Tracks which credentials have already been bootstrapped this session
         "_bootstrapped": set(),
         "start_time": time.time(),
@@ -602,6 +606,251 @@ def create_proxy_app() -> FastAPI:
             })
 
         return JSONResponse({"ok": True})
+
+    # ---------------------------------------------------------------------------
+    # POST /oauth/start  — spawn an OAuth auth subprocess
+    # ---------------------------------------------------------------------------
+
+    @app.post("/oauth/start")
+    async def oauth_start(request: Request) -> JSONResponse:
+        """Spawn an OAuth auth subprocess and return a session id.
+
+        The caller (gateway passthrough) provides `oauth_cmd` from a
+        recipe and `env_vars` to forward to the subprocess (with
+        `credential:<service>` references resolved here). The process
+        keeps running; the WebSocket at /oauth/stream/{session_id}
+        ferries stdout/stderr/stdin. Callers must eventually call
+        /oauth/stop to clean up.
+        """
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body = await request.json()
+        oauth_cmd: str = body.get("oauth_cmd", "")
+        env_vars: dict = body.get("env_vars", {}) or {}
+
+        # Narrow the blast radius: only npx-based commands are accepted.
+        # Our recipes exclusively use `npx -y <pkg> auth`; an attacker
+        # with a stolen proxy token should not be able to spawn arbitrary
+        # processes via this endpoint.
+        import shlex
+        parts = shlex.split(oauth_cmd)
+        if not parts or parts[0] != "npx":
+            return JSONResponse(
+                {"error": "oauth_cmd must start with 'npx' — recipe validation"},
+                status_code=400,
+            )
+
+        # Resolve credential:<service> references in env_vars.
+        resolved_env = dict(os.environ)
+        credential_proxy = _get_credential_proxy()
+        for key, val in env_vars.items():
+            if isinstance(val, str) and val.startswith("credential:") and credential_proxy:
+                service = val[len("credential:"):]
+                try:
+                    cred = credential_proxy.get_credential(service, user_id=user_id)
+                    if not cred or not cred.get("api_key"):
+                        cred = credential_proxy.get_credential(f"connector:{service}", user_id=user_id)
+                except Exception:
+                    cred = None
+                if not cred or not cred.get("api_key"):
+                    return JSONResponse(
+                        {"error": f"Credential '{service}' not found — fail-closed"},
+                        status_code=502,
+                    )
+                resolved_env[key] = cred["api_key"]
+            else:
+                resolved_env[key] = str(val)
+
+        import subprocess
+        import secrets
+        try:
+            proc = subprocess.Popen(
+                parts,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=resolved_env,
+                bufsize=0,
+            )
+        except Exception as e:
+            logger.error("oauth_start subprocess spawn failed: %s", e)
+            return JSONResponse({"error": "subprocess spawn failed"}, status_code=500)
+
+        session_id = f"oauth-{secrets.token_hex(6)}"
+        _state["_oauth_sessions"][session_id] = {
+            "proc": proc,
+            "user_id": user_id,
+            "oauth_cmd": oauth_cmd,
+        }
+
+        storage = _get_storage()
+        if storage:
+            _write_audit(storage, "proxy.oauth_started", user_id, {
+                "session_id": session_id,
+                "oauth_cmd": oauth_cmd,
+            })
+
+        return JSONResponse({"session_id": session_id})
+
+    # ---------------------------------------------------------------------------
+    # POST /oauth/stop  — terminate an OAuth auth subprocess
+    # ---------------------------------------------------------------------------
+
+    @app.post("/oauth/stop")
+    async def oauth_stop(request: Request) -> JSONResponse:
+        """Terminate the OAuth subprocess for `session_id`.
+
+        Idempotent — a missing session returns status=not_found (200),
+        not an error, so the frontend can call stop on cleanup without
+        knowing whether it's already gone.
+        """
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body = await request.json()
+        session_id: str = body.get("session_id", "")
+        sess = _state["_oauth_sessions"].pop(session_id, None)
+        if sess is None:
+            return JSONResponse({"status": "not_found"}, status_code=200)
+
+        proc = sess["proc"]
+        try:
+            if proc.stdin is not None:
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+        storage = _get_storage()
+        if storage:
+            _write_audit(storage, "proxy.oauth_stopped", user_id, {
+                "session_id": session_id,
+            })
+
+        return JSONResponse({"status": "stopped"})
+
+    # ---------------------------------------------------------------------------
+    # WS /oauth/stream/{session_id}  — bidirectional stdio pump
+    # ---------------------------------------------------------------------------
+
+    @app.websocket("/oauth/stream/{session_id}")
+    async def oauth_stream(websocket: WebSocket, session_id: str) -> None:
+        """Stream subprocess stdout/stderr to the client and relay
+        client stdin writes back to the subprocess. Closes the WS when
+        the subprocess exits; does NOT auto-stop the session (client
+        must call /oauth/stop).
+
+        Frame shapes:
+          server → client: {type: "stdout"|"stderr", data: str}
+                           {type: "done", exit_code: int, data: ""}
+          client → server: {type: "stdin", data: str}
+        """
+        # Header-based auth — same Bearer token as HTTP endpoints.
+        token = websocket.headers.get("authorization", "")
+        expected = f"Bearer {proxy_token}"
+        if not token or token != expected:
+            await websocket.close(code=4401)
+            return
+
+        sess = _state["_oauth_sessions"].get(session_id)
+        if sess is None:
+            await websocket.close(code=4404)
+            return
+
+        proc = sess["proc"]
+        await websocket.accept()
+
+        def _read_chunk(stream) -> bytes:
+            # Popen with bufsize=0 gives us a raw FileIO without read1,
+            # so fall back to os.read on the fd — it returns whatever is
+            # available up to the requested size without blocking for
+            # the full amount. Gives near-realtime streaming.
+            try:
+                if hasattr(stream, "read1"):
+                    return stream.read1(4096)
+                import os as _os
+                return _os.read(stream.fileno(), 4096)
+            except Exception:
+                return b""
+
+        async def pump_stream(stream, frame_type: str) -> None:
+            loop = asyncio.get_running_loop()
+            try:
+                while True:
+                    chunk = await loop.run_in_executor(None, _read_chunk, stream)
+                    if not chunk:
+                        return
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": frame_type,
+                            "data": chunk.decode("utf-8", "replace"),
+                        }))
+                    except Exception:
+                        return
+            except Exception:
+                return
+
+        async def pump_stdin() -> None:
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    try:
+                        frame = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if frame.get("type") == "stdin" and proc.stdin is not None:
+                        try:
+                            proc.stdin.write(frame.get("data", "").encode())
+                            proc.stdin.flush()
+                        except Exception:
+                            return
+            except Exception:
+                return
+
+        stdout_task = asyncio.create_task(pump_stream(proc.stdout, "stdout"))
+        stderr_task = asyncio.create_task(pump_stream(proc.stderr, "stderr"))
+        stdin_task = asyncio.create_task(pump_stdin())
+
+        # Wait for the subprocess to exit without blocking the event loop.
+        loop = asyncio.get_running_loop()
+        exit_code = await loop.run_in_executor(None, proc.wait)
+
+        # Drain remaining stdout/stderr so the client sees the final
+        # bytes before the 'done' frame.
+        for t in (stdout_task, stderr_task):
+            try:
+                await asyncio.wait_for(t, timeout=2.0)
+            except Exception:
+                t.cancel()
+
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "done",
+                "exit_code": exit_code,
+                "data": "",
+            }))
+        except Exception:
+            pass
+
+        stdin_task.cancel()
+        # Subprocess has exited — drop it from the session registry so
+        # /oauth/stop doesn't need to find-and-reap it. /oauth/stop stays
+        # idempotent (pops None on missing).
+        _state["_oauth_sessions"].pop(session_id, None)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------------------
     # POST /llm/complete

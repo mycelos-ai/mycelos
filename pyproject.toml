@@ -36,6 +36,7 @@ dependencies = [
     "aiogram>=3.26",
     "prompt_toolkit>=3.0",
     "sqlite-vec>=0.1.7",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]

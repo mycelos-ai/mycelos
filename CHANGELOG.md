@@ -68,6 +68,12 @@ deployment on localhost.
 - New doc: `docs/deployment/google-setup.md` walks through OAuth-keys creation, the shared Google Cloud project, the one-shot `npx ... auth` consent flow inside the proxy container, and the `localhost:3000` callback caveats for home-network (Raspberry Pi) deployments.
 - Three live integration tests under `tests/integration/test_*_mcp_live.py` catch upstream breaking changes before users do; all skip cleanly without credentials.
 
+### OAuth connector setup in the web UI
+- New `setup_flow` field on `MCPRecipe` discriminates between plain-secret connectors and OAuth-based ones. The three Google recipes now declare `setup_flow="oauth_browser"` — the Connectors page opens a dedicated dialog for them with a step-by-step Google Cloud project wizard, `gcp-oauth.keys.json` upload with shape validation, and a live subprocess log of the `npx ... auth` consent flow streamed via WebSocket through a gateway passthrough. Users no longer need to open a terminal to onboard Gmail / Calendar / Drive.
+- New proxy endpoints `POST /oauth/start`, `POST /oauth/stop`, `WS /oauth/stream/{session_id}` — generic enough to host future OAuth-based connectors without code changes in the web layer beyond adding a setup guide.
+- New gateway endpoints `GET /api/connectors/recipes/{id}` (recipe + inlined guide in one roundtrip), `POST /api/connectors/oauth/{start,stop}`, `WS /api/connectors/oauth/stream/{session_id}` (passthrough), `POST /api/credentials/oauth-keys/validate` (shape-check gcp-oauth.keys.json before upload).
+- `docs/deployment/google-setup.md` now leads with the UI path; the shell-based walkthrough is retained as a fallback for headless installs.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)
