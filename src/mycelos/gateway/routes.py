@@ -1622,9 +1622,16 @@ def setup_routes(api: FastAPI) -> None:
         if proxy_client is None:
             raise HTTPException(status_code=503, detail="Proxy not available")
 
+        # Restrict env_vars to the keys the recipe actually declares.
+        # A compromised browser session should not be able to smuggle
+        # LD_PRELOAD, NODE_OPTIONS, etc. into the subprocess env through
+        # this endpoint — defense-in-depth over the proxy's npx allowlist.
+        allowed_env_keys = {c["env_var"] for c in recipe.credentials if c.get("env_var")}
+        filtered_env = {k: v for k, v in env_vars.items() if k in allowed_env_keys}
+
         result = proxy_client.oauth_start(
             oauth_cmd=recipe.oauth_cmd,
-            env_vars=env_vars,
+            env_vars=filtered_env,
         )
         session_id = result.get("session_id", "")
         return {

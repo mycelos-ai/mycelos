@@ -843,6 +843,10 @@ def create_proxy_app() -> FastAPI:
             pass
 
         stdin_task.cancel()
+        # Subprocess has exited — drop it from the session registry so
+        # /oauth/stop doesn't need to find-and-reap it. /oauth/stop stays
+        # idempotent (pops None on missing).
+        _state["_oauth_sessions"].pop(session_id, None)
         try:
             await websocket.close()
         except Exception:
