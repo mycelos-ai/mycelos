@@ -90,3 +90,57 @@ def test_all_guides_in_registry_self_reference() -> None:
     """Every guide's 'id' field must equal its key in SETUP_GUIDES."""
     for key, guide in SETUP_GUIDES.items():
         assert guide["id"] == key
+
+
+# ── File-based credential fields ──
+
+
+def test_mcp_recipe_defaults_for_file_credentials() -> None:
+    """New fields default to empty strings for recipes that don't need
+    file-materialization (the vast majority — env-var-based tools)."""
+    r = MCPRecipe(id="x", name="X", description="", command="npx -y x")
+    assert r.oauth_keys_credential_service == ""
+    assert r.oauth_keys_home_dir == ""
+    assert r.oauth_keys_filename == ""
+    assert r.oauth_token_filename == ""
+    assert r.oauth_token_credential_service == ""
+
+
+def test_gmail_recipe_uses_file_materialization() -> None:
+    r = RECIPES["gmail"]
+    # The Gmail MCP package hardcodes ~/.gmail-mcp/gcp-oauth.keys.json —
+    # no env var to override. We materialize the file into a tmp HOME.
+    assert r.oauth_keys_credential_service == "gmail-oauth-keys"
+    assert r.oauth_keys_home_dir == ".gmail-mcp"
+    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
+    assert r.oauth_token_filename == "credentials.json"
+    assert r.oauth_token_credential_service == "gmail-oauth-token"
+
+
+def test_google_calendar_recipe_uses_file_materialization() -> None:
+    r = RECIPES["google-calendar"]
+    assert r.oauth_keys_credential_service == "google-calendar-oauth-keys"
+    assert r.oauth_keys_home_dir == ".google-calendar-mcp"
+    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
+    assert r.oauth_token_filename == "token.json"
+    assert r.oauth_token_credential_service == "google-calendar-oauth-token"
+
+
+def test_google_drive_recipe_uses_file_materialization() -> None:
+    r = RECIPES["google-drive"]
+    assert r.oauth_keys_credential_service == "google-drive-oauth-keys"
+    assert r.oauth_keys_home_dir == ".google-drive-mcp"
+    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
+    assert r.oauth_token_filename == "token.json"
+    assert r.oauth_token_credential_service == "google-drive-oauth-token"
+
+
+def test_non_file_recipes_keep_empty_materialization_fields() -> None:
+    """Email, GitHub, Brave etc. use env-var injection and must not
+    accidentally inherit file-materialization config."""
+    for rid in ("email", "brave-search", "github", "notion", "slack"):
+        r = RECIPES.get(rid)
+        if r is None:
+            continue
+        assert r.oauth_keys_credential_service == "", f"{rid} should not materialize"
+        assert r.oauth_keys_filename == "", f"{rid} should not materialize"
