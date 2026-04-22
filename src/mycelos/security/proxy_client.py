@@ -184,6 +184,17 @@ class SecurityProxyClient:
         }, headers={"X-User-Id": user_id})
         return resp.json()
 
+    def oauth_stream_url(self, session_id: str) -> str:
+        """Return the ws:// URL for the OAuth streaming endpoint.
+
+        The gateway doesn't itself *use* the WebSocket — it mints the
+        URL for the browser, which opens it through the gateway's own
+        WS passthrough (Task 6). Exposing it here keeps the URL-
+        construction logic in one place.
+        """
+        base = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        return f"{base}/oauth/stream/{session_id}"
+
     def llm_complete(self, model: str, messages: list[dict],
                      tools: list[dict] | None = None, stream: bool = False,
                      user_id: str = "default", agent_id: str | None = None,

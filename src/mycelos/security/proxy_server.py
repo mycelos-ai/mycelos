@@ -8,6 +8,7 @@ Credential injection is done here — credentials never leave this process.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -21,7 +22,7 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger("mycelos.proxy")
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import FastAPI, Form, Request, UploadFile, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from mycelos.speech.transcription import SttError, SttRequest, SttService
@@ -737,6 +738,115 @@ def create_proxy_app() -> FastAPI:
             })
 
         return JSONResponse({"status": "stopped"})
+
+    # ---------------------------------------------------------------------------
+    # WS /oauth/stream/{session_id}  — bidirectional stdio pump
+    # ---------------------------------------------------------------------------
+
+    @app.websocket("/oauth/stream/{session_id}")
+    async def oauth_stream(websocket: WebSocket, session_id: str) -> None:
+        """Stream subprocess stdout/stderr to the client and relay
+        client stdin writes back to the subprocess. Closes the WS when
+        the subprocess exits; does NOT auto-stop the session (client
+        must call /oauth/stop).
+
+        Frame shapes:
+          server → client: {type: "stdout"|"stderr", data: str}
+                           {type: "done", exit_code: int, data: ""}
+          client → server: {type: "stdin", data: str}
+        """
+        # Header-based auth — same Bearer token as HTTP endpoints.
+        token = websocket.headers.get("authorization", "")
+        expected = f"Bearer {proxy_token}"
+        if not token or token != expected:
+            await websocket.close(code=4401)
+            return
+
+        sess = _state["_oauth_sessions"].get(session_id)
+        if sess is None:
+            await websocket.close(code=4404)
+            return
+
+        proc = sess["proc"]
+        await websocket.accept()
+
+        def _read_chunk(stream) -> bytes:
+            # Popen with bufsize=0 gives us a raw FileIO without read1,
+            # so fall back to os.read on the fd — it returns whatever is
+            # available up to the requested size without blocking for
+            # the full amount. Gives near-realtime streaming.
+            try:
+                if hasattr(stream, "read1"):
+                    return stream.read1(4096)
+                import os as _os
+                return _os.read(stream.fileno(), 4096)
+            except Exception:
+                return b""
+
+        async def pump_stream(stream, frame_type: str) -> None:
+            loop = asyncio.get_running_loop()
+            try:
+                while True:
+                    chunk = await loop.run_in_executor(None, _read_chunk, stream)
+                    if not chunk:
+                        return
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "type": frame_type,
+                            "data": chunk.decode("utf-8", "replace"),
+                        }))
+                    except Exception:
+                        return
+            except Exception:
+                return
+
+        async def pump_stdin() -> None:
+            try:
+                while True:
+                    raw = await websocket.receive_text()
+                    try:
+                        frame = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if frame.get("type") == "stdin" and proc.stdin is not None:
+                        try:
+                            proc.stdin.write(frame.get("data", "").encode())
+                            proc.stdin.flush()
+                        except Exception:
+                            return
+            except Exception:
+                return
+
+        stdout_task = asyncio.create_task(pump_stream(proc.stdout, "stdout"))
+        stderr_task = asyncio.create_task(pump_stream(proc.stderr, "stderr"))
+        stdin_task = asyncio.create_task(pump_stdin())
+
+        # Wait for the subprocess to exit without blocking the event loop.
+        loop = asyncio.get_running_loop()
+        exit_code = await loop.run_in_executor(None, proc.wait)
+
+        # Drain remaining stdout/stderr so the client sees the final
+        # bytes before the 'done' frame.
+        for t in (stdout_task, stderr_task):
+            try:
+                await asyncio.wait_for(t, timeout=2.0)
+            except Exception:
+                t.cancel()
+
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "done",
+                "exit_code": exit_code,
+                "data": "",
+            }))
+        except Exception:
+            pass
+
+        stdin_task.cancel()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------------------
     # POST /llm/complete
