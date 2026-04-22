@@ -2712,6 +2712,48 @@ def setup_routes(api: FastAPI) -> None:
         except RuntimeError as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @api.post("/api/credentials/oauth-keys/validate")
+    async def validate_oauth_keys(payload: dict[str, Any]) -> dict[str, Any]:
+        """Cheap shape-check on uploaded gcp-oauth.keys.json content.
+
+        Returns {ok: bool, kind?: str, error?: str}. Non-200 is reserved
+        for framework errors; validation failures are ok=False with a
+        human-readable message so the UI can keep showing the dialog.
+        """
+        import json as _json
+
+        content = payload.get("content", "")
+        if not content:
+            return {"ok": False, "error": "Empty content — paste the gcp-oauth.keys.json file."}
+        try:
+            data = _json.loads(content)
+        except _json.JSONDecodeError as e:
+            return {"ok": False, "error": f"Not valid JSON: {e}"}
+        if not isinstance(data, dict):
+            return {"ok": False, "error": "Top-level must be a JSON object."}
+        if "installed" in data and isinstance(data["installed"], dict):
+            inst = data["installed"]
+            if "client_id" in inst and "client_secret" in inst:
+                return {"ok": True, "kind": "desktop"}
+            return {"ok": False, "error": "Missing client_id or client_secret in 'installed' section."}
+        if "web" in data:
+            return {
+                "ok": False,
+                "error": (
+                    "This looks like a Web-app OAuth credential. Mycelos needs a "
+                    "Desktop-app credential. Go back to Cloud Console → Credentials "
+                    "→ Create credentials → OAuth client ID → Desktop app."
+                ),
+            }
+        return {
+            "ok": False,
+            "error": (
+                "File doesn't look like a gcp-oauth.keys.json. Expected a top-level "
+                "'installed' or 'web' key. Make sure you downloaded the OAuth-client JSON, "
+                "not the project's service-account key."
+            ),
+        }
+
     # ── Telegram Setup ──────────────────────────────────────────
 
     def _scrub_token(text: str, token: str) -> str:
