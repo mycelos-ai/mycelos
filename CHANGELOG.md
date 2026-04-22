@@ -57,6 +57,10 @@ deployment on localhost.
 - Provider pill row (Anthropic / OpenAI / Gemini / Ollama / OpenRouter / All) with "winner" cards (one per tier) shown above the full table. Full table collapses behind a "Show all models" toggle. Pills are hidden for providers without stored credentials — pointing users at a model they can't actually call is noise.
 - "Connect a provider" row on the Models page itself: one button per supported provider (Anthropic, OpenAI, Gemini, OpenRouter, Ollama), each opening a slim form (API key or Ollama URL) that calls the existing `/api/setup` endpoint. Already-connected providers render as a greyed-out "Connected" state so the row doubles as an at-a-glance status.
 
+### Model-registry sync correctness
+- `fix(model-registry)` — Bedrock/Vertex aliases no longer leak into Anthropic/OpenAI. `sync_from_litellm` now trusts `info['litellm_provider']` from the LiteLLM catalog instead of guessing the provider from the model-name shape, and shares the same gateway/region prefix filters with `get_provider_models` (single source of truth). Cured the "new model discovered: anthropic/anthropic.claude-mythos-preview" false positive — Mythos is a Bedrock-only alias that can't be called through the Anthropic API anyway.
+- Cleanup pass in the same sync drops previously mis-registered doubled-prefix aliases (`anthropic/anthropic.*`, `openai/openai.*`) from the registry — but only when no agent_llm_models row still references them, so live assignments are left alone for the user to retire manually.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)

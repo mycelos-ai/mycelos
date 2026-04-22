@@ -210,54 +210,55 @@ class ModelRegistry:
             ``{"added": [...], "updated": [...], "skipped_legacy": [...],
                "total": N}``.
         """
-        from mycelos.llm.providers import is_legacy_model
+        from mycelos.llm.providers import (
+            PROVIDERS,
+            _GATEWAY_PREFIXES,
+            _REGION_PREFIXES,
+            _SKIP_PATTERNS,
+            is_legacy_model,
+        )
 
         cost_map = self._fetch_cost_map(prefer_remote=prefer_remote)
         if not cost_map:
             return {"added": [], "updated": [], "skipped_legacy": [], "total": 0}
 
+        known_providers = set(PROVIDERS.keys())
         existing_ids = {row["id"] for row in self._storage.fetchall("SELECT id FROM llm_models")}
         added: list[str] = []
         updated: list[str] = []
         skipped_legacy: list[str] = []
         allow = set(providers) if providers else None
 
-        for model_id, info in cost_map.items():
-            # Filter out region-specific and third-party gateway variants
-            if any(
-                prefix in model_id
-                for prefix in [
-                    "bedrock/",
-                    "vertex_ai/",
-                    "azure_ai/",
-                    "eu.",
-                    "us.",
-                    "au.",
-                    "jp.",
-                    "global.",
-                    "apac.",
-                    "gmi/",
-                    "deepinfra/",
-                    "replicate/",
-                    "openrouter/",
-                    "github_copilot/",
-                    "heroku/",
-                    "perplexity/",
-                    "vercel_ai_gateway/",
-                    "databricks/",
-                ]
-            ):
+        for raw_id, info in cost_map.items():
+            # Filter out region-specific and third-party gateway variants.
+            # Uses the shared prefix/region tuples from providers.py so this
+            # path agrees with get_provider_models() on what counts as a
+            # first-class direct-API model vs. a bedrock/vertex/etc. alias.
+            if any(raw_id.startswith(pfx) for pfx in _GATEWAY_PREFIXES):
                 continue
-            # Must be a recognizable provider
-            provider = self._guess_provider(model_id)
-            if not provider:
+            if _REGION_PREFIXES.match(raw_id):
                 continue
+            if _SKIP_PATTERNS.search(raw_id):
+                continue
+
+            # Trust litellm's own provider field — don't infer from the model
+            # name. Bedrock aliases like 'anthropic.claude-mythos-preview'
+            # carry `litellm_provider: bedrock` in the catalog; guessing by
+            # name would misfile them under 'anthropic'.
+            provider = info.get("litellm_provider", "")
+            if provider not in known_providers:
+                continue
+
+            # Only keep chat models — skip embeddings, image gen, TTS, etc.
+            mode = info.get("mode", "")
+            if mode and mode != "chat":
+                continue
+
             # Restrict to configured providers when an allow-list was given
             if allow is not None and provider not in allow:
                 continue
             # Ensure provider prefix (litellm uses bare IDs for some providers)
-            if "/" not in model_id:
-                model_id = f"{provider}/{model_id}"
+            model_id = raw_id if "/" in raw_id else f"{provider}/{raw_id}"
             # Skip previous-generation models on additions; never touch an
             # entry that's already in the registry (user may have assigned it).
             was_present = model_id in existing_ids
@@ -278,10 +279,36 @@ class ModelRegistry:
             else:
                 added.append(model_id)
 
+        # Clean up previously mis-registered Bedrock/Vertex aliases. These
+        # slipped in before we started trusting litellm_provider — typical
+        # shape is 'anthropic/anthropic.claude-...' (doubled provider
+        # prefix). Safe to drop when no agent assignment still references
+        # them; if something does, leave it alone rather than break a live
+        # chain — the user can retire it manually.
+        removed_aliases: list[str] = []
+        alias_candidates = self._storage.fetchall(
+            "SELECT id FROM llm_models WHERE id LIKE '%/%.%'"
+        )
+        for row in alias_candidates:
+            mid = row["id"]
+            prefix, _, rest = mid.partition("/")
+            # Only targets the doubled-prefix pattern: 'anthropic/anthropic.xxx'.
+            if not rest.startswith(prefix + "."):
+                continue
+            in_use = self._storage.fetchone(
+                "SELECT 1 FROM agent_llm_models WHERE model_id = ? LIMIT 1",
+                (mid,),
+            )
+            if in_use:
+                continue
+            self._storage.execute("DELETE FROM llm_models WHERE id = ?", (mid,))
+            removed_aliases.append(mid)
+
         return {
             "added": added,
             "updated": updated,
             "skipped_legacy": skipped_legacy,
+            "removed_aliases": removed_aliases,
             "total": len(added) + len(updated),
         }
 

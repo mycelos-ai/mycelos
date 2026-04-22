@@ -185,6 +185,83 @@ def test_sync_from_litellm_preserves_existing_legacy_entry(registry: ModelRegist
     assert registry.get_model("anthropic/claude-3-opus-20240229") is not None
 
 
+def test_sync_from_litellm_ignores_bedrock_aliases(
+    registry: ModelRegistry, monkeypatch
+) -> None:
+    """Upstream Bedrock aliases like 'anthropic.claude-mythos-preview' carry
+    litellm_provider='bedrock' — they must not leak into the anthropic
+    registry just because their name starts with 'anthropic.'."""
+    fake_map = {
+        "anthropic.claude-mythos-preview": {
+            "litellm_provider": "bedrock",
+            "mode": "chat",
+            "input_cost_per_token": 0,
+            "output_cost_per_token": 0,
+        },
+        "claude-sonnet-4-6": {
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 15e-6,
+        },
+    }
+    monkeypatch.setattr(registry, "_fetch_cost_map", lambda prefer_remote: fake_map)
+    result = registry.sync_from_litellm()
+    # Sonnet 4.6 lands under anthropic.
+    assert registry.get_model("anthropic/claude-sonnet-4-6") is not None
+    # Bedrock alias does NOT.
+    assert registry.get_model("anthropic/anthropic.claude-mythos-preview") is None
+    assert "anthropic/anthropic.claude-mythos-preview" not in result["added"]
+
+
+def test_sync_from_litellm_cleans_up_doubled_prefix_aliases(
+    registry: ModelRegistry, monkeypatch
+) -> None:
+    """Previously-synced Bedrock aliases (doubled-prefix shape
+    'anthropic/anthropic.xxx') should be dropped on next sync — unless an
+    agent assignment still references them, in which case leave them be."""
+    # Seed: two mis-registered aliases, one unused, one in use.
+    registry.add_model(
+        model_id="anthropic/anthropic.claude-mythos-preview",
+        provider="anthropic",
+        tier="sonnet",
+    )
+    registry.add_model(
+        model_id="anthropic/anthropic.claude-opus-4-7",
+        provider="anthropic",
+        tier="opus",
+    )
+    # Simulate an existing assignment holding onto the second alias.
+    # FK chain: agent_llm_models.agent_id → agents.id. Default user is
+    # seeded by the schema, so we only need an agents row here.
+    registry._storage.execute(
+        "INSERT INTO agents (id, name, agent_type, status) VALUES (?, ?, ?, ?)",
+        ("mycelos", "Mycelos", "llm", "active"),
+    )
+    registry._storage.execute(
+        "INSERT INTO agent_llm_models (agent_id, model_id, purpose, priority) "
+        "VALUES (?, ?, ?, ?)",
+        ("mycelos", "anthropic/anthropic.claude-opus-4-7", "execution", 1),
+    )
+    # Catalog with a single real entry — the add-phase has nothing to do
+    # for our aliases (they don't appear upstream), but the cleanup pass
+    # still runs.
+    monkeypatch.setattr(registry, "_fetch_cost_map", lambda prefer_remote: {
+        "claude-sonnet-4-6": {
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 15e-6,
+        },
+    })
+    result = registry.sync_from_litellm()
+    # Unused alias is gone.
+    assert registry.get_model("anthropic/anthropic.claude-mythos-preview") is None
+    assert "anthropic/anthropic.claude-mythos-preview" in result["removed_aliases"]
+    # In-use alias stays put — better a stale row than a broken chain.
+    assert registry.get_model("anthropic/anthropic.claude-opus-4-7") is not None
+
+
 def test_sync_from_litellm_prefer_remote_falls_back_on_error(
     registry: ModelRegistry, monkeypatch
 ) -> None:
