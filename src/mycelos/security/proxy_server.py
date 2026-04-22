@@ -49,6 +49,23 @@ OAUTH_TMP_ROOT = Path("/tmp/mycelos-oauth")
 # for recipe-driven unit tests that don't want to spawn a real npx package.
 _OAUTH_ALLOWED_HEADS: tuple[str, ...] = ("npx",)
 
+# Mirror of _OAUTH_ALLOWED_HEADS for /mcp/start. Production recipes
+# always start with `npx`; tests may widen the allowlist.
+_MCP_ALLOWED_HEADS: tuple[str, ...] = ("npx",)
+
+
+# Module-level hook so tests can monkeypatch the MCP manager lookup.
+# The actual per-app getter is bound inside `create_proxy_app` and
+# assigned to this module attribute at factory-time. The /mcp/start
+# handler looks up `_get_mcp_manager` via the module (not the closure)
+# so tests can replace it with a stub (see
+# `test_mcp_start_for_recipe_materializes_keys_and_token`).
+def _get_mcp_manager() -> Any:  # pragma: no cover - placeholder, rebound by create_proxy_app
+    raise RuntimeError(
+        "_get_mcp_manager called before create_proxy_app bound it — "
+        "this should never happen in a real request path."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -254,13 +271,19 @@ def create_proxy_app() -> FastAPI:
             _state["_credential_proxy"] = EncryptedCredentialProxy(storage, master_key)
         return _state["_credential_proxy"]
 
-    def _get_mcp_manager() -> Any:
+    def _get_mcp_manager_impl() -> Any:
         if _state["_mcp_manager"] is None:
             from mycelos.connectors.mcp_manager import MCPConnectorManager
             _state["_mcp_manager"] = MCPConnectorManager(
                 credential_proxy=_get_credential_proxy()
             )
         return _state["_mcp_manager"]
+
+    # Expose to module globals so tests can monkeypatch _get_mcp_manager
+    # on the module and have the /mcp/start handler pick it up via
+    # dynamic module lookup.
+    global _get_mcp_manager
+    _get_mcp_manager = _get_mcp_manager_impl
 
     def _get_stt_service() -> SttService:
         if _state["_stt_service"] is None:
@@ -487,6 +510,15 @@ def create_proxy_app() -> FastAPI:
 
     @app.post("/mcp/start")
     async def mcp_start(request: Request) -> JSONResponse:
+        """Start an MCP session. For file-based recipes (Gmail etc.),
+        materialize credentials into a tmp HOME before spawn and keep
+        the ExitStack alive for the session's lifetime."""
+        from contextlib import ExitStack
+        import secrets as _secrets
+
+        from mycelos.connectors.mcp_recipes import get_recipe
+        from mycelos.security.credential_materializer import materialize_credentials
+
         authorized, user_id = _check_auth(request)
         if not authorized:
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -498,55 +530,89 @@ def create_proxy_app() -> FastAPI:
         storage = _get_storage()
         t_start = time.time()
 
-        # Resolve credential:X references in env_vars before passing to manager
-        resolved_env: dict[str, str] = {}
+        head = req.command[0] if req.command else ""
+        if head and head not in _MCP_ALLOWED_HEADS:
+            return JSONResponse(
+                {"error": f"command[0]='{head}' not in MCP allowlist"},
+                status_code=400,
+            )
+
         credential_proxy = _get_credential_proxy()
-        for key, val in req.env_vars.items():
-            if val.startswith("credential:") and credential_proxy:
-                service_name = val[len("credential:"):]
-                # Store and lookup disagreed historically: the gateway
-                # writes MCP connector creds under 'connector:<id>' while
-                # the MCP-manager looks them up as '<id>'. Try the bare
-                # name first (what the recipe asks for), then the
-                # 'connector:<id>' variant as a fallback so old rows and
-                # new rows both resolve.
-                try:
-                    cred = credential_proxy.get_credential(service_name, user_id=user_id)
-                    if not (cred and cred.get("api_key")):
-                        cred = credential_proxy.get_credential(f"connector:{service_name}", user_id=user_id)
-                    if cred and cred.get("api_key"):
-                        resolved_env[key] = cred["api_key"]
-                    else:
-                        return JSONResponse(
-                            {"error": f"Credential '{service_name}' not found for env var '{key}' — denied (fail-closed)"},
-                            status_code=502,
-                        )
-                except Exception:
-                    return JSONResponse(
-                        {"error": f"Credential lookup failed for '{service_name}' — denied (fail-closed)"},
-                        status_code=502,
-                    )
-            else:
-                resolved_env[key] = val
+        recipe = get_recipe(req.connector_id)
+
+        stack = ExitStack()
+        session_id = f"mcp-{req.connector_id}-{_secrets.token_hex(6)}"
+        home_dir = None
 
         try:
-            mcp = _get_mcp_manager()
-            tools = mcp.connect(
-                connector_id=req.connector_id,
-                command=req.command,
-                env_vars=resolved_env,
-                transport=req.transport,
-            )
-        except Exception as e:
-            logger.error("MCP start failed for connector '%s': %s", req.connector_id, e)
-            return JSONResponse(
-                {"error": "MCP connector start failed. Check server logs for details.", "status": 0},
-                status_code=500,
-            )
+            resolved_env: dict[str, str] = {}
+            if recipe is not None and recipe.oauth_keys_credential_service:
+                OAUTH_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+                mat = stack.enter_context(materialize_credentials(
+                    recipe=recipe,
+                    credential_proxy=credential_proxy,
+                    user_id=user_id,
+                    tmp_root=OAUTH_TMP_ROOT,
+                    session_id=session_id,
+                ))
+                home_dir = mat.home_dir
+                resolved_env["HOME"] = str(home_dir)
+                for k, v in (recipe.static_env or {}).items():
+                    resolved_env[k] = v
+                # Materialized recipes ignore req.env_vars — the package
+                # reads from files, not env vars.
+            else:
+                # Existing credential:<service> env-var path unchanged.
+                for key, val in req.env_vars.items():
+                    if val.startswith("credential:") and credential_proxy:
+                        service_name = val[len("credential:"):]
+                        try:
+                            cred = credential_proxy.get_credential(service_name, user_id=user_id)
+                            if not (cred and cred.get("api_key")):
+                                cred = credential_proxy.get_credential(
+                                    f"connector:{service_name}", user_id=user_id,
+                                )
+                            if cred and cred.get("api_key"):
+                                resolved_env[key] = cred["api_key"]
+                            else:
+                                stack.close()
+                                return JSONResponse(
+                                    {"error": f"Credential '{service_name}' not found for env var '{key}' — denied (fail-closed)"},
+                                    status_code=502,
+                                )
+                        except Exception:
+                            stack.close()
+                            return JSONResponse(
+                                {"error": f"Credential lookup failed for '{service_name}' — denied (fail-closed)"},
+                                status_code=502,
+                            )
+                    else:
+                        resolved_env[key] = val
 
-        import secrets
-        session_id = f"mcp-{req.connector_id}-{secrets.token_hex(6)}"
-        _state["_mcp_sessions"][session_id] = req.connector_id
+            try:
+                mcp = _get_mcp_manager()
+                tools = mcp.connect(
+                    connector_id=req.connector_id,
+                    command=req.command,
+                    env_vars=resolved_env,
+                    transport=req.transport,
+                )
+            except Exception as e:
+                stack.close()
+                logger.error("MCP start failed for connector '%s': %s", req.connector_id, e)
+                return JSONResponse(
+                    {"error": "MCP connector start failed. Check server logs for details.", "status": 0},
+                    status_code=500,
+                )
+        except Exception:
+            stack.close()
+            raise
+
+        _state["_mcp_sessions"][session_id] = {
+            "connector_id": req.connector_id,
+            "stack": stack,
+            "home_dir": str(home_dir) if home_dir else None,
+        }
 
         duration = time.time() - t_start
         if storage:
@@ -557,6 +623,11 @@ def create_proxy_app() -> FastAPI:
                 "agent_id": agent_id,
                 "duration": round(duration, 3),
             })
+            if recipe and recipe.oauth_keys_credential_service:
+                _write_audit(storage, "credential.materialized", user_id, {
+                    "service": recipe.oauth_keys_credential_service,
+                    "session_id": session_id,
+                })
 
         return JSONResponse({"session_id": session_id, "tools": tools})
 
@@ -621,7 +692,18 @@ def create_proxy_app() -> FastAPI:
         storage = _get_storage()
 
         # Remove from sessions map regardless of whether it exists
-        _state["_mcp_sessions"].pop(req.session_id, None)
+        sess = _state["_mcp_sessions"].pop(req.session_id, None)
+        if sess and isinstance(sess, dict):
+            stack = sess.get("stack")
+            if stack is not None:
+                try:
+                    stack.close()
+                except Exception:
+                    logger.warning("mcp_stop stack.close failed for %s", req.session_id)
+            if sess.get("home_dir") and storage:
+                _write_audit(storage, "credential.purged", user_id, {
+                    "session_id": req.session_id,
+                })
 
         if storage:
             _write_audit(storage, "proxy.mcp_stopped", user_id, {

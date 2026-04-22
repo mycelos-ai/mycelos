@@ -142,3 +142,56 @@ def test_oauth_start_missing_keys_credential_fails_closed(proxy_app, tmp_path, m
     })
     assert resp.status_code == 502
     assert "gmail-oauth-keys" in (resp.json().get("error") or "")
+
+
+def test_mcp_start_for_recipe_materializes_keys_and_token(proxy_app, tmp_path, monkeypatch):
+    """When /mcp/start is called for a file-based recipe, the proxy
+    materializes BOTH keys and token into a session HOME, spawns the
+    server with HOME set, and purges on /mcp/stop."""
+    # Seed both credentials.
+    proxy_app.post("/credential/store", json={
+        "service": "gmail-oauth-keys",
+        "label": "default",
+        "payload": {"api_key": '{"installed": {"client_id": "c"}}'},
+        "description": "keys",
+    })
+    proxy_app.post("/credential/store", json={
+        "service": "gmail-oauth-token",
+        "label": "default",
+        "payload": {"api_key": '{"access_token": "ya29.test"}'},
+        "description": "token",
+    })
+
+    from mycelos.security import proxy_server as ps
+    monkeypatch.setattr(ps, "OAUTH_TMP_ROOT", tmp_path)
+    # Widen the allowlist so our probe command goes through.
+    monkeypatch.setattr(ps, "_MCP_ALLOWED_HEADS", ("npx", "true"))
+
+    # Stub out the MCPConnectorManager.connect call so we don't spawn
+    # a real MCP server — we only want to verify materialization
+    # happens and a session is registered. The manager's connect()
+    # would normally block on a stdio handshake.
+    fake_mcp = type("_M", (), {})()
+    fake_mcp.connect = lambda **kwargs: []  # returns empty tool list
+    monkeypatch.setattr(ps, "_get_mcp_manager", lambda: fake_mcp)
+
+    resp = proxy_app.post("/mcp/start", json={
+        "connector_id": "gmail",
+        "command": ["true"],
+        "env_vars": {},
+        "transport": "stdio",
+    })
+    assert resp.status_code == 200, resp.text
+    sid = resp.json()["session_id"]
+
+    # Exactly one tmpdir was created AND contains both files.
+    tmpdirs = list(tmp_path.glob("mycelos-oauth-*"))
+    assert len(tmpdirs) == 1
+    keys_file = tmpdirs[0] / ".gmail-mcp" / "gcp-oauth.keys.json"
+    token_file = tmpdirs[0] / ".gmail-mcp" / "credentials.json"
+    assert keys_file.exists(), "keys file must be materialized for /mcp/start"
+    assert token_file.exists(), "token file must be materialized for /mcp/start"
+
+    # Stop the session — tmp dir is purged.
+    proxy_app.post("/mcp/stop", json={"session_id": sid})
+    assert not tmpdirs[0].exists(), "tmp dir must be purged after /mcp/stop"
