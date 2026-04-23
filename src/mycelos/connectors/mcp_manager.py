@@ -132,8 +132,22 @@ class MCPConnectorManager:
         try:
             tools = self._run_async(_connect())
         except Exception as e:
-            self._record_failure(connector_id, f"connect failed: {e}")
-            raise
+            # Use repr so empty-message exceptions (e.g. asyncio
+            # CancelledError, or MCP's own TaskGroup-wrapped errors
+            # that hide the root cause inside .exceptions) still
+            # leave us with a usable breadcrumb.
+            msg = str(e) or repr(e)
+            # ExceptionGroup / TaskGroup: dig one level deeper.
+            if hasattr(e, "exceptions") and e.exceptions:
+                inner = "; ".join(
+                    f"{type(ex).__name__}: {str(ex) or repr(ex)}"
+                    for ex in e.exceptions
+                )
+                msg = f"{type(e).__name__}({msg}) — inner: {inner}"
+            logger.warning("MCP connect failed for '%s': %s", connector_id, msg)
+            self._record_failure(connector_id, f"connect failed: {msg}")
+            # Re-raise with the enriched message so /test shows it.
+            raise RuntimeError(msg) from e
 
         self._clients[connector_id] = client
 
