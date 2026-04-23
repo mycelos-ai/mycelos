@@ -30,6 +30,14 @@ services:
       # every read/write through this container), and the Phase 1b
       # isolation story is about the CODE path, not the filesystem.
       - ${MYCELOS_DATA_DIR:-./data}:/data
+    tmpfs:
+      # Per-session OAuth materialization lives here. tmpfs keeps
+      # cleartext keys + tokens off persistent disk; they exist only
+      # for the lifetime of the auth subprocess (or the live MCP
+      # session) and are purged explicitly on stop, with a
+      # belt-and-braces guarantee from the tmpfs itself on container
+      # restart.
+      - /tmp/mycelos-oauth:size=16m,mode=0700
     networks:
       - mycelos-internal
     restart: unless-stopped
