@@ -255,17 +255,17 @@ class SecurityProxyClient:
         resp = self._request("DELETE", f"/credential/{service}/{label}")
         return resp.json() if hasattr(resp, "json") else {}
 
-    def credential_get(
+    def oauth_public_fields(
         self, service: str, label: str = "default", user_id: str = "default",
     ) -> dict | None:
-        """Get a credential by service+label. Returns the plaintext
-        payload dict ({"api_key": "..."}) or None if not found.
+        """Return ONLY the public parts (client_id) of an OAuth client
+        credential stored in the proxy. The secret half stays in the
+        proxy container — Constitution Rule 4 preserved.
 
-        Used by the gateway's /api/connectors/oauth/start to read the
-        public half (client_id) of stored OAuth client credentials.
+        Returns ``{"client_id": "..."}`` or None if not found.
         """
         resp = self._request(
-            "GET", f"/credential/get/{service}/{label}",
+            "GET", f"/oauth/public_fields/{service}/{label}",
             headers={"X-User-Id": user_id},
         )
         if resp.status_code == 404:

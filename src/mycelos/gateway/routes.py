@@ -1561,7 +1561,7 @@ def setup_routes(api: FastAPI) -> None:
         """Recipe metadata + resolved setup guide in one roundtrip.
 
         Used by the frontend setup dialog to decide which flow to render
-        (plain 'secret' vs. 'oauth_browser' wizard) and to show the
+        (plain 'secret' vs. 'oauth_http' wizard) and to show the
         platform-specific preparation steps inline.
         """
         from mycelos.connectors.mcp_recipes import get_recipe as get_r
@@ -1586,9 +1586,11 @@ def setup_routes(api: FastAPI) -> None:
             "credentials": recipe.credentials,
             "capabilities_preview": recipe.capabilities_preview,
             "setup_flow": recipe.setup_flow,
-            "oauth_cmd": recipe.oauth_cmd,
             "oauth_setup_guide_id": recipe.oauth_setup_guide_id,
             "setup_guide": guide,
+            "oauth_client_credential_service": recipe.oauth_client_credential_service,
+            "oauth_token_credential_service": recipe.oauth_token_credential_service,
+            "http_endpoint": recipe.http_endpoint,
             "requires_node": recipe.requires_node,
         }
 
@@ -1627,35 +1629,39 @@ def setup_routes(api: FastAPI) -> None:
 
         mycelos = api.state.mycelos
 
-        # Read client_id from the stored client_secret_*.json.
-        client_cred = None
+        # Read ONLY the public `client_id` — never the client_secret.
+        # In single-process mode we read the encrypted credential locally
+        # and extract just client_id. In two-container mode the gateway
+        # can't decrypt, so it asks the proxy via /oauth/public_fields
+        # which returns only {client_id}. Either way, client_secret
+        # never crosses into the gateway process.
+        client_id = ""
         try:
-            client_cred = mycelos.credentials.get_credential(
+            local_cred = mycelos.credentials.get_credential(
                 recipe.oauth_client_credential_service, user_id="default",
             )
+            if isinstance(local_cred, dict) and isinstance(local_cred.get("api_key"), str):
+                blob = _json.loads(local_cred["api_key"])
+                installed = blob.get("installed") or blob.get("web") or {}
+                client_id = installed.get("client_id", "") or ""
         except NotImplementedError:
-            # Two-container mode: gateway can't decrypt directly. Ask proxy.
-            client_cred = None
+            client_id = ""
         except Exception:
-            client_cred = None
-        def _has_api_key(c: Any) -> bool:
-            if not isinstance(c, dict):
-                return False
-            v = c.get("api_key")
-            return isinstance(v, str) and bool(v)
+            client_id = ""
 
-        if not _has_api_key(client_cred):
+        if not client_id:
             proxy_client = getattr(mycelos, "proxy_client", None)
             if proxy_client is not None:
                 try:
-                    got = proxy_client.credential_get(
+                    got = proxy_client.oauth_public_fields(
                         recipe.oauth_client_credential_service, user_id="default",
                     )
-                    if _has_api_key(got):
-                        client_cred = got
+                    if isinstance(got, dict):
+                        client_id = got.get("client_id", "") or ""
                 except Exception:
                     pass
-        if not _has_api_key(client_cred):
+
+        if not client_id:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1663,11 +1669,6 @@ def setup_routes(api: FastAPI) -> None:
                     "not uploaded. Paste client_secret_*.json first."
                 ),
             )
-        client_json = _json.loads(client_cred["api_key"])
-        installed = client_json.get("installed") or client_json.get("web") or {}
-        client_id = installed.get("client_id", "")
-        if not client_id:
-            raise HTTPException(status_code=400, detail="Malformed client credential")
 
         # Build PKCE pair and state.
         code_verifier = _secrets.token_urlsafe(64)

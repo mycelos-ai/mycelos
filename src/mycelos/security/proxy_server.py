@@ -974,8 +974,18 @@ def create_proxy_app() -> FastAPI:
     # GET /credential/get/{service}/{label} — plaintext read (restricted use)
     # ---------------------------------------------------------------------------
 
-    @app.get("/credential/get/{service}/{label}")
-    async def credential_get(service: str, label: str, request: Request) -> JSONResponse:
+    @app.get("/oauth/public_fields/{service}/{label}")
+    async def oauth_public_fields(
+        service: str, label: str, request: Request,
+    ) -> JSONResponse:
+        """Return ONLY the public, non-sensitive parts of an OAuth client
+        credential — today just `client_id`. Used by the gateway to build
+        an OAuth consent URL without pulling the `client_secret` across
+        the trust boundary. Constitution Rule 4 (credentials never
+        visible outside the proxy) stays intact for the secret half;
+        `client_id` is published to the user's browser in the auth URL
+        anyway, so it isn't a secret.
+        """
         authorized, user_id = _check_auth(request)
         if not authorized:
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -986,9 +996,18 @@ def create_proxy_app() -> FastAPI:
             cred = cp.get_credential(service, user_id=user_id, label=label)
         except NotImplementedError:
             return JSONResponse({"error": "not available"}, status_code=501)
-        if cred is None:
+        if cred is None or not cred.get("api_key"):
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse(cred)
+        try:
+            import json as _json
+            client_json = _json.loads(cred["api_key"])
+        except Exception:
+            return JSONResponse({"error": "malformed credential"}, status_code=500)
+        installed = client_json.get("installed") or client_json.get("web") or {}
+        client_id = installed.get("client_id", "")
+        if not client_id:
+            return JSONResponse({"error": "no client_id in credential"}, status_code=404)
+        return JSONResponse({"client_id": client_id})
 
     # ---------------------------------------------------------------------------
     # GET /credential/list

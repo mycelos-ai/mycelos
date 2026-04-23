@@ -829,7 +829,7 @@
       </div>
     </div>
 
-    <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_browser' -->
+    <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_http' -->
     <div x-show="oauthDialog.open" x-cloak
          class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
          @click.self="closeOAuthDialog()">
@@ -1010,9 +1010,7 @@
             { id: 'filesystem', name: 'Filesystem', description: 'Read and write files in allowed directories', command: 'npx -y @modelcontextprotocol/server-filesystem', credentials_needed: false },
           ]},
           { id: 'google', icon: '\uD83C\uDF31', label: 'Google Workspace', connectors: [
-            { id: 'gmail', name: 'Gmail', description: 'Search, read, send, filters, labels, attachments via the Gmail API', command: 'npx -y @gongrzhe/server-gmail-autoauth-mcp', credentials_needed: true },
-            { id: 'google-calendar', name: 'Google Calendar', description: 'List, create, update, delete events across all calendars', command: 'npx -y @cocal/google-calendar-mcp', credentials_needed: true },
-            { id: 'google-drive', name: 'Google Drive', description: 'List, read, search, and upload files in Drive', command: 'npx -y @piotr-agier/google-drive-mcp', credentials_needed: true },
+            { id: 'gmail', name: 'Gmail', description: 'Read, search, send, and manage Gmail via Google\u2019s official MCP server', command: '', credentials_needed: true },
           ]},
           { id: 'dev', icon: '\uD83D\uDCBB', label: 'Development', connectors: [
             { id: 'github', name: 'GitHub', description: 'Repositories, Issues, Pull Requests, Code Search', command: '', credentials_needed: true },
@@ -1517,9 +1515,9 @@
          * Otherwise, installs directly via API.
          */
         async installFromUseCase(connector) {
-          // Google connectors (and any future oauth_browser recipe) use
-          // the dedicated dialog instead of the plain secret form.
-          if (['gmail', 'google-calendar', 'google-drive'].includes(connector.id)) {
+          // OAuth-HTTP recipes (Gmail today; Calendar/Drive to follow)
+          // use the dedicated dialog instead of the plain secret form.
+          if (['gmail'].includes(connector.id)) {
             this.activeUseCase = null;
             this.openOAuthDialog(connector.id);
             return;
