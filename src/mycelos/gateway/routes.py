@@ -1824,6 +1824,21 @@ def setup_routes(api: FastAPI) -> None:
             result.append({**dict(c), "tool_count": tool_count})
         return result
 
+    @api.get("/api/connectors/{connector_id}")
+    async def get_connector(connector_id: str) -> dict[str, Any]:
+        """Look up a single connector by id. 404 if not registered.
+
+        Used by the frontend's OAuth-dialog polling loop: the dialog
+        hits this every ~2.5 seconds after showing the auth URL; a 200
+        means the callback handler has registered the connector (i.e.
+        the user completed consent) and the dialog flips to Stage 3.
+        """
+        mycelos = api.state.mycelos
+        c = mycelos.connector_registry.get(connector_id)
+        if c is None:
+            raise HTTPException(status_code=404, detail=f"Unknown connector: {connector_id}")
+        return dict(c)
+
     @api.post("/api/connectors")
     async def add_connector(request: Request, body: ConnectorAddRequest) -> dict[str, Any]:
         """Add a connector (same logic as /connector add slash command)."""
