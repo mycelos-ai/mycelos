@@ -90,3 +90,71 @@ def test_websocket_streams_stdout_from_subprocess(proxy_app):
 
     assert saw_stdout, "expected at least one stdout frame from 'npx --help'"
     assert exit_code is not None, "expected a done frame with exit_code"
+
+
+def test_websocket_persists_token_on_clean_exit(proxy_app, tmp_path, monkeypatch):
+    """When a recipe-dispatched subprocess exits 0 and wrote a token
+    file to <HOME>/.gmail-mcp/credentials.json, the proxy must store
+    it as oauth_token_credential_service and purge the tmp dir."""
+    import json as _json
+
+    # Seed keys credential.
+    proxy_app.post("/credential/store", json={
+        "service": "gmail-oauth-keys",
+        "label": "default",
+        "payload": {"api_key": '{"installed": {"client_id": "c"}}'},
+        "description": "test",
+    })
+
+    from mycelos.security import proxy_server as ps
+    monkeypatch.setattr(ps, "OAUTH_TMP_ROOT", tmp_path)
+    # Widen the allowlist so our test command (python) goes through.
+    monkeypatch.setattr(ps, "_OAUTH_ALLOWED_HEADS", ("npx", "python"))
+
+    # Swap the recipe's oauth_cmd for a short-lived python one-liner
+    # that writes a token file into $HOME/.gmail-mcp/ and exits 0.
+    from mycelos.connectors.mcp_recipes import RECIPES
+    original_cmd = RECIPES["gmail"].oauth_cmd
+    test_script = (
+        "import os, pathlib; "
+        "p = pathlib.Path(os.environ['HOME']) / '.gmail-mcp'; "
+        "p.mkdir(parents=True, exist_ok=True); "
+        "(p / 'credentials.json').write_text('{\"access_token\": \"fake\"}');"
+    )
+    # dataclasses.replace would make a copy; the materializer looks up
+    # the recipe by id each time, so we mutate in place and restore
+    # at the end.
+    object.__setattr__(RECIPES["gmail"], "oauth_cmd", f'python -c "{test_script}"')
+
+    try:
+        resp = proxy_app.post("/oauth/start", json={"recipe_id": "gmail"})
+        assert resp.status_code == 200, resp.text
+        sid = resp.json()["session_id"]
+
+        with proxy_app.websocket_connect(
+            f"/oauth/stream/{sid}",
+            headers={"Authorization": "Bearer test-token"},
+        ) as ws:
+            # Read frames until 'done'.
+            for _ in range(200):
+                try:
+                    raw = ws.receive_text()
+                except Exception:
+                    break
+                try:
+                    frame = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    continue
+                if frame.get("type") == "done":
+                    assert frame["exit_code"] == 0, f"unexpected exit: {frame}"
+                    break
+    finally:
+        object.__setattr__(RECIPES["gmail"], "oauth_cmd", original_cmd)
+
+    # Token credential was stored.
+    lst = proxy_app.get("/credential/list").json()
+    services = [c["service"] for c in lst.get("credentials", [])]
+    assert "gmail-oauth-token" in services, f"expected token credential, got: {services}"
+
+    # Tmp dir was purged.
+    assert not list(tmp_path.glob("mycelos-oauth-*"))

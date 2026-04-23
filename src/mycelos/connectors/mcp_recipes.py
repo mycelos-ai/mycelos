@@ -47,6 +47,26 @@ class MCPRecipe:
         # describes prerequisites like "create a Google Cloud project,
         # enable the Gmail API, download gcp-oauth.keys.json" as a
         # step-by-step wizard.
+    oauth_keys_credential_service: str = ""
+        # Where the OAuth *keys* blob (e.g. gcp-oauth.keys.json) lives in the
+        # credential store. Empty if the recipe uses env-var injection instead.
+        # The proxy materializes this credential as a file before spawning
+        # the subprocess, then purges it on exit.
+    oauth_keys_home_dir: str = ""
+        # Sub-directory under the spawned HOME where the keys file must
+        # land, e.g. ".gmail-mcp". Upstream packages read from a hardcoded
+        # "~/.xxx-mcp/keys.json" path — setting HOME to a session-scoped
+        # tmpdir and writing the file here is what makes them pick it up.
+    oauth_keys_filename: str = ""
+        # Exact filename the upstream package expects, e.g.
+        # "gcp-oauth.keys.json". Combined with oauth_keys_home_dir.
+    oauth_token_filename: str = ""
+        # Filename the upstream package *writes* after a successful consent,
+        # e.g. "credentials.json" or "token.json". Read back by the proxy
+        # after the auth subprocess exits cleanly.
+    oauth_token_credential_service: str = ""
+        # Where to store the token blob the upstream package produced.
+        # Future MCP-server runs materialize both keys AND token before spawn.
 
 
 # All available recipes
@@ -162,6 +182,11 @@ RECIPES: dict[str, MCPRecipe] = {
         setup_flow="oauth_browser",
         oauth_cmd="npx -y @gongrzhe/server-gmail-autoauth-mcp auth",
         oauth_setup_guide_id="google_cloud",
+        oauth_keys_credential_service="gmail-oauth-keys",
+        oauth_keys_home_dir=".gmail-mcp",
+        oauth_keys_filename="gcp-oauth.keys.json",
+        oauth_token_filename="credentials.json",
+        oauth_token_credential_service="gmail-oauth-token",
     ),
     "google-calendar": MCPRecipe(
         id="google-calendar",
@@ -190,6 +215,11 @@ RECIPES: dict[str, MCPRecipe] = {
         setup_flow="oauth_browser",
         oauth_cmd="npx -y @cocal/google-calendar-mcp auth",
         oauth_setup_guide_id="google_cloud",
+        oauth_keys_credential_service="google-calendar-oauth-keys",
+        oauth_keys_home_dir=".google-calendar-mcp",
+        oauth_keys_filename="gcp-oauth.keys.json",
+        oauth_token_filename="token.json",
+        oauth_token_credential_service="google-calendar-oauth-token",
     ),
     "google-drive": MCPRecipe(
         id="google-drive",
@@ -217,6 +247,11 @@ RECIPES: dict[str, MCPRecipe] = {
         setup_flow="oauth_browser",
         oauth_cmd="npx -y @piotr-agier/google-drive-mcp auth",
         oauth_setup_guide_id="google_cloud",
+        oauth_keys_credential_service="google-drive-oauth-keys",
+        oauth_keys_home_dir=".google-drive-mcp",
+        oauth_keys_filename="gcp-oauth.keys.json",
+        oauth_token_filename="token.json",
+        oauth_token_credential_service="google-drive-oauth-token",
     ),
     "email": MCPRecipe(
         id="email",

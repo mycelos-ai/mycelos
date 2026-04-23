@@ -38,32 +38,22 @@ def client_with_mock_proxy():
         yield TestClient(fastapi_app), mock
 
 
-def test_oauth_start_passthrough_forwards_to_proxy(client_with_mock_proxy):
-    """The gateway's /api/connectors/oauth/start just looks up the
-    recipe, then calls proxy_client.oauth_start with the recipe's
-    oauth_cmd. The body from the browser carries env_vars (the
-    credential reference for the OAuth keys file)."""
+def test_oauth_start_passthrough_sends_recipe_id(client_with_mock_proxy):
+    """After materialization refactor the gateway sends just
+    {recipe_id}: the proxy does the env/HOME setup itself."""
     client, mock = client_with_mock_proxy
     resp = client.post("/api/connectors/oauth/start", json={
         "recipe_id": "gmail",
-        "env_vars": {"GMAIL_OAUTH_PATH": "credential:gmail-oauth-keys"},
     })
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["session_id"] == "oauth-testsid"
     assert body["ws_url"] == "/api/connectors/oauth/stream/oauth-testsid"
 
-    # Proxy was told to spawn the gmail auth cmd, with the env we passed.
+    # Proxy was called with recipe_id=gmail (no env_vars, no oauth_cmd).
     call = mock.oauth_start.call_args
-    # Accept both keyword and positional shapes for robustness.
     kwargs = call.kwargs or {}
-    if not kwargs and call.args:
-        kwargs = {
-            "oauth_cmd": call.args[0] if len(call.args) > 0 else "",
-            "env_vars":  call.args[1] if len(call.args) > 1 else {},
-        }
-    assert "@gongrzhe/server-gmail-autoauth-mcp auth" in kwargs.get("oauth_cmd", "")
-    assert kwargs.get("env_vars", {}).get("GMAIL_OAUTH_PATH") == "credential:gmail-oauth-keys"
+    assert kwargs.get("recipe_id") == "gmail"
 
 
 def test_oauth_start_unknown_recipe_404(client_with_mock_proxy):

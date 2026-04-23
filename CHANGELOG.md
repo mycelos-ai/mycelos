@@ -74,6 +74,14 @@ deployment on localhost.
 - New gateway endpoints `GET /api/connectors/recipes/{id}` (recipe + inlined guide in one roundtrip), `POST /api/connectors/oauth/{start,stop}`, `WS /api/connectors/oauth/stream/{session_id}` (passthrough), `POST /api/credentials/oauth-keys/validate` (shape-check gcp-oauth.keys.json before upload).
 - `docs/deployment/google-setup.md` now leads with the UI path; the shell-based walkthrough is retained as a fallback for headless installs.
 
+### File-based credential materialization
+- Upstream MCP packages that read credentials from hardcoded file paths (e.g. `~/.gmail-mcp/gcp-oauth.keys.json`) now participate in the encrypted-credential flow without breaking the "DB is the only persistent copy" rule. New `credential_materializer` module writes the credential blob to a session-scoped tmp HOME right before `Popen`, sets `HOME=` on the spawned subprocess, and purges on exit via a context manager's `finally`.
+- Proxy's `/oauth/start` and `/mcp/start` now accept `recipe_id` and handle materialization themselves. After a clean `npx ... auth` run, the token file the tool wrote is read back and stored as a second credential (`<recipe>-oauth-token`). Future MCP-server runs materialize both files.
+- Gateway's `/api/connectors/oauth/start` now sends only `{recipe_id}`; the proxy looks up the recipe and drives the flow. Frontend `submitOAuthKeysAndStart` is simpler by one parameter.
+- Docker `tmpfs` mount on the proxy's `/tmp/mycelos-oauth` — cleartext keys/tokens never hit persistent disk.
+- New audit events: `credential.materialized`, `credential.purged`, `credential.token_persisted`.
+- New `MCPRecipe` fields for file-based tools: `oauth_keys_credential_service`, `oauth_keys_home_dir`, `oauth_keys_filename`, `oauth_token_filename`, `oauth_token_credential_service`. The three Google recipes use them.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)

@@ -1664,7 +1664,6 @@
 
         async submitOAuthKeysAndStart() {
           this.oauthDialog.submitting = true;
-          const envVar = (this.oauthDialog.recipe?.credentials?.[0] || {}).env_var || '';
           const credService = this.oauthDialog.recipeId + '-oauth-keys';
           try {
             // 1. Store the JSON as a credential.
@@ -1679,13 +1678,14 @@
               }),
             });
 
-            // 2. Ask the gateway to start the auth subprocess.
+            // 2. Ask the gateway to start the auth subprocess. The
+            //    proxy looks up the recipe and materializes the keys
+            //    file itself — no env_vars needed from the browser.
             const startResp = await fetch('/api/connectors/oauth/start', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
                 recipe_id: this.oauthDialog.recipeId,
-                env_vars: {[envVar]: 'credential:' + credService},
               }),
             });
             if (!startResp.ok) {
