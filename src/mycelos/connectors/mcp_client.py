@@ -108,13 +108,18 @@ class MycelosMCPClient:
         """Connect via HTTP (hosted MCP endpoint)."""
         from mcp import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
+        from mycelos.connectors.mcp_recipes import get_recipe
 
-        url = self._HTTP_ENDPOINTS.get(self.connector_id, "")
+        recipe = get_recipe(self.connector_id)
+        url = ""
+        if recipe and recipe.http_endpoint:
+            url = recipe.http_endpoint
+        else:
+            url = self._HTTP_ENDPOINTS.get(self.connector_id, "")
         if not url:
             raise ValueError(f"No HTTP endpoint configured for '{self.connector_id}'")
 
-        # Get auth token from credentials
-        token = self._resolve_token()
+        token = self._resolve_token(recipe)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
         self._http_context = streamablehttp_client(url=url, headers=headers)
@@ -126,15 +131,29 @@ class MycelosMCPClient:
         await self._session.initialize()
         logger.info("MCP server '%s' connected (http: %s)", self.connector_id, url)
 
-    def _resolve_token(self) -> str | None:
+    def _resolve_token(self, recipe=None) -> str | None:
         """Resolve the API token from credential proxy.
 
-        Fail-closed (Constitution Rule 3): credential lookup errors propagate
-        so the caller sees an explicit failure instead of an unauthenticated
-        request with a confusing downstream 401.
+        For oauth_http recipes, runs through oauth_token_manager so
+        an expired access_token is refreshed lazily. For other HTTP
+        recipes (e.g. GitHub) the token is a plain credential lookup.
+
+        Fail-closed (Constitution Rule 3): credential lookup errors
+        propagate so the caller sees an explicit failure instead of
+        an unauthenticated request with a confusing downstream 401.
         """
         if not self._credential_proxy:
             return None
+
+        if recipe is not None and getattr(recipe, "setup_flow", "") == "oauth_http":
+            from mycelos.security.oauth_token_manager import refresh_if_expired
+            return refresh_if_expired(
+                recipe=recipe,
+                credential_proxy=self._credential_proxy,
+                user_id="default",
+            )
+
+        # Non-OAuth HTTP recipes (GitHub etc.) use the env_vars path.
         for env_var, source in self._env_vars.items():
             if source.startswith("credential:"):
                 service = source[11:]
