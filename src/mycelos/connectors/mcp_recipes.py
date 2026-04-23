@@ -33,37 +33,28 @@ class MCPRecipe:
         # env alongside credential injection.
     setup_flow: str = "secret"
         # "secret" (default): single password-style input for API key.
-        # "oauth_browser": render the OAuth-keys upload + browser-consent
-        # wizard. Frontend switches dialog based on this value.
-    oauth_cmd: str = ""
-        # Non-empty only when setup_flow == "oauth_browser". The command
-        # the proxy spawns on "Start OAuth consent" — e.g.
-        # "npx -y @gongrzhe/server-gmail-autoauth-mcp auth". stdout/stderr
-        # is streamed to the web UI; the user follows the URL the command
-        # prints.
+        # "oauth_http": render the OAuth authorize-URL redirect wizard for
+        # hosted HTTP MCP endpoints. Frontend switches dialog based on this
+        # value.
     oauth_setup_guide_id: str = ""
         # Key into the oauth_setup_guides registry (e.g. "google_cloud").
-        # Non-empty only when setup_flow == "oauth_browser". The guide
+        # Non-empty only when setup_flow == "oauth_http". The guide
         # describes prerequisites like "create a Google Cloud project,
-        # enable the Gmail API, download gcp-oauth.keys.json" as a
+        # enable the Gmail API, download the client_secret JSON" as a
         # step-by-step wizard.
-    oauth_keys_credential_service: str = ""
-        # Where the OAuth *keys* blob (e.g. gcp-oauth.keys.json) lives in the
-        # credential store. Empty if the recipe uses env-var injection instead.
-        # The proxy materializes this credential as a file before spawning
-        # the subprocess, then purges it on exit.
-    oauth_keys_home_dir: str = ""
-        # Sub-directory under the spawned HOME where the keys file must
-        # land, e.g. ".gmail-mcp". Upstream packages read from a hardcoded
-        # "~/.xxx-mcp/keys.json" path — setting HOME to a session-scoped
-        # tmpdir and writing the file here is what makes them pick it up.
-    oauth_keys_filename: str = ""
-        # Exact filename the upstream package expects, e.g.
-        # "gcp-oauth.keys.json". Combined with oauth_keys_home_dir.
-    oauth_token_filename: str = ""
-        # Filename the upstream package *writes* after a successful consent,
-        # e.g. "credentials.json" or "token.json". Read back by the proxy
-        # after the auth subprocess exits cleanly.
+    http_endpoint: str = ""
+        # Remote MCP endpoint for HTTP-transport recipes. Empty for
+        # stdio-transport recipes.
+    oauth_authorize_url: str = ""
+        # OAuth 2.0 authorize endpoint (Google, Microsoft, etc.).
+    oauth_token_url: str = ""
+        # OAuth 2.0 token endpoint (for code exchange AND refresh).
+    oauth_scopes: list[str] = field(default_factory=list)
+        # Space-joined into the `scope` query param on the auth URL.
+    oauth_client_credential_service: str = ""
+        # DB row holding {"api_key": json.dumps(client_secret_json)}.
+        # The blob is the raw client_secret_*.json the user downloads
+        # from Cloud Console.
     oauth_token_credential_service: str = ""
         # Where to store the token blob the upstream package produced.
         # Future MCP-server runs materialize both keys AND token before spawn.
@@ -156,102 +147,26 @@ RECIPES: dict[str, MCPRecipe] = {
     ),
     "gmail": MCPRecipe(
         id="gmail",
-        name="Gmail (via Google API)",
-        description=(
-            "Gmail with the full API surface — search, read, send, reply, "
-            "filters, labels, attachments. Runs as an MCP server inside the "
-            "SecurityProxy; OAuth tokens never leave the proxy container."
-        ),
-        command="npx -y @gongrzhe/server-gmail-autoauth-mcp",
-        transport="stdio",
-        credentials=[{
-            "env_var": "GMAIL_OAUTH_PATH",
-            "name": "Google Cloud OAuth credentials (JSON)",
-            "help": (
-                "Paste the contents of gcp-oauth.keys.json from the Google "
-                "Cloud Console (OAuth 2.0 Desktop app). First run triggers "
-                "a browser consent — see docs/deployment/google-setup.md."
-            ),
-        }],
-        capabilities_preview=[
-            "gmail_search", "gmail_read", "gmail_send", "gmail_labels",
-            "gmail_filters", "gmail_attachments",
-        ],
-        category="communication",
-        requires_node=True,
-        setup_flow="oauth_browser",
-        oauth_cmd="npx -y @gongrzhe/server-gmail-autoauth-mcp auth",
+        name="Gmail",
+        description="Read, search, send, and manage Gmail via Google's official MCP server",
+        command="",
+        transport="http",
+        setup_flow="oauth_http",
         oauth_setup_guide_id="google_cloud",
-        oauth_keys_credential_service="gmail-oauth-keys",
-        oauth_keys_home_dir=".gmail-mcp",
-        oauth_keys_filename="gcp-oauth.keys.json",
-        oauth_token_filename="credentials.json",
+        http_endpoint="https://gmailmcp.googleapis.com/mcp/v1",
+        oauth_authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
+        oauth_token_url="https://oauth2.googleapis.com/token",
+        oauth_scopes=[
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
+        ],
+        oauth_client_credential_service="gmail-oauth-client",
         oauth_token_credential_service="gmail-oauth-token",
-    ),
-    "google-calendar": MCPRecipe(
-        id="google-calendar",
-        name="Google Calendar",
-        description=(
-            "Read, create, update, and delete Calendar events across all of "
-            "the user's calendars. Same OAuth project as Gmail/Drive but a "
-            "separate consent flow per service."
-        ),
-        command="npx -y @cocal/google-calendar-mcp",
-        transport="stdio",
-        credentials=[{
-            "env_var": "GOOGLE_OAUTH_CREDENTIALS",
-            "name": "Google Cloud OAuth credentials (JSON)",
-            "help": (
-                "Reuse the same gcp-oauth.keys.json from Gmail. First run "
-                "opens a browser for Calendar scope consent."
-            ),
-        }],
+        category="google",
         capabilities_preview=[
-            "list_calendars", "list_events", "create_event",
-            "update_event", "delete_event",
+            "search_threads", "get_thread", "list_labels",
+            "create_draft", "list_drafts",
         ],
-        category="communication",
-        requires_node=True,
-        setup_flow="oauth_browser",
-        oauth_cmd="npx -y @cocal/google-calendar-mcp auth",
-        oauth_setup_guide_id="google_cloud",
-        oauth_keys_credential_service="google-calendar-oauth-keys",
-        oauth_keys_home_dir=".google-calendar-mcp",
-        oauth_keys_filename="gcp-oauth.keys.json",
-        oauth_token_filename="token.json",
-        oauth_token_credential_service="google-calendar-oauth-token",
-    ),
-    "google-drive": MCPRecipe(
-        id="google-drive",
-        name="Google Drive",
-        description=(
-            "List, read, search, and upload files in Google Drive. Shares "
-            "the OAuth project with Gmail and Calendar; each service runs "
-            "its own consent flow."
-        ),
-        command="npx -y @piotr-agier/google-drive-mcp",
-        transport="stdio",
-        credentials=[{
-            "env_var": "GDRIVE_OAUTH_PATH",
-            "name": "Google Cloud OAuth credentials (JSON)",
-            "help": (
-                "Reuse the same gcp-oauth.keys.json. First run opens a "
-                "browser for Drive scope consent."
-            ),
-        }],
-        capabilities_preview=[
-            "drive_list", "drive_read", "drive_search", "drive_upload",
-        ],
-        category="storage",
-        requires_node=True,
-        setup_flow="oauth_browser",
-        oauth_cmd="npx -y @piotr-agier/google-drive-mcp auth",
-        oauth_setup_guide_id="google_cloud",
-        oauth_keys_credential_service="google-drive-oauth-keys",
-        oauth_keys_home_dir=".google-drive-mcp",
-        oauth_keys_filename="gcp-oauth.keys.json",
-        oauth_token_filename="token.json",
-        oauth_token_credential_service="google-drive-oauth-token",
     ),
     "email": MCPRecipe(
         id="email",

@@ -1,7 +1,7 @@
 """The MCPRecipe dataclass gained a setup_flow field so the frontend
 can render different setup dialogs for different credential shapes.
 Recipes default to 'secret' (single password-style input); OAuth-based
-recipes declare 'oauth_browser' which triggers the Google-style wizard."""
+recipes declare 'oauth_http' which triggers the hosted-OAuth wizard."""
 from __future__ import annotations
 
 from mycelos.connectors.mcp_recipes import MCPRecipe, RECIPES
@@ -13,32 +13,6 @@ def test_default_setup_flow_is_secret() -> None:
     assert r.setup_flow == "secret"
 
 
-def test_gmail_recipe_declares_oauth_browser() -> None:
-    r = RECIPES["gmail"]
-    assert r.setup_flow == "oauth_browser"
-    # The oauth_cmd is what the proxy spawns when the user clicks
-    # "Start OAuth consent" — upstream's auth subcommand.
-    assert r.oauth_cmd == "npx -y @gongrzhe/server-gmail-autoauth-mcp auth"
-    # A setup-guide id links the recipe to a step-by-step wizard
-    # (Google Cloud project creation, etc.). All three Google recipes
-    # share the 'google_cloud' guide.
-    assert r.oauth_setup_guide_id == "google_cloud"
-
-
-def test_google_calendar_recipe_declares_oauth_browser() -> None:
-    r = RECIPES["google-calendar"]
-    assert r.setup_flow == "oauth_browser"
-    assert r.oauth_cmd == "npx -y @cocal/google-calendar-mcp auth"
-    assert r.oauth_setup_guide_id == "google_cloud"
-
-
-def test_google_drive_recipe_declares_oauth_browser() -> None:
-    r = RECIPES["google-drive"]
-    assert r.setup_flow == "oauth_browser"
-    assert r.oauth_cmd == "npx -y @piotr-agier/google-drive-mcp auth"
-    assert r.oauth_setup_guide_id == "google_cloud"
-
-
 def test_non_oauth_recipes_keep_secret_flow() -> None:
     """Make sure we didn't accidentally flip other recipes."""
     for rid in ("brave-search", "github", "notion", "slack", "telegram", "email"):
@@ -46,7 +20,6 @@ def test_non_oauth_recipes_keep_secret_flow() -> None:
         if r is None:
             continue  # recipe may be renamed or removed in future
         assert r.setup_flow == "secret", f"recipe {rid} unexpectedly switched flows"
-        assert r.oauth_cmd == "", f"recipe {rid} should not declare oauth_cmd"
 
 
 # ── Setup-guide registry ──
@@ -92,55 +65,66 @@ def test_all_guides_in_registry_self_reference() -> None:
         assert guide["id"] == key
 
 
-# ── File-based credential fields ──
+# ── oauth_http fields ──
 
 
-def test_mcp_recipe_defaults_for_file_credentials() -> None:
-    """New fields default to empty strings for recipes that don't need
-    file-materialization (the vast majority — env-var-based tools)."""
+def test_mcp_recipe_defaults_for_oauth_http_fields() -> None:
+    """All new oauth_http fields default to empty (list for scopes).
+    Only recipes that explicitly opt in get the HTTP flow."""
     r = MCPRecipe(id="x", name="X", description="", command="npx -y x")
-    assert r.oauth_keys_credential_service == ""
-    assert r.oauth_keys_home_dir == ""
-    assert r.oauth_keys_filename == ""
-    assert r.oauth_token_filename == ""
+    assert r.http_endpoint == ""
+    assert r.oauth_authorize_url == ""
+    assert r.oauth_token_url == ""
+    assert r.oauth_scopes == []
+    assert r.oauth_client_credential_service == ""
     assert r.oauth_token_credential_service == ""
 
 
-def test_gmail_recipe_uses_file_materialization() -> None:
+def test_gmail_recipe_declares_oauth_http() -> None:
     r = RECIPES["gmail"]
-    # The Gmail MCP package hardcodes ~/.gmail-mcp/gcp-oauth.keys.json —
-    # no env var to override. We materialize the file into a tmp HOME.
-    assert r.oauth_keys_credential_service == "gmail-oauth-keys"
-    assert r.oauth_keys_home_dir == ".gmail-mcp"
-    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
-    assert r.oauth_token_filename == "credentials.json"
+    assert r.setup_flow == "oauth_http"
+    assert r.http_endpoint == "https://gmailmcp.googleapis.com/mcp/v1"
+    assert r.oauth_authorize_url == "https://accounts.google.com/o/oauth2/v2/auth"
+    assert r.oauth_token_url == "https://oauth2.googleapis.com/token"
+    assert "https://www.googleapis.com/auth/gmail.readonly" in r.oauth_scopes
+    assert "https://www.googleapis.com/auth/gmail.compose" in r.oauth_scopes
+    assert r.oauth_client_credential_service == "gmail-oauth-client"
     assert r.oauth_token_credential_service == "gmail-oauth-token"
 
 
-def test_google_calendar_recipe_uses_file_materialization() -> None:
-    r = RECIPES["google-calendar"]
-    assert r.oauth_keys_credential_service == "google-calendar-oauth-keys"
-    assert r.oauth_keys_home_dir == ".google-calendar-mcp"
-    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
-    assert r.oauth_token_filename == "token.json"
-    assert r.oauth_token_credential_service == "google-calendar-oauth-token"
+def test_oauth_browser_is_gone() -> None:
+    """The old file-materialization setup_flow value is removed; no
+    recipe still declares it."""
+    for r in RECIPES.values():
+        assert r.setup_flow != "oauth_browser", f"{r.id} still uses oauth_browser"
 
 
-def test_google_drive_recipe_uses_file_materialization() -> None:
-    r = RECIPES["google-drive"]
-    assert r.oauth_keys_credential_service == "google-drive-oauth-keys"
-    assert r.oauth_keys_home_dir == ".google-drive-mcp"
-    assert r.oauth_keys_filename == "gcp-oauth.keys.json"
-    assert r.oauth_token_filename == "token.json"
-    assert r.oauth_token_credential_service == "google-drive-oauth-token"
+def test_old_file_mat_fields_removed_from_dataclass() -> None:
+    """The file-materialization fields are gone from MCPRecipe."""
+    r = MCPRecipe(id="x", name="X", description="", command="npx -y x")
+    assert not hasattr(r, "oauth_cmd")
+    assert not hasattr(r, "oauth_keys_credential_service")
+    assert not hasattr(r, "oauth_keys_home_dir")
+    assert not hasattr(r, "oauth_keys_filename")
+    assert not hasattr(r, "oauth_token_filename")
 
 
-def test_non_file_recipes_keep_empty_materialization_fields() -> None:
-    """Email, GitHub, Brave etc. use env-var injection and must not
-    accidentally inherit file-materialization config."""
-    for rid in ("email", "brave-search", "github", "notion", "slack"):
-        r = RECIPES.get(rid)
-        if r is None:
-            continue
-        assert r.oauth_keys_credential_service == "", f"{rid} should not materialize"
-        assert r.oauth_keys_filename == "", f"{rid} should not materialize"
+def test_calendar_and_drive_recipes_are_removed() -> None:
+    """Calendar and Drive come back in a follow-up plan. For now only
+    Gmail is wired up so the review surface stays small."""
+    assert "google-calendar" not in RECIPES
+    assert "google-drive" not in RECIPES
+
+
+def test_google_cloud_guide_covers_mcp_api_activation() -> None:
+    """The guide must tell the user to enable the *MCP* API variant
+    (e.g. gmailmcp.googleapis.com), not just the plain Gmail API."""
+    guide = get_setup_guide("google_cloud")
+    body_text = " ".join(step["body"].lower() for step in guide["steps"])
+    assert "gmailmcp" in body_text or "mcp api" in body_text
+
+
+def test_google_cloud_guide_covers_redirect_uri_registration() -> None:
+    guide = get_setup_guide("google_cloud")
+    body_text = " ".join(step["body"].lower() for step in guide["steps"])
+    assert "redirect" in body_text and ("uri" in body_text or "url" in body_text)

@@ -163,50 +163,22 @@ class SecurityProxyClient:
         """Terminate an active MCP session."""
         self._request("POST", "/mcp/stop", json={"session_id": session_id})
 
-    def oauth_start(
+    def oauth_callback(
         self,
-        oauth_cmd: str | None = None,
-        env_vars: dict | None = None,
-        recipe_id: str | None = None,
+        recipe_id: str,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
         user_id: str = "default",
     ) -> dict:
-        """Spawn an OAuth auth subprocess in the proxy.
-
-        Preferred: pass `recipe_id` — the proxy looks up the recipe and
-        handles file materialization internally. Legacy callers (unit
-        tests, non-file tools) may pass `oauth_cmd` + `env_vars` instead.
-        """
-        payload: dict = {}
-        if recipe_id is not None:
-            payload["recipe_id"] = recipe_id
-        if oauth_cmd is not None:
-            payload["oauth_cmd"] = oauth_cmd
-        if env_vars is not None:
-            payload["env_vars"] = env_vars
-        resp = self._request(
-            "POST", "/oauth/start", json=payload,
-            headers={"X-User-Id": user_id},
-        )
-        return resp.json()
-
-    def oauth_stop(self, session_id: str, user_id: str = "default") -> dict:
-        """Terminate an OAuth session. Idempotent — stopping an unknown
-        or already-stopped session returns status=not_found (200)."""
-        resp = self._request("POST", "/oauth/stop", json={
-            "session_id": session_id,
+        """Exchange an OAuth code for a token via the proxy."""
+        resp = self._request("POST", "/oauth/callback", json={
+            "recipe_id": recipe_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
         }, headers={"X-User-Id": user_id})
         return resp.json()
-
-    def oauth_stream_url(self, session_id: str) -> str:
-        """Return the ws:// URL for the OAuth streaming endpoint.
-
-        The gateway doesn't itself *use* the WebSocket — it mints the
-        URL for the browser, which opens it through the gateway's own
-        WS passthrough (Task 6). Exposing it here keeps the URL-
-        construction logic in one place.
-        """
-        base = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
-        return f"{base}/oauth/stream/{session_id}"
 
     def llm_complete(self, model: str, messages: list[dict],
                      tools: list[dict] | None = None, stream: bool = False,
@@ -282,6 +254,23 @@ class SecurityProxyClient:
         """Remove a credential via the proxy."""
         resp = self._request("DELETE", f"/credential/{service}/{label}")
         return resp.json() if hasattr(resp, "json") else {}
+
+    def oauth_public_fields(
+        self, service: str, label: str = "default", user_id: str = "default",
+    ) -> dict | None:
+        """Return ONLY the public parts (client_id) of an OAuth client
+        credential stored in the proxy. The secret half stays in the
+        proxy container — Constitution Rule 4 preserved.
+
+        Returns ``{"client_id": "..."}`` or None if not found.
+        """
+        resp = self._request(
+            "GET", f"/oauth/public_fields/{service}/{label}",
+            headers={"X-User-Id": user_id},
+        )
+        if resp.status_code == 404:
+            return None
+        return resp.json()
 
     def credential_list(self) -> list[dict]:
         """Return credential METADATA only — never plaintext."""

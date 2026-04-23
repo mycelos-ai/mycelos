@@ -8,7 +8,6 @@ Credential injection is done here — credentials never leave this process.
 
 from __future__ import annotations
 
-import asyncio
 import hmac
 import json
 import logging
@@ -16,13 +15,12 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger("mycelos.proxy")
-from fastapi import FastAPI, Form, Request, UploadFile, WebSocket
+from fastapi import FastAPI, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from mycelos.speech.transcription import SttError, SttRequest, SttService
@@ -36,35 +34,6 @@ except ImportError:
 
 # SSRF validation — single source of truth in ssrf.py
 from mycelos.security.ssrf import validate_url as _validate_url
-
-
-# Per-session materialization root for OAuth-based file materialization.
-# Exposed at module level so tests can monkeypatch it to a tmp_path
-# without touching the real /tmp. In the Docker proxy image this path
-# lands on a tmpfs mount (see docker-compose.yml), so cleartext keys
-# never hit persistent disk.
-OAUTH_TMP_ROOT = Path("/tmp/mycelos-oauth")
-
-# Allowed first tokens for oauth_cmd. Tests widen this to include 'python'
-# for recipe-driven unit tests that don't want to spawn a real npx package.
-_OAUTH_ALLOWED_HEADS: tuple[str, ...] = ("npx",)
-
-# Mirror of _OAUTH_ALLOWED_HEADS for /mcp/start. Production recipes
-# always start with `npx`; tests may widen the allowlist.
-_MCP_ALLOWED_HEADS: tuple[str, ...] = ("npx",)
-
-
-# Module-level hook so tests can monkeypatch the MCP manager lookup.
-# The actual per-app getter is bound inside `create_proxy_app` and
-# assigned to this module attribute at factory-time. The /mcp/start
-# handler looks up `_get_mcp_manager` via the module (not the closure)
-# so tests can replace it with a stub (see
-# `test_mcp_start_for_recipe_materializes_keys_and_token`).
-def _get_mcp_manager() -> Any:  # pragma: no cover - placeholder, rebound by create_proxy_app
-    raise RuntimeError(
-        "_get_mcp_manager called before create_proxy_app bound it — "
-        "this should never happen in a real request path."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,15 +97,11 @@ class CredentialMaterializeRequest(BaseModel):
     service: str
 
 
-class OauthStartRequest(BaseModel):
-    # Preferred shape — the proxy looks up the recipe itself and
-    # applies file materialization. Keeps the gateway unaware of
-    # the materializer.
-    recipe_id: str | None = None
-    # Legacy shape — direct command + env. Still accepted so older
-    # callers (and low-level tests) work.
-    oauth_cmd: str | None = None
-    env_vars: dict = {}
+class OauthCallbackRequest(BaseModel):
+    recipe_id: str
+    code: str
+    code_verifier: str
+    redirect_uri: str
 
 
 # Services whose secret may be materialized (handed back as plaintext to
@@ -205,9 +170,6 @@ def create_proxy_app() -> FastAPI:
         "_stt_service": None,
         # Maps session_id → connector_id for MCP sessions started via /mcp/start
         "_mcp_sessions": {},
-        # Maps session_id → {"proc": Popen, "user_id": str, "oauth_cmd": str}
-        # for OAuth auth subprocesses started via /oauth/start
-        "_oauth_sessions": {},
         # Tracks which credentials have already been bootstrapped this session
         "_bootstrapped": set(),
         "start_time": time.time(),
@@ -271,19 +233,13 @@ def create_proxy_app() -> FastAPI:
             _state["_credential_proxy"] = EncryptedCredentialProxy(storage, master_key)
         return _state["_credential_proxy"]
 
-    def _get_mcp_manager_impl() -> Any:
+    def _get_mcp_manager() -> Any:
         if _state["_mcp_manager"] is None:
             from mycelos.connectors.mcp_manager import MCPConnectorManager
             _state["_mcp_manager"] = MCPConnectorManager(
                 credential_proxy=_get_credential_proxy()
             )
         return _state["_mcp_manager"]
-
-    # Expose to module globals so tests can monkeypatch _get_mcp_manager
-    # on the module and have the /mcp/start handler pick it up via
-    # dynamic module lookup.
-    global _get_mcp_manager
-    _get_mcp_manager = _get_mcp_manager_impl
 
     def _get_stt_service() -> SttService:
         if _state["_stt_service"] is None:
@@ -510,15 +466,6 @@ def create_proxy_app() -> FastAPI:
 
     @app.post("/mcp/start")
     async def mcp_start(request: Request) -> JSONResponse:
-        """Start an MCP session. For file-based recipes (Gmail etc.),
-        materialize credentials into a tmp HOME before spawn and keep
-        the ExitStack alive for the session's lifetime."""
-        from contextlib import ExitStack
-        import secrets as _secrets
-
-        from mycelos.connectors.mcp_recipes import get_recipe
-        from mycelos.security.credential_materializer import materialize_credentials
-
         authorized, user_id = _check_auth(request)
         if not authorized:
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -530,89 +477,49 @@ def create_proxy_app() -> FastAPI:
         storage = _get_storage()
         t_start = time.time()
 
-        head = req.command[0] if req.command else ""
-        if head and head not in _MCP_ALLOWED_HEADS:
-            return JSONResponse(
-                {"error": f"command[0]='{head}' not in MCP allowlist"},
-                status_code=400,
-            )
-
+        # Resolve credential:X references in env_vars before passing to manager
+        resolved_env: dict[str, str] = {}
         credential_proxy = _get_credential_proxy()
-        recipe = get_recipe(req.connector_id)
-
-        stack = ExitStack()
-        session_id = f"mcp-{req.connector_id}-{_secrets.token_hex(6)}"
-        home_dir = None
+        for key, val in req.env_vars.items():
+            if val.startswith("credential:") and credential_proxy:
+                service_name = val[len("credential:"):]
+                try:
+                    cred = credential_proxy.get_credential(service_name, user_id=user_id)
+                    if not (cred and cred.get("api_key")):
+                        cred = credential_proxy.get_credential(f"connector:{service_name}", user_id=user_id)
+                    if cred and cred.get("api_key"):
+                        resolved_env[key] = cred["api_key"]
+                    else:
+                        return JSONResponse(
+                            {"error": f"Credential '{service_name}' not found for env var '{key}' — denied (fail-closed)"},
+                            status_code=502,
+                        )
+                except Exception:
+                    return JSONResponse(
+                        {"error": f"Credential lookup failed for '{service_name}' — denied (fail-closed)"},
+                        status_code=502,
+                    )
+            else:
+                resolved_env[key] = val
 
         try:
-            resolved_env: dict[str, str] = {}
-            if recipe is not None and recipe.oauth_keys_credential_service:
-                OAUTH_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-                mat = stack.enter_context(materialize_credentials(
-                    recipe=recipe,
-                    credential_proxy=credential_proxy,
-                    user_id=user_id,
-                    tmp_root=OAUTH_TMP_ROOT,
-                    session_id=session_id,
-                ))
-                home_dir = mat.home_dir
-                resolved_env["HOME"] = str(home_dir)
-                for k, v in (recipe.static_env or {}).items():
-                    resolved_env[k] = v
-                # Materialized recipes ignore req.env_vars — the package
-                # reads from files, not env vars.
-            else:
-                # Existing credential:<service> env-var path unchanged.
-                for key, val in req.env_vars.items():
-                    if val.startswith("credential:") and credential_proxy:
-                        service_name = val[len("credential:"):]
-                        try:
-                            cred = credential_proxy.get_credential(service_name, user_id=user_id)
-                            if not (cred and cred.get("api_key")):
-                                cred = credential_proxy.get_credential(
-                                    f"connector:{service_name}", user_id=user_id,
-                                )
-                            if cred and cred.get("api_key"):
-                                resolved_env[key] = cred["api_key"]
-                            else:
-                                stack.close()
-                                return JSONResponse(
-                                    {"error": f"Credential '{service_name}' not found for env var '{key}' — denied (fail-closed)"},
-                                    status_code=502,
-                                )
-                        except Exception:
-                            stack.close()
-                            return JSONResponse(
-                                {"error": f"Credential lookup failed for '{service_name}' — denied (fail-closed)"},
-                                status_code=502,
-                            )
-                    else:
-                        resolved_env[key] = val
+            mcp = _get_mcp_manager()
+            tools = mcp.connect(
+                connector_id=req.connector_id,
+                command=req.command,
+                env_vars=resolved_env,
+                transport=req.transport,
+            )
+        except Exception as e:
+            logger.error("MCP start failed for connector '%s': %s", req.connector_id, e)
+            return JSONResponse(
+                {"error": "MCP connector start failed. Check server logs for details.", "status": 0},
+                status_code=500,
+            )
 
-            try:
-                mcp = _get_mcp_manager()
-                tools = mcp.connect(
-                    connector_id=req.connector_id,
-                    command=req.command,
-                    env_vars=resolved_env,
-                    transport=req.transport,
-                )
-            except Exception as e:
-                stack.close()
-                logger.error("MCP start failed for connector '%s': %s", req.connector_id, e)
-                return JSONResponse(
-                    {"error": "MCP connector start failed. Check server logs for details.", "status": 0},
-                    status_code=500,
-                )
-        except Exception:
-            stack.close()
-            raise
-
-        _state["_mcp_sessions"][session_id] = {
-            "connector_id": req.connector_id,
-            "stack": stack,
-            "home_dir": str(home_dir) if home_dir else None,
-        }
+        import secrets
+        session_id = f"mcp-{req.connector_id}-{secrets.token_hex(6)}"
+        _state["_mcp_sessions"][session_id] = req.connector_id
 
         duration = time.time() - t_start
         if storage:
@@ -623,11 +530,6 @@ def create_proxy_app() -> FastAPI:
                 "agent_id": agent_id,
                 "duration": round(duration, 3),
             })
-            if recipe and recipe.oauth_keys_credential_service:
-                _write_audit(storage, "credential.materialized", user_id, {
-                    "service": recipe.oauth_keys_credential_service,
-                    "session_id": session_id,
-                })
 
         return JSONResponse({"session_id": session_id, "tools": tools})
 
@@ -691,19 +593,7 @@ def create_proxy_app() -> FastAPI:
 
         storage = _get_storage()
 
-        # Remove from sessions map regardless of whether it exists
-        sess = _state["_mcp_sessions"].pop(req.session_id, None)
-        if sess and isinstance(sess, dict):
-            stack = sess.get("stack")
-            if stack is not None:
-                try:
-                    stack.close()
-                except Exception:
-                    logger.warning("mcp_stop stack.close failed for %s", req.session_id)
-            if sess.get("home_dir") and storage:
-                _write_audit(storage, "credential.purged", user_id, {
-                    "session_id": req.session_id,
-                })
+        _state["_mcp_sessions"].pop(req.session_id, None)
 
         if storage:
             _write_audit(storage, "proxy.mcp_stopped", user_id, {
@@ -711,358 +601,6 @@ def create_proxy_app() -> FastAPI:
             })
 
         return JSONResponse({"ok": True})
-
-    # ---------------------------------------------------------------------------
-    # POST /oauth/start  — spawn an OAuth auth subprocess
-    # ---------------------------------------------------------------------------
-
-    @app.post("/oauth/start")
-    async def oauth_start(request: Request) -> JSONResponse:
-        """Spawn an OAuth auth subprocess and return a session id.
-
-        Two calling conventions:
-        * ``{"recipe_id": "gmail"}`` — preferred. Proxy looks up the
-          recipe, materializes oauth_keys from the credential store
-          into a session-scoped HOME, and spawns `recipe.oauth_cmd`
-          with HOME pointing there. On clean exit the WS handler
-          persists any token the subprocess wrote back into the store.
-        * ``{"oauth_cmd": "npx ... auth", "env_vars": {...}}`` — legacy.
-          No materialization; env-var injection only. Kept for
-          low-level tests and non-file tools.
-        """
-        from contextlib import ExitStack
-        import shlex
-        import subprocess
-        import secrets
-
-        from mycelos.connectors.mcp_recipes import get_recipe
-        from mycelos.security.credential_materializer import materialize_credentials
-
-        authorized, user_id = _check_auth(request)
-        if not authorized:
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-        body = await request.json()
-        req = OauthStartRequest(**body)
-        recipe = None
-        if req.recipe_id:
-            recipe = get_recipe(req.recipe_id)
-            if recipe is None:
-                return JSONResponse(
-                    {"error": f"Unknown recipe: {req.recipe_id}"},
-                    status_code=404,
-                )
-            if recipe.setup_flow != "oauth_browser":
-                return JSONResponse(
-                    {"error": f"Recipe '{req.recipe_id}' is not oauth_browser"},
-                    status_code=400,
-                )
-            oauth_cmd = recipe.oauth_cmd
-        else:
-            oauth_cmd = req.oauth_cmd or ""
-
-        parts = shlex.split(oauth_cmd)
-        if not parts or parts[0] not in _OAUTH_ALLOWED_HEADS:
-            return JSONResponse(
-                {"error": "oauth_cmd must start with 'npx' — recipe validation"},
-                status_code=400,
-            )
-
-        credential_proxy = _get_credential_proxy()
-
-        # For recipe-dispatched calls, verify the keys credential is
-        # present BEFORE opening the materializer context so we return
-        # a clean 502 instead of a half-created tmpdir.
-        if recipe and recipe.oauth_keys_credential_service and credential_proxy is not None:
-            keys_cred = credential_proxy.get_credential(
-                recipe.oauth_keys_credential_service, user_id=user_id,
-            )
-            if not keys_cred or not keys_cred.get("api_key"):
-                return JSONResponse(
-                    {
-                        "error": (
-                            f"Credential '{recipe.oauth_keys_credential_service}' "
-                            "not found — upload the OAuth keys first."
-                        )
-                    },
-                    status_code=502,
-                )
-
-        session_id = f"oauth-{secrets.token_hex(6)}"
-        stack = ExitStack()
-
-        try:
-            env = dict(os.environ)
-            home_dir = None
-
-            if recipe is not None:
-                OAUTH_TMP_ROOT.mkdir(parents=True, exist_ok=True)
-                mat = stack.enter_context(materialize_credentials(
-                    recipe=recipe,
-                    credential_proxy=credential_proxy,
-                    user_id=user_id,
-                    tmp_root=OAUTH_TMP_ROOT,
-                    session_id=session_id,
-                ))
-                home_dir = mat.home_dir
-                env["HOME"] = str(home_dir)
-                for k, v in (recipe.static_env or {}).items():
-                    env[k] = v
-            else:
-                for key, val in (req.env_vars or {}).items():
-                    if isinstance(val, str) and val.startswith("credential:") and credential_proxy:
-                        service = val[len("credential:"):]
-                        cred = credential_proxy.get_credential(service, user_id=user_id)
-                        if not (cred and cred.get("api_key")):
-                            cred = credential_proxy.get_credential(
-                                f"connector:{service}", user_id=user_id,
-                            )
-                        if not (cred and cred.get("api_key")):
-                            stack.close()
-                            return JSONResponse(
-                                {"error": f"Credential '{service}' not found — fail-closed"},
-                                status_code=502,
-                            )
-                        env[key] = cred["api_key"]
-                    else:
-                        env[key] = str(val)
-
-            proc = subprocess.Popen(
-                parts,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                bufsize=0,
-            )
-        except Exception as e:
-            stack.close()
-            logger.error("oauth_start spawn failed: %s", e)
-            return JSONResponse({"error": "subprocess spawn failed"}, status_code=500)
-
-        _state["_oauth_sessions"][session_id] = {
-            "proc": proc,
-            "user_id": user_id,
-            "oauth_cmd": oauth_cmd,
-            "recipe_id": recipe.id if recipe else None,
-            "home_dir": str(home_dir) if home_dir else None,
-            "stack": stack,
-        }
-
-        storage = _get_storage()
-        if storage:
-            _write_audit(storage, "proxy.oauth_started", user_id, {
-                "session_id": session_id,
-                "oauth_cmd": oauth_cmd,
-                "recipe_id": recipe.id if recipe else None,
-            })
-            if recipe and recipe.oauth_keys_credential_service:
-                _write_audit(storage, "credential.materialized", user_id, {
-                    "service": recipe.oauth_keys_credential_service,
-                    "session_id": session_id,
-                })
-
-        return JSONResponse({"session_id": session_id})
-
-    # ---------------------------------------------------------------------------
-    # POST /oauth/stop  — terminate an OAuth auth subprocess
-    # ---------------------------------------------------------------------------
-
-    @app.post("/oauth/stop")
-    async def oauth_stop(request: Request) -> JSONResponse:
-        """Terminate the OAuth subprocess for `session_id`.
-
-        Idempotent — a missing session returns status=not_found (200),
-        not an error, so the frontend can call stop on cleanup without
-        knowing whether it's already gone.
-        """
-        authorized, user_id = _check_auth(request)
-        if not authorized:
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-        body = await request.json()
-        session_id: str = body.get("session_id", "")
-        sess = _state["_oauth_sessions"].pop(session_id, None)
-        if sess is None:
-            return JSONResponse({"status": "not_found"}, status_code=200)
-
-        proc = sess["proc"]
-        try:
-            if proc.stdin is not None:
-                proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-
-        stack = sess.get("stack")
-        if stack is not None:
-            try:
-                stack.close()
-            except Exception:
-                logger.warning("oauth_stop stack.close failed for %s", session_id)
-
-        storage = _get_storage()
-        if storage:
-            _write_audit(storage, "proxy.oauth_stopped", user_id, {
-                "session_id": session_id,
-            })
-            if sess.get("home_dir"):
-                _write_audit(storage, "credential.purged", user_id, {
-                    "session_id": session_id,
-                })
-
-        return JSONResponse({"status": "stopped"})
-
-    # ---------------------------------------------------------------------------
-    # WS /oauth/stream/{session_id}  — bidirectional stdio pump
-    # ---------------------------------------------------------------------------
-
-    @app.websocket("/oauth/stream/{session_id}")
-    async def oauth_stream(websocket: WebSocket, session_id: str) -> None:
-        """Stream subprocess stdout/stderr to the client and relay
-        client stdin writes back to the subprocess. Closes the WS when
-        the subprocess exits; does NOT auto-stop the session (client
-        must call /oauth/stop).
-
-        Frame shapes:
-          server → client: {type: "stdout"|"stderr", data: str}
-                           {type: "done", exit_code: int, data: ""}
-          client → server: {type: "stdin", data: str}
-        """
-        # Header-based auth — same Bearer token as HTTP endpoints.
-        token = websocket.headers.get("authorization", "")
-        expected = f"Bearer {proxy_token}"
-        if not token or token != expected:
-            await websocket.close(code=4401)
-            return
-
-        sess = _state["_oauth_sessions"].get(session_id)
-        if sess is None:
-            await websocket.close(code=4404)
-            return
-
-        proc = sess["proc"]
-        await websocket.accept()
-
-        def _read_chunk(stream) -> bytes:
-            # Popen with bufsize=0 gives us a raw FileIO without read1,
-            # so fall back to os.read on the fd — it returns whatever is
-            # available up to the requested size without blocking for
-            # the full amount. Gives near-realtime streaming.
-            try:
-                if hasattr(stream, "read1"):
-                    return stream.read1(4096)
-                import os as _os
-                return _os.read(stream.fileno(), 4096)
-            except Exception:
-                return b""
-
-        async def pump_stream(stream, frame_type: str) -> None:
-            loop = asyncio.get_running_loop()
-            try:
-                while True:
-                    chunk = await loop.run_in_executor(None, _read_chunk, stream)
-                    if not chunk:
-                        return
-                    try:
-                        await websocket.send_text(json.dumps({
-                            "type": frame_type,
-                            "data": chunk.decode("utf-8", "replace"),
-                        }))
-                    except Exception:
-                        return
-            except Exception:
-                return
-
-        async def pump_stdin() -> None:
-            try:
-                while True:
-                    raw = await websocket.receive_text()
-                    try:
-                        frame = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if frame.get("type") == "stdin" and proc.stdin is not None:
-                        try:
-                            proc.stdin.write(frame.get("data", "").encode())
-                            proc.stdin.flush()
-                        except Exception:
-                            return
-            except Exception:
-                return
-
-        stdout_task = asyncio.create_task(pump_stream(proc.stdout, "stdout"))
-        stderr_task = asyncio.create_task(pump_stream(proc.stderr, "stderr"))
-        stdin_task = asyncio.create_task(pump_stdin())
-
-        # Wait for the subprocess to exit without blocking the event loop.
-        loop = asyncio.get_running_loop()
-        exit_code = await loop.run_in_executor(None, proc.wait)
-
-        # Drain remaining stdout/stderr so the client sees the final
-        # bytes before the 'done' frame.
-        for t in (stdout_task, stderr_task):
-            try:
-                await asyncio.wait_for(t, timeout=2.0)
-            except Exception:
-                t.cancel()
-
-        # On clean exit, persist the token file the subprocess wrote
-        # (if any) back to the credential store.
-        if exit_code == 0 and sess.get("recipe_id") and sess.get("home_dir"):
-            from mycelos.connectors.mcp_recipes import get_recipe
-            from mycelos.security.credential_materializer import persist_token
-
-            recipe = get_recipe(sess["recipe_id"])
-            if recipe is not None:
-                try:
-                    persist_token(
-                        recipe=recipe,
-                        credential_proxy=_get_credential_proxy(),
-                        user_id=sess["user_id"],
-                        home_dir=Path(sess["home_dir"]),
-                    )
-                    storage = _get_storage()
-                    if storage and recipe.oauth_token_credential_service:
-                        _write_audit(storage, "credential.token_persisted", sess["user_id"], {
-                            "service": recipe.oauth_token_credential_service,
-                            "session_id": session_id,
-                        })
-                except Exception as e:
-                    logger.error("token persist failed for %s: %s", session_id, e)
-
-        try:
-            await websocket.send_text(json.dumps({
-                "type": "done",
-                "exit_code": exit_code,
-                "data": "",
-            }))
-        except Exception:
-            pass
-
-        stdin_task.cancel()
-
-        # Close the ExitStack — purges the tmp HOME.
-        stack = sess.get("stack")
-        if stack is not None:
-            try:
-                stack.close()
-            except Exception:
-                logger.warning("oauth_stream stack.close failed for %s", session_id)
-
-        _state["_oauth_sessions"].pop(session_id, None)
-
-        try:
-            await websocket.close()
-        except Exception:
-            pass
 
     # ---------------------------------------------------------------------------
     # POST /llm/complete
@@ -1198,6 +736,62 @@ def create_proxy_app() -> FastAPI:
             "model": req.model,
             "cost": cost,
         })
+
+    # ---------------------------------------------------------------------------
+    # POST /oauth/callback — exchange an authorization code for a token
+    # ---------------------------------------------------------------------------
+
+    @app.post("/oauth/callback")
+    async def oauth_callback(request: Request) -> JSONResponse:
+        """Exchange an OAuth authorization code for a token and store
+        it in the credential proxy. Called by the gateway after the
+        browser returns from the OAuth consent screen."""
+        from mycelos.connectors.mcp_recipes import get_recipe
+        from mycelos.security.oauth_token_manager import exchange_code_for_token
+
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        body = await request.json()
+        req = OauthCallbackRequest(**body)
+
+        recipe = get_recipe(req.recipe_id)
+        if recipe is None:
+            return JSONResponse(
+                {"error": f"Unknown recipe: {req.recipe_id}"},
+                status_code=404,
+            )
+        if recipe.setup_flow != "oauth_http":
+            return JSONResponse(
+                {"error": f"Recipe '{req.recipe_id}' setup_flow is '{recipe.setup_flow}', not 'oauth_http'"},
+                status_code=400,
+            )
+
+        credential_proxy = _get_credential_proxy()
+        if credential_proxy is None:
+            return JSONResponse({"error": "credential_proxy unavailable"}, status_code=500)
+
+        try:
+            payload = exchange_code_for_token(
+                recipe=recipe,
+                code=req.code,
+                code_verifier=req.code_verifier,
+                redirect_uri=req.redirect_uri,
+                credential_proxy=credential_proxy,
+                user_id=user_id,
+            )
+        except RuntimeError as e:
+            return JSONResponse({"error": str(e)}, status_code=502)
+
+        storage = _get_storage()
+        if storage:
+            _write_audit(storage, "credential.token_persisted", user_id, {
+                "service": recipe.oauth_token_credential_service,
+                "recipe_id": req.recipe_id,
+            })
+
+        return JSONResponse({"status": "connected", "expires_at": payload.expires_at})
 
     # ---------------------------------------------------------------------------
     # POST /credential/bootstrap
@@ -1375,6 +969,45 @@ def create_proxy_app() -> FastAPI:
         ecp = EncryptedCredentialProxy(storage, master_key)
         ecp.delete_credential(service, user_id=user_id, label=label)
         return JSONResponse({"status": "deleted", "service": service, "label": label})
+
+    # ---------------------------------------------------------------------------
+    # GET /credential/get/{service}/{label} — plaintext read (restricted use)
+    # ---------------------------------------------------------------------------
+
+    @app.get("/oauth/public_fields/{service}/{label}")
+    async def oauth_public_fields(
+        service: str, label: str, request: Request,
+    ) -> JSONResponse:
+        """Return ONLY the public, non-sensitive parts of an OAuth client
+        credential — today just `client_id`. Used by the gateway to build
+        an OAuth consent URL without pulling the `client_secret` across
+        the trust boundary. Constitution Rule 4 (credentials never
+        visible outside the proxy) stays intact for the secret half;
+        `client_id` is published to the user's browser in the auth URL
+        anyway, so it isn't a secret.
+        """
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        cp = _get_credential_proxy()
+        if cp is None:
+            return JSONResponse({"error": "credential_proxy unavailable"}, status_code=500)
+        try:
+            cred = cp.get_credential(service, user_id=user_id, label=label)
+        except NotImplementedError:
+            return JSONResponse({"error": "not available"}, status_code=501)
+        if cred is None or not cred.get("api_key"):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            import json as _json
+            client_json = _json.loads(cred["api_key"])
+        except Exception:
+            return JSONResponse({"error": "malformed credential"}, status_code=500)
+        installed = client_json.get("installed") or client_json.get("web") or {}
+        client_id = installed.get("client_id", "")
+        if not client_id:
+            return JSONResponse({"error": "no client_id in credential"}, status_code=404)
+        return JSONResponse({"client_id": client_id})
 
     # ---------------------------------------------------------------------------
     # GET /credential/list
