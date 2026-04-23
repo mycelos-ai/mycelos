@@ -114,3 +114,17 @@ def test_calendar_and_drive_recipes_are_removed() -> None:
     Gmail is wired up so the review surface stays small."""
     assert "google-calendar" not in RECIPES
     assert "google-drive" not in RECIPES
+
+
+def test_google_cloud_guide_covers_mcp_api_activation() -> None:
+    """The guide must tell the user to enable the *MCP* API variant
+    (e.g. gmailmcp.googleapis.com), not just the plain Gmail API."""
+    guide = get_setup_guide("google_cloud")
+    body_text = " ".join(step["body"].lower() for step in guide["steps"])
+    assert "gmailmcp" in body_text or "mcp api" in body_text
+
+
+def test_google_cloud_guide_covers_redirect_uri_registration() -> None:
+    guide = get_setup_guide("google_cloud")
+    body_text = " ".join(step["body"].lower() for step in guide["steps"])
+    assert "redirect" in body_text and ("uri" in body_text or "url" in body_text)

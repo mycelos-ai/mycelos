@@ -25,32 +25,39 @@ from typing import Any
 
 GOOGLE_CLOUD_GUIDE: dict[str, Any] = {
     "id": "google_cloud",
-    "title": "Set up your Google Cloud project",
+    "title": "Set up Gmail via Google's official MCP server",
     "intro": (
-        "Google requires every app that accesses Gmail / Calendar / Drive "
-        "on your behalf to be registered in a Google Cloud project *you* "
-        "own. This is a one-time, ~10-minute setup. After it's done, all "
-        "three Mycelos Google connectors can share the same project."
+        "Mycelos connects to Google's remote MCP server for Gmail. "
+        "You need a Google Cloud project with two APIs enabled (Gmail API + "
+        "Gmail MCP API) and an OAuth 2.0 Desktop-app credential. This is a "
+        "one-time ~10-minute setup."
     ),
     "steps": [
         {
             "title": "Create or pick a Google Cloud project",
             "body": (
-                "Open the Google Cloud Console. Create a new project "
-                "(name it anything — e.g. 'Mycelos') or pick one you "
-                "already have. Projects are free and never charged unless "
-                "you explicitly enable billing."
+                "Open Google Cloud Console. Create a new project (name it "
+                "e.g. 'Mycelos') or pick an existing one. Projects are free."
             ),
             "cta_url": "https://console.cloud.google.com/projectcreate",
             "cta_label": "Open Cloud Console",
         },
         {
-            "title": "Enable the APIs you want to use",
+            "title": "Enable the Gmail API",
             "body": (
-                "For each Google service you plan to connect, enable its "
-                "API in your project: Gmail API, Google Calendar API, "
-                "Google Drive API. Enabling all three now is fine — they "
-                "share the project and you can disable them later."
+                "In **APIs & Services → Library**, search for 'Gmail API' "
+                "and enable it."
+            ),
+            "cta_url": "https://console.cloud.google.com/apis/library",
+            "cta_label": "Open API Library",
+        },
+        {
+            "title": "Enable the Gmail MCP API",
+            "body": (
+                "Also enable the **Gmail MCP API** (separate from the plain "
+                "Gmail API — this one is in Developer Preview and lives at "
+                "`gmailmcp.googleapis.com`). In the same API Library, search "
+                "for 'Gmail MCP' and enable."
             ),
             "cta_url": "https://console.cloud.google.com/apis/library",
             "cta_label": "Open API Library",
@@ -58,15 +65,10 @@ GOOGLE_CLOUD_GUIDE: dict[str, Any] = {
         {
             "title": "Configure the OAuth consent screen",
             "body": (
-                "Go to **APIs & Services → OAuth consent screen**. Pick "
-                "**External** user type. Fill in an app name (e.g. "
-                "'Mycelos'), your email as support contact, and your "
-                "email as developer contact. Save and continue. You can "
-                "skip the scopes page. On the 'Test users' page, add "
-                "*your own Google account* — the account whose Gmail / "
-                "Calendar / Drive you want to connect — and save. "
-                "Leaving the app in 'Testing' is fine; you do NOT need "
-                "to publish it."
+                "**APIs & Services → OAuth consent screen**. Pick **External**. "
+                "Fill in an app name, your email as support + developer "
+                "contact. Save. Add your Google account as a **Test user**. "
+                "Add these scopes: `gmail.readonly`, `gmail.compose`."
             ),
             "cta_url": "https://console.cloud.google.com/apis/credentials/consent",
             "cta_label": "Open Consent Screen",
@@ -74,34 +76,41 @@ GOOGLE_CLOUD_GUIDE: dict[str, Any] = {
         {
             "title": "Create an OAuth Desktop-app credential",
             "body": (
-                "Go to **APIs & Services → Credentials → Create "
-                "credentials → OAuth client ID**. **Application type: "
-                "Desktop app** (important — Mycelos only supports this "
-                "type). Name it anything. Click Create. A dialog pops up "
-                "with a Client ID and Client secret — click "
-                "**DOWNLOAD JSON**. Save the file as `gcp-oauth.keys.json`."
+                "**APIs & Services → Credentials → Create credentials → "
+                "OAuth client ID**. Pick **Desktop app** (important — Mycelos "
+                "only supports Desktop). Give it a name. Click Create. Click "
+                "**DOWNLOAD JSON** on the dialog that pops up. Save the file "
+                "(typically named `client_secret_*.json`)."
             ),
             "cta_url": "https://console.cloud.google.com/apis/credentials",
             "cta_label": "Open Credentials",
         },
         {
-            "title": "Upload the keys to Mycelos",
+            "title": "Register the Redirect URI",
             "body": (
-                "Come back to this dialog. In the next step, upload the "
-                "`gcp-oauth.keys.json` file you just downloaded. Mycelos "
-                "stores it encrypted inside the proxy container — the "
-                "gateway and the LLM never see the contents."
+                "Open the credential you just created. Under **Authorized "
+                "redirect URIs**, click **Add URI** and paste the URL Mycelos "
+                "will show you in the dialog after you upload the credential. "
+                "This URL is derived from your Mycelos server's address and "
+                "must match *exactly* (http vs https, trailing slash, port) "
+                "what Mycelos sends in the auth request."
             ),
         },
         {
-            "title": "Complete the browser consent",
+            "title": "Upload the client secret to Mycelos",
             "body": (
-                "After upload, click **Start OAuth consent**. Mycelos "
-                "launches the MCP server's one-shot auth command in the "
-                "proxy. A Google consent URL appears in this dialog — "
-                "open it, sign in with the account you added as a Test "
-                "user, and accept the scopes. The server writes a token "
-                "file and you're done."
+                "Come back to this dialog. In the textarea below, paste the "
+                "full contents of `client_secret_*.json`. Mycelos stores the "
+                "file encrypted; the gateway and the LLM never see it."
+            ),
+        },
+        {
+            "title": "Complete the consent",
+            "body": (
+                "Click **Start OAuth consent**. Mycelos builds a Google "
+                "consent URL. Open it, sign in as the Test user you added, "
+                "accept the scopes. Google redirects back to Mycelos and "
+                "the dialog shows 'Connected'."
             ),
         },
     ],
