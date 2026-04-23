@@ -41,7 +41,7 @@ class MycelosMCPClient:
     def __init__(
         self,
         connector_id: str,
-        command: str,
+        command: str | list[str],
         env_vars: dict[str, str] | None = None,
         credential_proxy: Any | None = None,
         transport: str = "stdio",
@@ -87,7 +87,15 @@ class MycelosMCPClient:
         from mcp.client.stdio import stdio_client
 
         env = self._build_env()
-        parts = shlex.split(self._command)
+        # The proxy passes argv as a pre-split list (via proxy_client.mcp_start);
+        # the local path passes a shell-string. Accept both so the same
+        # code works in single-process and two-container deployments.
+        if isinstance(self._command, (list, tuple)):
+            parts = list(self._command)
+        else:
+            parts = shlex.split(self._command)
+        if not parts:
+            raise RuntimeError(f"Empty MCP command for '{self.connector_id}'")
 
         server_params = StdioServerParameters(
             command=parts[0],

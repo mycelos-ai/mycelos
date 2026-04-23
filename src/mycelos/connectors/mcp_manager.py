@@ -105,7 +105,7 @@ class MCPConnectorManager:
     def connect(
         self,
         connector_id: str,
-        command: str,
+        command: str | list[str],
         env_vars: dict[str, str] | None = None,
         transport: str = "stdio",
     ) -> list[dict]:

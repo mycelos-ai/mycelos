@@ -2149,8 +2149,44 @@ def setup_routes(api: FastAPI) -> None:
             # Try one reconnect from the recipe before surfacing the
             # "No tools discovered" error. Test-connection now actually
             # heals a dead subprocess instead of just reading stale state.
+            #
+            # In two-container mode (proxy_client set) the subprocess
+            # must live in the proxy container — route through
+            # proxy_client.mcp_start. In single-process mode, let the
+            # local mcp_manager spawn it directly via its recipe.
             try:
-                mcp_mgr.reconnect(connector_id)
+                from mycelos.connectors import http_tools as _http_tools
+                from mycelos.connectors.mcp_recipes import get_recipe
+                import shlex as _shlex
+
+                proxy_client = getattr(_http_tools, "_proxy_client", None)
+                recipe = get_recipe(connector_id)
+
+                if proxy_client is not None and recipe is not None and recipe.setup_flow != "oauth_http":
+                    # Subprocess-based recipe → spawn in proxy.
+                    env_vars = dict(recipe.static_env or {})
+                    for cred_spec in recipe.credentials or []:
+                        env_vars[cred_spec["env_var"]] = f"credential:{connector_id}"
+                    argv = _shlex.split(recipe.command) if recipe.command else []
+                    resp = proxy_client.mcp_start(
+                        connector_id=connector_id,
+                        command=argv,
+                        env_vars=env_vars,
+                        transport=recipe.transport,
+                    )
+                    if resp.get("error"):
+                        raise RuntimeError(resp["error"])
+                    new_tools = resp.get("tools", [])
+                    mycelos.mcp_manager.register_remote_session(
+                        connector_id=connector_id,
+                        session_id=resp.get("session_id", ""),
+                        tools=new_tools,
+                    )
+                else:
+                    # Single-process mode OR oauth_http (no subprocess):
+                    # let the local manager handle it.
+                    mcp_mgr.reconnect(connector_id)
+
                 tools = [t for t in mcp_mgr.list_tools() if t["name"].startswith(prefix)]
                 if tools:
                     return _ok(
