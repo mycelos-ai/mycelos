@@ -82,6 +82,14 @@ deployment on localhost.
 - New audit events: `credential.materialized`, `credential.purged`, `credential.token_persisted`.
 - New `MCPRecipe` fields for file-based tools: `oauth_keys_credential_service`, `oauth_keys_home_dir`, `oauth_keys_filename`, `oauth_token_filename`, `oauth_token_credential_service`. The three Google recipes use them.
 
+### Google via official MCP server — Gmail first
+- Dropped the `oauth_browser` / file-materialization path (gongrzhe + friends) in favor of Google's official remote MCP servers. Gmail now uses `https://gmailmcp.googleapis.com/mcp/v1` with standard OAuth 2.0 Authorization Code Flow + PKCE. No more `npx` subprocesses, no more `~/.gmail-mcp/` tmpfs hack, no more WebSocket streaming of subprocess I/O.
+- New `setup_flow="oauth_http"` on `MCPRecipe` with fields for `http_endpoint`, `oauth_authorize_url`, `oauth_token_url`, `oauth_scopes`, `oauth_client_credential_service`, `oauth_token_credential_service`.
+- New `oauth_token_manager` module: pure functions for code-exchange and lazy-refresh against any OAuth 2.0 token endpoint.
+- New gateway endpoints: `POST /api/connectors/oauth/start` (auth URL with PKCE + in-memory state), `GET /api/connectors/oauth/callback` (proxy-to-gateway redirect from Google). New proxy endpoint: `POST /oauth/callback` (code → token exchange). New proxy `GET /credential/get/{service}/{label}` for the gateway's startup reads.
+- Old code archived on `archive/oauth-browser-file-materialization` — not deleted from history, just not built on any longer.
+- Calendar and Drive recipes removed for now; add back in a follow-up plan once Gmail is proven stable.
+
 ## Week 16 (2026)
 
 ### Two-Container Docker Deployment (Phase 1b — security lockdown)
