@@ -137,6 +137,48 @@ def test_oauth_callback_success_redirects(client_with_mock_proxy):
     assert state not in fapp.state.oauth_pending_states
 
 
+def test_oauth_callback_registers_connector(client_with_mock_proxy):
+    """After a successful token exchange the connector is auto-registered
+    in the connector_registry so it shows up in the UI and is available
+    to agents. Idempotent — re-consenting does not error."""
+    client, _mock, fapp = client_with_mock_proxy
+    mycelos = fapp.state.mycelos
+
+    # Pre-condition: gmail is NOT yet registered.
+    assert mycelos.connector_registry.get("gmail") is None
+
+    client.post("/api/connectors/oauth/start", json={
+        "recipe_id": "gmail",
+        "origin": "http://localhost:9100",
+    })
+    state = list(fapp.state.oauth_pending_states.keys())[0]
+    resp = client.get(
+        f"/api/connectors/oauth/callback?code=c&state={state}",
+        follow_redirects=False,
+    )
+    assert resp.status_code in (302, 307)
+
+    # Connector registered.
+    conn = mycelos.connector_registry.get("gmail")
+    assert conn is not None
+    assert conn["connector_type"] == "mcp"
+    assert conn["setup_type"] == "oauth_http"
+
+    # Second consent — idempotent, no error.
+    client.post("/api/connectors/oauth/start", json={
+        "recipe_id": "gmail",
+        "origin": "http://localhost:9100",
+    })
+    state2 = list(fapp.state.oauth_pending_states.keys())[0]
+    resp2 = client.get(
+        f"/api/connectors/oauth/callback?code=c&state={state2}",
+        follow_redirects=False,
+    )
+    assert resp2.status_code in (302, 307)
+    # Still exactly one connector row.
+    assert mycelos.connector_registry.get("gmail") is not None
+
+
 def test_oauth_callback_invalid_state_redirects_with_error(client_with_mock_proxy):
     client, _mock, _fapp = client_with_mock_proxy
     resp = client.get(

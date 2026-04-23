@@ -1773,6 +1773,37 @@ def setup_routes(api: FastAPI) -> None:
                 status_code=302,
             )
 
+        # Token stored — now register the connector so it shows up in
+        # the UI and becomes usable by agents. Idempotent: if the
+        # connector already exists we skip (e.g. user re-consented to
+        # refresh scopes).
+        try:
+            from mycelos.connectors.mcp_recipes import get_recipe
+            recipe = get_recipe(entry["recipe_id"])
+            existing = mycelos.connector_registry.get(entry["recipe_id"])
+            if recipe is not None and existing is None:
+                mycelos.connector_registry.register(
+                    entry["recipe_id"],
+                    recipe.name,
+                    "mcp",
+                    list(recipe.capabilities_preview or []),
+                    description=recipe.description,
+                    setup_type="oauth_http",
+                )
+                mycelos.audit.log(
+                    "connector.registered",
+                    details={
+                        "connector": entry["recipe_id"],
+                        "setup_type": "oauth_http",
+                    },
+                    user_id=entry["user_id"],
+                )
+        except Exception:
+            # Connector-registry failure shouldn't undo the successful
+            # token exchange; log and keep going. The user can retry
+            # via the UI (which is idempotent).
+            logger.exception("connector registration failed for %s", entry["recipe_id"])
+
         return RedirectResponse(
             url=f"/connectors.html?connected={entry['recipe_id']}",
             status_code=302,
