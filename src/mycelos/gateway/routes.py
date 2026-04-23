@@ -2144,9 +2144,24 @@ def setup_routes(api: FastAPI) -> None:
                 return _fail(f"tools/list failed: {e}")
             if tools:
                 return _ok(f"{len(tools)} tool(s) loaded", tool_count=len(tools))
+
+            # No tools loaded — session may have died or never started.
+            # Try one reconnect from the recipe before surfacing the
+            # "No tools discovered" error. Test-connection now actually
+            # heals a dead subprocess instead of just reading stale state.
+            try:
+                mcp_mgr.reconnect(connector_id)
+                tools = [t for t in mcp_mgr.list_tools() if t["name"].startswith(prefix)]
+                if tools:
+                    return _ok(
+                        f"Reconnected; {len(tools)} tool(s) loaded",
+                        tool_count=len(tools),
+                    )
+            except Exception as e:
+                return _fail(f"reconnect failed: {e}")
             return _fail(
-                "No tools discovered. The MCP session may not be running — "
-                "check 'mycelos logs gateway' for startup errors."
+                "No tools discovered after reconnect. "
+                "Check credentials and recipe configuration."
             )
 
         return {

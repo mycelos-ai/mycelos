@@ -148,31 +148,44 @@ def test_success_after_failure_keeps_last_error(registry: ConnectorRegistry):
 
 
 def test_state_newly_registered_is_ready(registry: ConnectorRegistry):
-    """No telemetry yet + status=active → ready."""
-    registry.register("ddg", "DDG", "search", [])
-    assert registry.get("ddg")["operational_state"] == "ready"
+    """No telemetry yet + status=active (mcp type) → ready."""
+    registry.register("my-mcp", "My MCP", "mcp", [])
+    assert registry.get("my-mcp")["operational_state"] == "ready"
 
 
 def test_state_after_success_is_healthy(registry: ConnectorRegistry):
-    registry.register("ddg", "DDG", "search", [])
-    registry.record_success("ddg")
-    assert registry.get("ddg")["operational_state"] == "healthy"
+    registry.register("my-mcp", "My MCP", "mcp", [])
+    registry.record_success("my-mcp")
+    assert registry.get("my-mcp")["operational_state"] == "healthy"
 
 
 def test_state_after_failure_is_failing(registry: ConnectorRegistry):
+    registry.register("my-mcp", "My MCP", "mcp", [])
+    registry.record_failure("my-mcp", "boom")
+    assert registry.get("my-mcp")["operational_state"] == "failing"
+
+
+def test_builtin_connectors_skip_telemetry_based_failing(registry: ConnectorRegistry):
+    """Built-in http/search/builtin connectors short-circuit to
+    'healthy' regardless of stale last_error_at. These are always-on
+    in-process helpers; reporting them as 'failing' because of a
+    transient error months ago is a UX lie."""
     registry.register("ddg", "DDG", "search", [])
-    registry.record_failure("ddg", "boom")
-    assert registry.get("ddg")["operational_state"] == "failing"
+    registry.record_failure("ddg", "old glitch")
+    assert registry.get("ddg")["operational_state"] == "healthy"
+    registry.register("http", "HTTP", "http", [])
+    registry.record_failure("http", "old glitch")
+    assert registry.get("http")["operational_state"] == "healthy"
 
 
 def test_state_recovers_to_healthy(registry: ConnectorRegistry):
     """A fresh success after a failure flips back to healthy."""
     import time
-    registry.register("ddg", "DDG", "search", [])
-    registry.record_failure("ddg", "boom")
+    registry.register("my-mcp", "My MCP", "mcp", [])
+    registry.record_failure("my-mcp", "boom")
     time.sleep(0.01)
-    registry.record_success("ddg")
-    assert registry.get("ddg")["operational_state"] == "healthy"
+    registry.record_success("my-mcp")
+    assert registry.get("my-mcp")["operational_state"] == "healthy"
 
 
 def test_state_inactive_status_overrides_telemetry(registry: ConnectorRegistry):

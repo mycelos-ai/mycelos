@@ -27,14 +27,46 @@ class MCPConnectorManager:
     connect() and call_tool().
     """
 
-    def __init__(self, credential_proxy: Any = None) -> None:
+    def __init__(
+        self,
+        credential_proxy: Any = None,
+        connector_registry: Any = None,
+    ) -> None:
         self._clients: dict[str, MycelosMCPClient] = {}
         self._credential_proxy = credential_proxy
+        # Optional — if provided, connect/disconnect/call_tool record
+        # success/failure telemetry so the UI + Doctor reflect reality.
+        # Injected lazily from app.py so tests can still construct a
+        # bare manager without a DB.
+        self._connector_registry = connector_registry
         self._all_tools: dict[str, dict] = {}
         # Dedicated event loop for MCP operations
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._start_loop()
+
+    def set_connector_registry(self, registry: Any) -> None:
+        """Inject the connector registry after construction.
+
+        App.py constructs the mcp_manager before the registry in some
+        code paths; this lets the composition root wire them up
+        without a circular import.
+        """
+        self._connector_registry = registry
+
+    def _record_success(self, connector_id: str) -> None:
+        if self._connector_registry is not None:
+            try:
+                self._connector_registry.record_success(connector_id)
+            except Exception:
+                logger.debug("record_success failed for %s", connector_id, exc_info=True)
+
+    def _record_failure(self, connector_id: str, error: str) -> None:
+        if self._connector_registry is not None:
+            try:
+                self._connector_registry.record_failure(connector_id, error)
+            except Exception:
+                logger.debug("record_failure failed for %s", connector_id, exc_info=True)
 
     def _start_loop(self) -> None:
         """Start a dedicated event loop in a daemon thread."""
@@ -78,6 +110,13 @@ class MCPConnectorManager:
         transport: str = "stdio",
     ) -> list[dict]:
         """Connect to an MCP server and discover its tools."""
+        # Purge any stale state for this id (we might be reconnecting
+        # after a dead session) so tool-lookup doesn't resolve to a
+        # zombie client.
+        old_tools = [n for n, t in self._all_tools.items() if t.get("client") and getattr(t["client"], "connector_id", "") == connector_id]
+        for n in old_tools:
+            self._all_tools.pop(n, None)
+
         client = MycelosMCPClient(
             connector_id=connector_id,
             command=command,
@@ -90,7 +129,11 @@ class MCPConnectorManager:
             await client.connect()
             return await client.discover_tools()
 
-        tools = self._run_async(_connect())
+        try:
+            tools = self._run_async(_connect())
+        except Exception as e:
+            self._record_failure(connector_id, f"connect failed: {e}")
+            raise
 
         self._clients[connector_id] = client
 
@@ -102,8 +145,32 @@ class MCPConnectorManager:
                 "input_schema": tool.get("input_schema", {}),
             }
 
+        self._record_success(connector_id)
         logger.info("MCP '%s' connected: %d tools", connector_id, len(tools))
         return tools
+
+    def reconnect(self, connector_id: str) -> list[dict]:
+        """Tear down the existing client for this connector (if any) and
+        re-spawn it using the recipe's command + credentials. Returns
+        the freshly-discovered tool list.
+
+        Raises if the connector has no recipe (custom MCP connectors
+        store their command in the registry row rather than a recipe
+        — those use reconnect_from_registry() below).
+        """
+        # Drop stale client first so tool-lookup doesn't hit zombies.
+        old = self._clients.pop(connector_id, None)
+        if old is not None:
+            try:
+                self._run_async(old.disconnect())
+            except Exception:
+                pass
+        # Strip orphan tool entries from _all_tools.
+        for name in [n for n, t in list(self._all_tools.items())
+                     if t.get("client") is old]:
+            self._all_tools.pop(name, None)
+
+        return self.connect_recipe(connector_id)
 
     def call_tool(self, tool_name: str, arguments: dict) -> Any:
         """Call an MCP tool by name. Thread-safe.
@@ -112,8 +179,27 @@ class MCPConnectorManager:
           - Local subprocess: go through the in-process client
           - Remote session (Phase 1b, subprocess lives in the proxy):
             call proxy_client.mcp_call with the stored session id
+
+        Self-healing: if the tool isn't known (stale/dead session) or
+        the underlying client raises, we attempt one reconnect using
+        the recipe and retry the call. Transparent to the caller as
+        long as the recipe + credentials are still valid.
         """
         tool = self._all_tools.get(tool_name)
+
+        # Try a lazy reconnect when the tool is missing but we can
+        # guess which connector it belongs to from the prefix.
+        if tool is None:
+            connector_id = tool_name.split(".", 1)[0] if "." in tool_name else ""
+            if connector_id and connector_id not in self._clients:
+                try:
+                    logger.info("MCP tool '%s' not known; attempting reconnect of '%s'",
+                                tool_name, connector_id)
+                    self.reconnect(connector_id)
+                    tool = self._all_tools.get(tool_name)
+                except Exception as e:
+                    logger.warning("Auto-reconnect of '%s' failed: %s", connector_id, e)
+
         if tool is None:
             return {"error": f"MCP tool '{tool_name}' not found"}
 
@@ -127,22 +213,55 @@ class MCPConnectorManager:
             if proxy_client is None:
                 return {"error": "Remote MCP tool requires proxy_client (not configured)"}
             try:
-                return proxy_client.mcp_call(
+                result = proxy_client.mcp_call(
                     session_id=session_id,
                     tool=bare_name,
                     arguments=arguments,
                 )
+                connector_id = getattr(tool.get("client"), "connector_id", "")
+                if connector_id:
+                    self._record_success(connector_id)
+                return result
             except Exception as e:
+                connector_id = getattr(tool.get("client"), "connector_id", "")
+                if connector_id:
+                    self._record_failure(connector_id, f"remote call failed: {e}")
                 return {"error": f"Remote MCP tool call failed: {e}"}
 
         client = tool["client"]
+        connector_id = getattr(client, "connector_id", "")
 
         async def _call():
             return await client.call_tool(tool_name, arguments)
 
         try:
-            return self._run_async(_call())
+            result = self._run_async(_call())
+            if connector_id:
+                self._record_success(connector_id)
+            return result
         except Exception as e:
+            # First error: maybe the session died. Try one reconnect +
+            # retry before giving up.
+            if connector_id:
+                try:
+                    logger.info("MCP tool call '%s' raised; attempting reconnect of '%s'",
+                                tool_name, connector_id)
+                    self.reconnect(connector_id)
+                    retry_tool = self._all_tools.get(tool_name)
+                    if retry_tool is not None:
+                        retry_client = retry_tool["client"]
+
+                        async def _retry():
+                            return await retry_client.call_tool(tool_name, arguments)
+
+                        result = self._run_async(_retry())
+                        self._record_success(connector_id)
+                        return result
+                except Exception as retry_err:
+                    self._record_failure(connector_id, f"call+reconnect failed: {retry_err}")
+                    return {"error": f"MCP tool call failed: {retry_err}"}
+
+                self._record_failure(connector_id, f"call failed: {e}")
             return {"error": f"MCP tool call failed: {e}"}
 
     def disconnect_all(self) -> None:

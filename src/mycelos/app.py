@@ -332,6 +332,7 @@ class App:
             from mycelos.connectors.mcp_manager import MCPConnectorManager
             self._mcp_manager = MCPConnectorManager(
                 credential_proxy=self.credentials,
+                connector_registry=self.connector_registry,
             )
         return self._mcp_manager
 

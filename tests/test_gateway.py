@@ -342,7 +342,10 @@ def test_connector_list_exposes_operational_state(client: TestClient):
     """Every row in /api/connectors surfaces the derived operational_state
     so the Connectors UI can render a status badge without a second query."""
     app = client.app.state.mycelos
-    app.connector_registry.register("probe", "Probe", "search", [])
+    # Use 'mcp' type so the telemetry-based state machine applies.
+    # Built-in types (http/search/builtin) short-circuit to 'healthy'
+    # by design — see test_connector_registry for that contract.
+    app.connector_registry.register("probe", "Probe", "mcp", [])
     resp = client.get("/api/connectors")
     assert resp.status_code == 200
     rows = resp.json()
