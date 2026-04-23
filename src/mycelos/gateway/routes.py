@@ -1798,6 +1798,25 @@ def setup_routes(api: FastAPI) -> None:
                     },
                     user_id=entry["user_id"],
                 )
+            # Connect the live MCP session immediately so the user can
+            # start using it without a gateway restart. Token resolution
+            # happens inside MycelosMCPClient via oauth_token_manager.
+            if recipe is not None and recipe.setup_flow == "oauth_http":
+                try:
+                    mycelos.mcp_manager.connect(
+                        connector_id=entry["recipe_id"],
+                        command="",
+                        env_vars={},
+                        transport="http",
+                    )
+                    logger.info("MCP session started after OAuth for %s", entry["recipe_id"])
+                except Exception as e:
+                    # Non-fatal: the startup-path connect will retry on
+                    # the next gateway restart.
+                    logger.warning(
+                        "Post-OAuth MCP connect for '%s' failed: %s",
+                        entry["recipe_id"], e,
+                    )
         except Exception:
             # Connector-registry failure shouldn't undo the successful
             # token exchange; log and keep going. The user can retry

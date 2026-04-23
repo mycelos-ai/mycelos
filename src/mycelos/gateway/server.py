@@ -128,6 +128,31 @@ def _start_mcp_connectors(mycelos: App, debug: bool = False) -> None:
             # Recipe-based connector
             if recipe.transport == "stdio" and not recipe.command:
                 continue
+            # HTTP-MCP recipes (oauth_http) don't need a subprocess — the
+            # MCP client talks HTTP to recipe.http_endpoint directly and
+            # resolves the bearer token via oauth_token_manager on each
+            # connect. The proxy-spawn branch below wouldn't work for
+            # these anyway (empty command fails the npx allowlist), and
+            # the gateway's local mcp_manager.connect() is the right
+            # tool for the job — both in single-process and two-container
+            # setups, since the token lookup reads from the same
+            # credential_proxy in both modes.
+            if recipe.setup_flow == "oauth_http":
+                try:
+                    tools = mycelos.mcp_manager.connect(
+                        connector_id=cid,
+                        command="",
+                        env_vars={},
+                        transport="http",
+                    )
+                    started += 1
+                    logger.info(
+                        "MCP server '%s' started (oauth_http): %d tools discovered",
+                        cid, len(tools),
+                    )
+                except Exception as e:
+                    logger.warning("Failed to start oauth_http MCP '%s': %s", cid, e)
+                continue
             command = recipe.command
             env_vars = dict(recipe.static_env)  # e.g. TRANSPORT_MODE=stdio
             for cred_spec in recipe.credentials:
