@@ -97,6 +97,14 @@ class ConnectorRegistry:
         if row.get("status") in ("draft", "inactive", "disabled"):
             return "setup_incomplete"
 
+        # Built-in connectors (http, search, and the like) don't keep
+        # per-call telemetry — they're always-on in-process helpers.
+        # Reporting them as "failing" because some stale last_error
+        # sits in the row from months ago is a UX lie. Treat an active
+        # built-in as healthy by default.
+        if row.get("connector_type") in ("http", "search", "builtin"):
+            return "healthy"
+
         last_ok = row.get("last_success_at")
         last_err = row.get("last_error_at")
 

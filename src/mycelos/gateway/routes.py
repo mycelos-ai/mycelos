@@ -2126,6 +2126,14 @@ def setup_routes(api: FastAPI) -> None:
                 )
             return _fail(data.get("description", "unknown error"))
 
+        # ── Built-in connectors (http, search, etc.) ──────────────
+        # These are always-on in-process helpers, not MCP sessions.
+        # 'Testing' them by walking the MCP-tool list is meaningless —
+        # their tools live in the ToolRegistry under their own names
+        # (http_get, search_web, ...). Report healthy when registered.
+        if ctype in ("http", "search", "builtin"):
+            return _ok(f"Built-in {ctype} connector is active")
+
         # ── MCP-backed ─────────────────────────────────────────
         mcp_mgr = getattr(mycelos, "_mcp_manager", None)
         if mcp_mgr is not None:
