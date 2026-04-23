@@ -163,17 +163,30 @@ class SecurityProxyClient:
         """Terminate an active MCP session."""
         self._request("POST", "/mcp/stop", json={"session_id": session_id})
 
-    def oauth_start(self, oauth_cmd: str, env_vars: dict, user_id: str = "default") -> dict:
-        """Spawn an OAuth auth subprocess in the proxy. Returns {session_id}.
+    def oauth_start(
+        self,
+        oauth_cmd: str | None = None,
+        env_vars: dict | None = None,
+        recipe_id: str | None = None,
+        user_id: str = "default",
+    ) -> dict:
+        """Spawn an OAuth auth subprocess in the proxy.
 
-        Pair this with the WebSocket at /oauth/stream/{session_id} to
-        actually interact with the process. Always call oauth_stop when
-        done — subprocesses don't auto-clean on client disconnect.
+        Preferred: pass `recipe_id` — the proxy looks up the recipe and
+        handles file materialization internally. Legacy callers (unit
+        tests, non-file tools) may pass `oauth_cmd` + `env_vars` instead.
         """
-        resp = self._request("POST", "/oauth/start", json={
-            "oauth_cmd": oauth_cmd,
-            "env_vars": env_vars,
-        }, headers={"X-User-Id": user_id})
+        payload: dict = {}
+        if recipe_id is not None:
+            payload["recipe_id"] = recipe_id
+        if oauth_cmd is not None:
+            payload["oauth_cmd"] = oauth_cmd
+        if env_vars is not None:
+            payload["env_vars"] = env_vars
+        resp = self._request(
+            "POST", "/oauth/start", json=payload,
+            headers={"X-User-Id": user_id},
+        )
         return resp.json()
 
     def oauth_stop(self, session_id: str, user_id: str = "default") -> dict:
