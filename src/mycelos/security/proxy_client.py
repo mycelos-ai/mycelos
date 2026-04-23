@@ -255,6 +255,23 @@ class SecurityProxyClient:
         resp = self._request("DELETE", f"/credential/{service}/{label}")
         return resp.json() if hasattr(resp, "json") else {}
 
+    def credential_get(
+        self, service: str, label: str = "default", user_id: str = "default",
+    ) -> dict | None:
+        """Get a credential by service+label. Returns the plaintext
+        payload dict ({"api_key": "..."}) or None if not found.
+
+        Used by the gateway's /api/connectors/oauth/start to read the
+        public half (client_id) of stored OAuth client credentials.
+        """
+        resp = self._request(
+            "GET", f"/credential/get/{service}/{label}",
+            headers={"X-User-Id": user_id},
+        )
+        if resp.status_code == 404:
+            return None
+        return resp.json()
+
     def credential_list(self) -> list[dict]:
         """Return credential METADATA only — never plaintext."""
         resp = self._request("GET", "/credential/list")

@@ -971,6 +971,26 @@ def create_proxy_app() -> FastAPI:
         return JSONResponse({"status": "deleted", "service": service, "label": label})
 
     # ---------------------------------------------------------------------------
+    # GET /credential/get/{service}/{label} — plaintext read (restricted use)
+    # ---------------------------------------------------------------------------
+
+    @app.get("/credential/get/{service}/{label}")
+    async def credential_get(service: str, label: str, request: Request) -> JSONResponse:
+        authorized, user_id = _check_auth(request)
+        if not authorized:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        cp = _get_credential_proxy()
+        if cp is None:
+            return JSONResponse({"error": "credential_proxy unavailable"}, status_code=500)
+        try:
+            cred = cp.get_credential(service, user_id=user_id, label=label)
+        except NotImplementedError:
+            return JSONResponse({"error": "not available"}, status_code=501)
+        if cred is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(cred)
+
+    # ---------------------------------------------------------------------------
     # GET /credential/list
     # ---------------------------------------------------------------------------
 

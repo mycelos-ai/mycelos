@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, WebSocket
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1593,112 +1593,189 @@ def setup_routes(api: FastAPI) -> None:
         }
 
     @api.post("/api/connectors/oauth/start")
-    async def oauth_start_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
-        """Start an OAuth auth subprocess in the proxy for a recipe.
+    async def oauth_start_passthrough(
+        request: Request, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate an OAuth 2.0 Authorization Code Flow URL.
 
-        Browser POSTs {recipe_id, env_vars}. Gateway resolves the recipe,
-        validates that the recipe uses oauth_browser setup flow, and
-        asks the proxy to spawn the recipe's oauth_cmd with the given
-        env_vars. Returns {session_id, ws_url} where ws_url is the
-        gateway-relative path the browser opens to stream subprocess
-        I/O (the gateway proxies that WS through to the proxy container).
+        Body: {recipe_id, origin}. Origin is the browser's
+        window.location.origin — used to build the redirect_uri that
+        must match what the user registered in Cloud Console.
         """
-        from mycelos.connectors.mcp_recipes import get_recipe as get_r
+        import hashlib
+        import base64
+        import secrets as _secrets
+        from datetime import datetime, timedelta, timezone
+        import json as _json
+        from urllib.parse import urlencode
+
+        from mycelos.connectors.mcp_recipes import get_recipe
 
         recipe_id = payload.get("recipe_id", "")
+        origin = (payload.get("origin") or "").rstrip("/")
+        if not origin:
+            raise HTTPException(status_code=400, detail="origin is required")
 
-        recipe = get_r(recipe_id)
+        recipe = get_recipe(recipe_id)
         if recipe is None:
             raise HTTPException(status_code=404, detail=f"Unknown recipe: {recipe_id}")
-        if recipe.setup_flow != "oauth_browser":
+        if recipe.setup_flow != "oauth_http":
             raise HTTPException(
                 status_code=400,
-                detail=f"Recipe '{recipe_id}' setup_flow is '{recipe.setup_flow}', not 'oauth_browser'",
+                detail=f"Recipe '{recipe_id}' setup_flow is '{recipe.setup_flow}', not 'oauth_http'",
             )
 
         mycelos = api.state.mycelos
-        proxy_client = getattr(mycelos, "proxy_client", None)
-        if proxy_client is None:
-            raise HTTPException(status_code=503, detail="Proxy not available")
 
-        # Gateway no longer handles env_vars for oauth_browser recipes;
-        # the proxy materializes file-based credentials itself via the
-        # recipe lookup.
-        result = proxy_client.oauth_start(
-            recipe_id=recipe_id,
-        )
-        session_id = result.get("session_id", "")
-        return {
-            "session_id": session_id,
-            "ws_url": f"/api/connectors/oauth/stream/{session_id}",
+        # Read client_id from the stored client_secret_*.json.
+        client_cred = None
+        try:
+            client_cred = mycelos.credentials.get_credential(
+                recipe.oauth_client_credential_service, user_id="default",
+            )
+        except NotImplementedError:
+            # Two-container mode: gateway can't decrypt directly. Ask proxy.
+            client_cred = None
+        except Exception:
+            client_cred = None
+        def _has_api_key(c: Any) -> bool:
+            if not isinstance(c, dict):
+                return False
+            v = c.get("api_key")
+            return isinstance(v, str) and bool(v)
+
+        if not _has_api_key(client_cred):
+            proxy_client = getattr(mycelos, "proxy_client", None)
+            if proxy_client is not None:
+                try:
+                    got = proxy_client.credential_get(
+                        recipe.oauth_client_credential_service, user_id="default",
+                    )
+                    if _has_api_key(got):
+                        client_cred = got
+                except Exception:
+                    pass
+        if not _has_api_key(client_cred):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"OAuth client credential '{recipe.oauth_client_credential_service}' "
+                    "not uploaded. Paste client_secret_*.json first."
+                ),
+            )
+        client_json = _json.loads(client_cred["api_key"])
+        installed = client_json.get("installed") or client_json.get("web") or {}
+        client_id = installed.get("client_id", "")
+        if not client_id:
+            raise HTTPException(status_code=400, detail="Malformed client credential")
+
+        # Build PKCE pair and state.
+        code_verifier = _secrets.token_urlsafe(64)
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip("=")
+        state = _secrets.token_urlsafe(32)
+
+        redirect_uri = f"{origin}/api/connectors/oauth/callback"
+
+        # Store state (TTL-protected; sweep expired on every call).
+        states = getattr(api.state, "oauth_pending_states", None)
+        if states is None:
+            states = {}
+            api.state.oauth_pending_states = states
+        now = datetime.now(timezone.utc)
+        expiry = (now + timedelta(minutes=10)).isoformat()
+        for k in list(states.keys()):
+            exp = states[k].get("expires_at", "")
+            try:
+                if datetime.fromisoformat(exp) < now:
+                    states.pop(k, None)
+            except Exception:
+                states.pop(k, None)
+
+        states[state] = {
+            "recipe_id": recipe_id,
+            "code_verifier": code_verifier,
+            "user_id": "default",
+            "origin": origin,
+            "expires_at": expiry,
         }
 
-    @api.post("/api/connectors/oauth/stop")
-    async def oauth_stop_passthrough(payload: dict[str, Any]) -> dict[str, Any]:
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(recipe.oauth_scopes),
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+        auth_url = f"{recipe.oauth_authorize_url}?{urlencode(params)}"
+
+        return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+
+
+    @api.get("/api/connectors/oauth/callback")
+    async def oauth_callback_passthrough(
+        code: str = "",
+        state: str = "",
+        error: str = "",
+    ):
+        """Browser lands here after OAuth consent. Validate state,
+        exchange the code through the proxy, redirect to the
+        connectors page."""
+        from fastapi.responses import RedirectResponse
+
+        if error:
+            return RedirectResponse(
+                url=f"/connectors.html?oauth_error={error}",
+                status_code=302,
+            )
+
         mycelos = api.state.mycelos
+        states = getattr(api.state, "oauth_pending_states", None) or {}
+        entry = states.pop(state, None)
+        if entry is None:
+            return RedirectResponse(
+                url="/connectors.html?oauth_error=invalid_state",
+                status_code=302,
+            )
+
         proxy_client = getattr(mycelos, "proxy_client", None)
         if proxy_client is None:
-            raise HTTPException(status_code=503, detail="Proxy not available")
-        session_id = payload.get("session_id", "")
-        return proxy_client.oauth_stop(session_id=session_id)
+            return RedirectResponse(
+                url="/connectors.html?oauth_error=proxy_unavailable",
+                status_code=302,
+            )
 
-    @api.websocket("/api/connectors/oauth/stream/{session_id}")
-    async def oauth_stream_passthrough(websocket: WebSocket, session_id: str) -> None:
-        """Bidirectional WebSocket passthrough to the proxy's
-        /oauth/stream/{session_id}. Frames forwarded verbatim; the
-        gateway does not parse them. Upstream auth uses the proxy
-        bearer token the gateway already holds."""
-        import asyncio
-        import websockets as _ws_lib
-
-        mycelos = websocket.app.state.mycelos
-        proxy_client = getattr(mycelos, "proxy_client", None)
-        if proxy_client is None:
-            await websocket.close(code=4503)
-            return
-
-        # Mint the upstream WS URL and grab the auth token the
-        # proxy_client is already configured with.
-        ws_url = proxy_client.oauth_stream_url(session_id)
-        token = getattr(proxy_client, "_token", None) or getattr(proxy_client, "_auth_token", None)
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-        await websocket.accept()
-
+        redirect_uri = f"{entry['origin']}/api/connectors/oauth/callback"
         try:
-            async with _ws_lib.connect(ws_url, additional_headers=headers) as upstream:
+            result = proxy_client.oauth_callback(
+                recipe_id=entry["recipe_id"],
+                code=code,
+                code_verifier=entry["code_verifier"],
+                redirect_uri=redirect_uri,
+                user_id=entry["user_id"],
+            )
+        except Exception as e:
+            return RedirectResponse(
+                url=f"/connectors.html?oauth_error={str(e)[:120]}",
+                status_code=302,
+            )
 
-                async def client_to_proxy():
-                    try:
-                        while True:
-                            msg = await websocket.receive_text()
-                            await upstream.send(msg)
-                    except Exception:
-                        return
+        if result.get("status") != "connected":
+            err = (result.get("error") or "exchange_failed")[:120]
+            return RedirectResponse(
+                url=f"/connectors.html?oauth_error={err}",
+                status_code=302,
+            )
 
-                async def proxy_to_client():
-                    try:
-                        async for msg in upstream:
-                            if isinstance(msg, bytes):
-                                msg = msg.decode("utf-8", "replace")
-                            await websocket.send_text(msg)
-                    except Exception:
-                        return
-
-                done, pending = await asyncio.wait(
-                    [asyncio.create_task(client_to_proxy()),
-                     asyncio.create_task(proxy_to_client())],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for t in pending:
-                    t.cancel()
-        except Exception:
-            pass
-        finally:
-            try:
-                await websocket.close()
-            except Exception:
-                pass
+        return RedirectResponse(
+            url=f"/connectors.html?connected={entry['recipe_id']}",
+            status_code=302,
+        )
 
     @api.get("/api/connectors")
     async def list_connectors() -> list[dict[str, Any]]:
