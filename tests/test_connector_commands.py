@@ -1,4 +1,6 @@
-"""Tests for /connector slash commands — add, add-custom, MCP detection."""
+"""Tests for /connector slash commands — list/search (read-only)."""
+
+from __future__ import annotations
 
 import os
 import tempfile
@@ -33,91 +35,24 @@ def app():
         yield a
 
 
-class TestConnectorAddMCP:
-    """Test that /connector add detects MCP commands vs credentials."""
+class TestConnectorSetupDeprecated:
+    """Setup verbs in chat must redirect to CLI / Web UI."""
 
-    def test_add_npx_command_registers_custom_connector(self, app):
-        """/connector add playwright npx -y @playwright/mcp → custom MCP."""
-        result = handle_slash_command(app, "/connector add playwright npx -y @playwright/mcp")
-        assert "Custom connector" in _result_text(result)
-        assert "playwright" in _result_text(result)
-        assert "registered" in _result_text(result)
+    @pytest.mark.parametrize("verb", ["add", "setup", "remove", "test"])
+    def test_setup_verbs_redirect(self, app, verb):
+        result = handle_slash_command(app, f"/connector {verb} playwright")
+        text = _result_text(result).lower()
+        assert (
+            "not supported in chat" in text
+            or "use the web ui" in text
+            or "mycelos connector setup" in text
+        ), f"/connector {verb} should redirect, got: {text!r}"
 
-        # Verify in DB
-        connector = app.connector_registry.get("playwright")
-        assert connector is not None
-
-    def test_add_docker_command_registers_custom_connector(self, app):
-        """/connector add mydb docker run -i mcp/postgres → custom MCP."""
-        result = handle_slash_command(app, "/connector add mydb docker run -i mcp/postgres")
-        assert "Custom connector" in _result_text(result)
-        assert "mydb" in _result_text(result)
-
-    def test_add_python_command_registers_custom_connector(self, app):
-        """/connector add myscript python3 -m my_mcp_server → custom MCP."""
-        result = handle_slash_command(app, "/connector add myscript python3 -m my_mcp_server")
-        assert "Custom connector" in _result_text(result)
-
-    def test_add_uvx_command_registers_custom_connector(self, app):
-        """/connector add tool uvx some-mcp-tool → custom MCP."""
-        result = handle_slash_command(app, "/connector add tool uvx some-mcp-tool")
-        assert "Custom connector" in _result_text(result)
-
-    def test_add_token_treated_as_credential(self, app):
-        """/connector add telegram 12345:ABCdef → treated as credential, not MCP."""
-        result = handle_slash_command(app, "/connector add telegram 12345:ABCdefGHI")
-        # This should NOT register as custom MCP
-        assert "Custom connector" not in _result_text(result)
-
-    def test_add_blocked_command_not_treated_as_mcp(self, app):
-        """bash is not in the launcher allowlist — treated as credential."""
-        result = handle_slash_command(app, "/connector add evil bash -c bad")
-        assert "Custom connector" not in _result_text(result)
-
-    def test_add_bash_not_treated_as_mcp(self, app):
-        """/connector add evil bash ... → not detected as MCP (bash not in launcher list)."""
-        result = handle_slash_command(app, "/connector add evil bash -c bad")
-        # bash is not in the MCP launcher allowlist, so treated as credential
-        assert "Custom connector" not in _result_text(result)
-
-    def test_add_mcp_with_secret(self, app):
-        """/connector add context7 npx -y @upstash/context7-mcp --secret MY_KEY."""
-        result = handle_slash_command(
-            app, "/connector add context7 npx -y @upstash/context7-mcp --secret test-api-key-123"
-        )
-        assert "Custom connector" in _result_text(result)
-        assert "context7" in _result_text(result)
-        assert "Secret stored" in _result_text(result)
-
-        # Verify connector registered
-        connector = app.connector_registry.get("context7")
-        assert connector is not None
-        assert "npx" in connector.get("description", "")
-
-        # Verify secret stored — since b365963, MCP creds live under the
-        # bare connector id (same namespace as channels + builtins).
-        cred = app.credentials.get_credential("context7")
-        assert cred is not None
-        assert cred["api_key"] == "test-api-key-123"
-
-    def test_add_builtin_with_secret_flag(self, app):
-        """/connector add telegram --secret <token> → built-in with token."""
-        result = handle_slash_command(app, "/connector add telegram --secret 12345:TestToken")
-        # Should be treated as credential for built-in connector
-        assert "Custom connector" not in _result_text(result)
-
-    def test_add_secret_at_end_of_command(self, app):
-        """--secret can appear after the command args."""
-        result = handle_slash_command(
-            app, "/connector add myserver npx -y @some/server --secret abc123"
-        )
-        assert "Custom connector" in _result_text(result)
-        assert "Secret stored" in _result_text(result)
-
-    def test_add_shell_injection_rejected(self, app):
-        """Commands with shell metacharacters are rejected."""
-        result = handle_slash_command(app, "/connector add evil npx foo; rm -rf /")
-        assert "forbidden" in _result_text(result).lower() or "Invalid" in _result_text(result)
+    def test_setup_does_not_register_connector(self, app):
+        """Deprecated verbs must not call into the registry."""
+        handle_slash_command(app, "/connector add playwright npx -y @playwright/mcp")
+        # The registry must still be empty — setup was not executed.
+        assert app.connector_registry.get("playwright") is None
 
 
 class TestConnectorList:

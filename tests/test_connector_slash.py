@@ -1,4 +1,4 @@
-"""Tests for /connector slash commands — MCP connector setup."""
+"""Tests for /connector slash commands — read-only (list, search)."""
 
 from __future__ import annotations
 
@@ -50,81 +50,18 @@ def test_connector_list_shows_active(app):
     assert "test-conn" in _text(result)
 
 
-# --- /connector add (recipe-based) ---
+# --- Setup verbs are deprecated in chat ---
 
-def test_connector_add_unknown(app):
-    result = handle_slash_command(app, "/connector add nonexistent")
-    text = _text(result)
-    assert "Unknown" in text or "unknown" in text
-
-
-def test_connector_add_fetch_no_key(app):
-    """Fetch needs no key — should activate immediately."""
-    result = handle_slash_command(app, "/connector add fetch")
-    assert "activated" in _text(result).lower() or "bereit" in _text(result).lower() or "no API key" in _text(result)
-
-    # Should be registered
-    conn = app.connector_registry.get("fetch")
-    assert conn is not None
-
-
-def test_connector_add_github_needs_key(app):
-    """GitHub needs a token — should show instructions."""
-    result = handle_slash_command(app, "/connector add github")
-    assert "token" in _text(result).lower() or "Token" in _text(result)
-    assert "github.com" in _text(result) or "settings/tokens" in _text(result)
-
-
-def test_connector_add_brave_shows_help(app):
-    result = handle_slash_command(app, "/connector add brave-search")
-    assert "brave.com" in _text(result).lower() or "API" in _text(result)
-
-
-def test_connector_add_already_active(app):
-    app.connector_registry.register("fetch", "Fetch", "mcp", ["fetch"])
-    result = handle_slash_command(app, "/connector add fetch")
-    assert "already" in _text(result).lower()
-
-
-# --- /connector add-custom ---
-
-def test_connector_add_custom(app):
-    # New syntax: /connector add <name> npx ... (auto-detects MCP command)
-    result = handle_slash_command(app, "/connector add notion npx @sirodrigo/mcp-notion")
-    assert "registered" in _text(result).lower() or "Custom" in _text(result)
-
-    conn = app.connector_registry.get("notion")
-    assert conn is not None
-
-
-# --- /connector remove ---
-
-def test_connector_remove(app):
-    app.connector_registry.register("test-rm", "Test", "mcp", ["test.cap"])
-    result = handle_slash_command(app, "/connector remove test-rm")
-    assert "deactivated" in _text(result).lower() or "Deactivated" in _text(result)
-
-
-def test_connector_remove_nonexistent(app):
-    result = handle_slash_command(app, "/connector remove nope")
-    assert "not found" in _text(result).lower()
-
-
-# --- /connector test ---
-
-def test_connector_test(app):
-    app.connector_registry.register("test-t", "Test", "mcp", [])
-    result = handle_slash_command(app, "/connector test test-t")
-    assert "test-t" in _text(result)
-
-
-# --- Config generation ---
-
-def test_connector_add_creates_generation(app):
-    gen_before = app.config.get_active_generation_id()
-    handle_slash_command(app, "/connector add fetch")
-    gen_after = app.config.get_active_generation_id()
-    assert gen_after != gen_before
+@pytest.mark.parametrize("verb", ["add", "setup", "remove", "test"])
+def test_connector_setup_verbs_are_deprecated(app, verb):
+    """Setup verbs must point users to the CLI / Web UI instead of executing."""
+    result = handle_slash_command(app, f"/connector {verb} github")
+    text = _text(result).lower()
+    assert (
+        "not supported in chat" in text
+        or "use the web ui" in text
+        or "mycelos connector setup" in text
+    ), f"Expected deprecation notice for /connector {verb}, got: {text!r}"
 
 
 # --- Usage help ---

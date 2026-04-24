@@ -95,9 +95,10 @@ def _handle_help(app: Any, args: list[str]) -> str:
   `/agent <id> grant <capability>` — Grant permission
   `/agent <id> revoke <capability>` — Revoke permission
 
-**/connector** — Connector management
+**/connector** — Connector management (read-only in chat)
   `/connector list` — Show connectors
-  `/connector setup <name>` — Set up connector
+  `/connector search <query>` — Search the MCP registry
+  _Setup: open the Web UI or run `mycelos connector setup <id>`._
 
 **/schedule** — Cron jobs
   `/schedule list` — Show scheduled tasks
@@ -674,8 +675,8 @@ def _mount_revoke(app: Any, mounts: Any, mount_id: str) -> str:
     return f"Mount revoked: `{target['path']}` ({target['access']})"
 
 
-def _handle_connector(app: Any, args: list[str]) -> str:
-    """Handle /connector commands — list, add, remove, test."""
+def _handle_connector(app: Any, args: list[str]) -> Any:
+    """Handle /connector — read-only verbs only (list, search)."""
     if not args:
         return _connector_list(app)
 
@@ -683,27 +684,22 @@ def _handle_connector(app: Any, args: list[str]) -> str:
 
     if action == "list":
         return _connector_list(app)
-    elif action == "search" and len(args) >= 2:
+    if action == "search" and len(args) >= 2:
         return _connector_search(" ".join(args[1:]))
-    elif action == "add" and len(args) >= 2:
-        return _connector_add_smart(app, args[1:])
-    elif action == "remove" and len(args) >= 2:
-        return _connector_remove(app, args[1])
-    elif action == "test" and len(args) >= 2:
-        return _connector_test(app, args[1])
-    else:
+    if action in {"add", "setup", "remove", "test"}:
         return (
-            "Usage:\n"
-            "  `/connector list` — Show available and active connectors\n"
-            "  `/connector add <name> <command> [--secret <key>]` — Add MCP server\n"
-            "  `/connector add <name> --secret <key>` — Add built-in connector with token\n"
-            "  `/connector remove <name>` — Remove a connector\n"
-            "  `/connector test <name>` — Test a connector\n\n"
-            "Examples:\n"
-            "  `/connector add playwright npx -y @playwright/mcp`\n"
-            "  `/connector add context7 npx -y @upstash/context7-mcp --secret YOUR_KEY`\n"
-            "  `/connector add telegram --secret 12345:ABCdef`"
+            f"`/connector {action}` is not supported in chat.\n\n"
+            f"To set up or remove a connector, use one of:\n"
+            f"  - **Web UI**: open the Connectors page\n"
+            f"  - **CLI**: `mycelos connector setup <id>` / `mycelos connector remove <id>` / `mycelos connector test <id>`\n\n"
+            f"Credentials stay out of the chat transcript this way."
         )
+    return (
+        "Usage:\n"
+        "  `/connector list` — Show available and active connectors\n"
+        "  `/connector search <query>` — Search the MCP registry for community servers\n\n"
+        "Setup happens in the Web UI or CLI (`mycelos connector setup <id>`)."
+    )
 
 
 def _connector_search(query: str) -> str:
@@ -742,309 +738,8 @@ def _connector_list(app: Any) -> str:
         if cid not in RECIPES:
             lines.append(f"- `{cid}` — {c['name']} [**active**]")
 
-    lines.append(f"\nSetup: `/connector add <name>`")
+    lines.append("\nSetup: open the Web UI Connectors page or run `mycelos connector setup <id>`.")
     return "\n".join(lines)
-
-
-def _connector_add_smart(app: Any, args: list[str]) -> str:
-    """Smart connector add — detects command vs token, handles --secret.
-
-    Syntax:
-      /connector add <name>                                    → recipe lookup
-      /connector add <name> npx -y @pkg                        → custom MCP, no auth
-      /connector add <name> npx -y @pkg --secret <key>         → custom MCP + auth
-      /connector add <name> --secret <token>                   → built-in with token
-    """
-    name = args[0]
-    rest = args[1:]
-
-    # Parse --secret from anywhere in the args
-    secret = None
-    clean_args: list[str] = []
-    i = 0
-    while i < len(rest):
-        if rest[i] == "--secret" and i + 1 < len(rest):
-            secret = rest[i + 1]
-            i += 2
-        else:
-            clean_args.append(rest[i])
-            i += 1
-
-    # No extra args → recipe-based setup
-    if not clean_args and not secret:
-        return _connector_add(app, name)
-
-    # Only --secret, no command → built-in connector with token
-    if not clean_args and secret:
-        return _connector_add_with_key(app, name, secret)
-
-    # Has command args → custom MCP server
-    command = " ".join(clean_args)
-
-    # Validate the command is a known MCP launcher
-    first_word = clean_args[0].lower() if clean_args else ""
-    mcp_launchers = ("npx", "docker", "python", "python3", "node", "uvx", "deno", "bun")
-    if first_word not in mcp_launchers:
-        # Could be a token (old syntax: /connector add telegram <token>)
-        if not secret:
-            return _connector_add_with_key(app, name, " ".join(clean_args))
-        return f"Unknown launcher: `{first_word}`. Use: {', '.join(mcp_launchers)}"
-
-    # Look up required env vars from MCP Registry
-    from mycelos.connectors.mcp_search import lookup_env_vars
-    # Extract package name from command (e.g., "npx -y @upstash/context7-mcp" → "@upstash/context7-mcp")
-    package_name = ""
-    for arg in clean_args:
-        if arg.startswith("@") or (not arg.startswith("-") and "/" in arg):
-            package_name = arg
-            break
-    env_var_specs = lookup_env_vars(package_name) if package_name else []
-    secret_vars = [ev for ev in env_var_specs if ev.get("secret")]
-
-    # Register the custom MCP connector
-    result = _connector_add_custom(app, name, command)
-
-    # _connector_add_custom now returns a list of ChatEvents
-    # Extract text from first system-response event to check success
-    result_text = ""
-    if isinstance(result, list):
-        for ev in result:
-            if hasattr(ev, "data") and "content" in ev.data:
-                result_text += ev.data["content"]
-    else:
-        result_text = result
-
-    # Store secret if provided
-    extra_text = ""
-    if secret and "registered" in result_text:
-        env_var_name = secret_vars[0]["name"] if secret_vars else f"{name.upper().replace('-', '_')}_API_KEY"
-        try:
-            app.credentials.store_credential(
-                name,
-                {"api_key": secret, "env_var": env_var_name},
-                description=f"API key for {name} MCP connector",
-            )
-            extra_text = f"\n\n**Secret stored** as `{env_var_name}` (encrypted)."
-        except Exception as e:
-            extra_text = f"\n\n**Warning:** Failed to store secret: {e}"
-    elif not secret and secret_vars and "registered" in result_text:
-        var_names = ", ".join(f"`{ev['name']}`" for ev in secret_vars)
-        extra_text = (
-            f"\n\n**Note:** This server requires {var_names}.\n"
-            f"Add it with: `/connector add {name} {command} --secret YOUR_KEY`"
-        )
-
-    # Append extra text to the system-response event
-    if extra_text and isinstance(result, list):
-        from mycelos.chat.events import system_response_event as _sre
-        result = [
-            _sre(ev.data["content"] + extra_text) if ev.type == "system-response" else ev
-            for ev in result
-        ]
-    elif extra_text and isinstance(result, str):
-        result += extra_text
-
-    return result
-
-
-def _connector_add(app: Any, recipe_id: str) -> str:
-    """Set up a connector from a predefined recipe.
-
-    Returns instructions — credential input happens separately
-    because slash commands are non-interactive in gateway mode.
-    For terminal mode, the actual setup happens via connector_cmd.
-    """
-    from mycelos.connectors.mcp_recipes import get_recipe, is_node_available
-
-    recipe = get_recipe(recipe_id)
-    if recipe is None:
-        available = ", ".join(
-            r.id for r in __import__("mycelos.connectors.mcp_recipes", fromlist=["list_recipes"]).list_recipes()
-        )
-        from mycelos.chat.events import system_response_event, suggested_actions_event
-        return [
-            system_response_event(
-                f"Unknown connector: `{recipe_id}`.\n\n"
-                f"**Available built-in connectors:** {available}\n\n"
-                f"Not what you need? Try:\n"
-                f"- `/connector search {recipe_id}` — search the MCP registry for community servers\n"
-                f"- Ask me in chat: *\"How do I connect {recipe_id}?\"* — I'll help you find the right approach"
-            ),
-            suggested_actions_event([
-                {"label": f"Search MCP registry for {recipe_id}", "command": f"/connector search {recipe_id}"},
-                {"label": f"Ask: How to connect {recipe_id}?", "command": f"How do I connect {recipe_id} to Mycelos?"},
-            ]),
-        ]
-
-    if recipe.requires_node and not is_node_available():
-        return (
-            f"**{recipe.name}** needs Node.js (npx).\n\n"
-            f"Install it first:\n"
-            f"  macOS: `brew install node`\n"
-            f"  Linux: `sudo apt install nodejs`\n"
-            f"  Windows: https://nodejs.org/en/download\n\n"
-            f"Then try again: `/connector add {recipe_id}`"
-        )
-
-    # Check if already configured
-    existing = app.connector_registry.get(recipe_id)
-    if existing and existing.get("status") == "active":
-        return f"**{recipe.name}** is already active. Use `/connector test {recipe_id}` to verify."
-
-    # Build setup instructions
-    parts = [f"**Setting up: {recipe.name}**\n"]
-    parts.append(f"{recipe.description}\n")
-
-    if recipe.credentials:
-        parts.append("**Credentials needed:**\n")
-        for cred in recipe.credentials:
-            parts.append(f"  - `{cred['env_var']}`: {cred['name']}")
-            if cred.get("help"):
-                parts.append(f"    {cred['help']}")
-
-        parts.append(
-            f"\n**Important:** Do NOT paste your token as a chat message — it would be visible to the AI.\n"
-            f"Instead, use the command with the token appended:\n"
-            f"  `/connector add {recipe_id} <your-token>`"
-        )
-        from mycelos.chat.events import system_response_event, suggested_actions_event
-        return [
-            system_response_event("\n".join(parts)),
-            suggested_actions_event([
-                {"label": f"Enter: /connector add {recipe_id} <token>", "command": f"/connector add {recipe_id} ", "prefill": True},
-            ]),
-        ]
-    else:
-        # No credentials needed — register immediately
-        try:
-            app.connector_registry.register(
-                recipe_id, recipe.name, "mcp",
-                recipe.capabilities_preview,
-                description=recipe.description,
-                setup_type="mcp",
-            )
-            for cap in recipe.capabilities_preview:
-                app.policy_engine.set_policy("default", None, cap, "always")
-            parts.append(f"✓ **{recipe.name} activated!** No API key needed.")
-            parts.append(f"  Capabilities: {', '.join(recipe.capabilities_preview)}")
-        except Exception as e:
-            parts.append(f"**Setup failed:** {e}")
-
-    return "\n".join(parts)
-
-
-def _connector_add_with_key(app: Any, recipe_id: str, api_key: str) -> str:
-    """Set up a connector with an inline credential (from chat).
-
-    For simple connectors: api_key is a plain token string.
-    For email: api_key is a JSON string with email, password, server config.
-    """
-    import json as _json
-
-    from mycelos.connectors.mcp_recipes import get_recipe
-
-    recipe = get_recipe(recipe_id)
-    if recipe is None:
-        return f"Unknown connector: `{recipe_id}`."
-
-    api_key = api_key.strip()
-    if not api_key:
-        return f"Empty key. Usage: `/connector add {recipe_id} <your-token>`"
-
-    # Email connector: parse JSON credential with multi-field config
-    if recipe_id == "email" and api_key.startswith("{"):
-        try:
-            email_config = _json.loads(api_key)
-            app.credentials.store_credential("email", {
-                "api_key": _json.dumps(email_config),
-                "env_var": "EMAIL_CONFIG",
-                "provider": "email",
-            })
-        except _json.JSONDecodeError:
-            return "Invalid email configuration. Please try again."
-    elif recipe.credentials:
-        # Simple token credential
-        cred_info = recipe.credentials[0]
-        service_name = recipe_id
-        env_var = cred_info.get("env_var", f"{recipe_id.upper()}_TOKEN")
-        app.credentials.store_credential(service_name, {
-            "api_key": api_key,
-            "env_var": env_var,
-        })
-
-    # Register connector
-    try:
-        app.connector_registry.register(
-            recipe_id, recipe.name, "mcp",
-            recipe.capabilities_preview,
-            description=recipe.description,
-            setup_type="mcp",
-        )
-        for cap in recipe.capabilities_preview:
-            app.policy_engine.set_policy("default", None, cap, "always")
-        app.audit.log("connector.setup", details={
-            "connector": recipe_id, "has_credential": True,
-        })
-    except Exception as e:
-        return f"Setup failed: {e}"
-
-    # Special: Telegram — add channel config + auto-detect user
-    if recipe_id == "telegram":
-        # Try to auto-detect user from getUpdates
-        allowed_users: list[int] = []
-        bot_username = ""
-        try:
-            import httpx as _httpx
-            # Verify token and get bot info
-            me_resp = _httpx.get(f"https://api.telegram.org/bot{api_key}/getMe", timeout=10)
-            me_data = me_resp.json()
-            if me_data.get("ok"):
-                bot_username = me_data["result"].get("username", "")
-
-            # Clear old updates, then check for new ones
-            _httpx.get(f"https://api.telegram.org/bot{api_key}/getUpdates",
-                       params={"offset": -1, "limit": 1}, timeout=10)
-        except Exception:
-            pass
-
-        try:
-            app.storage.execute(
-                """INSERT OR REPLACE INTO channels (id, channel_type, mode, status, config, allowed_users)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                ("telegram", "telegram", "polling", "active", "{}",
-                 _json.dumps(allowed_users)),
-            )
-        except Exception:
-            pass
-
-        bot_ref = f"@{bot_username}" if bot_username else "your bot"
-        from mycelos.chat.events import system_response_event, suggested_actions_event
-        return [
-            system_response_event(
-                f"**Telegram Bot configured!** Token stored (encrypted).\n\n"
-                f"**Important — activate your bot:**\n"
-                f"1. Open Telegram and send `/start` to {bot_ref}\n"
-                f"2. Then restart the gateway\n\n"
-                f"The first message you send will automatically add you to the allowlist. "
-                f"Without this, the bot won't respond to anyone (security: fail-closed)."
-            ),
-            suggested_actions_event([
-                {"label": "Restart Gateway", "command": "/restart"},
-            ]),
-        ]
-
-    from mycelos.chat.events import system_response_event, suggested_actions_event
-    return [
-        system_response_event(
-            f"**{recipe.name} configured!**\n\n"
-            f"  Credential stored (encrypted)\n"
-            f"  Capabilities: {', '.join(recipe.capabilities_preview)}\n\n"
-            f"Restart the gateway to activate:"
-        ),
-        suggested_actions_event([
-            {"label": "Restart Gateway", "command": "/restart"},
-        ]),
-    ]
 
 
 def _validate_mcp_command(command: str) -> str | None:
@@ -1089,141 +784,6 @@ def _validate_mcp_command(command: str) -> str | None:
         )
 
     return None
-
-
-def _connector_add_custom(app: Any, name: str, command: str) -> str:
-    """Add a custom MCP server."""
-    # Validate command before registration (F-01: prevent command injection)
-    validation_error = _validate_mcp_command(command)
-    if validation_error:
-        return f"**Invalid command:** {validation_error}"
-
-    try:
-        app.connector_registry.register(
-            name, name, "mcp", [],
-            description=f"Custom MCP server: {command}",
-            setup_type="mcp",
-        )
-        # Store the command in connector metadata and trigger config generation
-        app.connector_registry.update_description(name, f"MCP: {command}")
-        from mycelos.chat.events import system_response_event, suggested_actions_event
-        return [
-            system_response_event(
-                f"**Custom connector `{name}` registered.**\n"
-                f"  Command: `{command}`\n\n"
-                f"Restart the gateway to activate:"
-            ),
-            suggested_actions_event([
-                {"label": "Restart Gateway", "command": "/restart"},
-            ]),
-        ]
-    except Exception as e:
-        return f"Failed to add custom connector: {e}"
-
-
-def _connector_remove(app: Any, connector_id: str) -> str:
-    """Remove/deactivate a connector."""
-    existing = app.connector_registry.get(connector_id)
-    if not existing:
-        return f"Connector `{connector_id}` not found."
-
-    try:
-        app.connector_registry.set_status(connector_id, "inactive")
-        return f"Connector `{connector_id}` deactivated. Credentials preserved for reactivation."
-    except Exception as e:
-        return f"Failed to remove connector: {e}"
-
-
-def _connector_test(app: Any, connector_id: str) -> str | list:
-    """Test a connector's connection with a live check."""
-    existing = app.connector_registry.get(connector_id)
-    if not existing:
-        return f"Connector `{connector_id}` not found."
-
-    status = existing.get("status", "unknown")
-
-    # Telegram: check if token exists and bot is reachable
-    if connector_id == "telegram":
-        return _test_telegram(app, connector_id)
-
-    # MCP connectors: check if credential exists
-    cred = None
-    try:
-        cred = app.credentials.get_credential(f"connector:{connector_id}")
-        if not cred:
-            cred = app.credentials.get_credential(connector_id)
-    except Exception:
-        pass
-
-    if cred:
-        return f"Connector `{connector_id}` is **{status}**. Credential stored."
-    else:
-        from mycelos.chat.events import system_response_event, suggested_actions_event
-        return [
-            system_response_event(
-                f"Connector `{connector_id}` is **{status}** but has **no credential stored**.\n"
-                f"It won't work without an API key."
-            ),
-            suggested_actions_event([
-                {"label": f"Add credential", "command": f"/connector add {connector_id} ", "prefill": True},
-            ]),
-        ]
-
-
-def _test_telegram(app: Any, connector_id: str) -> str | list:
-    """Test Telegram bot: check token presence + call getMe via proxy."""
-    from mycelos.chat.events import system_response_event, suggested_actions_event
-    from mycelos.channels.telegram import call_telegram_api
-
-    # Check token is registered (credential list is metadata-only — OK in
-    # two-container mode). We don't need the plaintext here; the proxy
-    # handles the actual API call.
-    has_token = False
-    try:
-        for item in app.credentials.list_credentials(user_id="default"):
-            if (item.get("service") or "").lower() == "telegram":
-                has_token = True
-                break
-    except Exception:
-        pass
-
-    if not has_token:
-        return [
-            system_response_event(
-                "**Telegram Bot is registered but has no token.**\n\n"
-                "You need to:\n"
-                "1. Create a bot via @BotFather in Telegram (send `/newbot`)\n"
-                "2. Copy the token and paste it here"
-            ),
-            suggested_actions_event([
-                {"label": "Paste token", "command": "/connector add telegram ", "prefill": True},
-            ]),
-        ]
-
-    data = call_telegram_api(app, "getMe", http_method="GET", timeout=5)
-    if data.get("ok"):
-        bot = data.get("result", {})
-        bot_name = bot.get("first_name", "Unknown")
-        bot_username = bot.get("username", "?")
-        return (
-            f"**Telegram Bot is working!**\n\n"
-            f"  Bot: {bot_name} (@{bot_username})\n"
-            f"  Token: stored (encrypted)\n\n"
-            f"Restart the stack (`docker compose restart`) to connect — "
-            f"then message your bot in Telegram."
-        )
-    description = data.get("description", "Unknown error")
-    if "401" in description or "Unauthorized" in description.lower():
-        return [
-            system_response_event(
-                "**Telegram token is invalid or expired.**\n\n"
-                "Get a new token from @BotFather and update it:"
-            ),
-            suggested_actions_event([
-                {"label": "Update token", "command": "/connector add telegram ", "prefill": True},
-            ]),
-        ]
-    return f"**Telegram connection test failed:** {description}"
 
 
 # ---------------------------------------------------------------------------

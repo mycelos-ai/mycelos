@@ -67,11 +67,10 @@ SLASH_COMMANDS: dict[str, dict] = {
         },
     },
     "/connector": {
-        "description": "Connector management",
+        "description": "Manage external service connectors",
         "subs": {
-            "list": "Show connectors",
-            "setup": "Set up a connector",
-            "add": "Add a connector",
+            "list": "Show available and active connectors",
+            "search": "Search the MCP registry for community servers",
         },
     },
     "/schedule": {
