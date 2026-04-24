@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-24
 **Status:** Draft
-**Scope:** Spec 1 of 2. A follow-up spec (Capability Hybrid) will add runtime discovery of capabilities for ad-hoc MCP servers.
+**Scope:** Spec 1 of 3. A follow-up spec (`ui.open_page` tool + deep-link catalog) lets the Chat agent route users to admin pages. A further spec (Capability Hybrid) adds runtime discovery of capabilities for ad-hoc MCP servers.
 
 ## Goal
 
@@ -46,6 +46,22 @@ For known recipes (both channel and MCP), capabilities are declared in the recip
 ### D5: No database migration required
 
 Stefan is the only user. Any stray `connector_registry` rows with `kind='service'` are tolerated with a boot-time warning, not migrated. Fresh installs never produce them.
+
+### D6: Connector setup happens only in CLI and Web UI
+
+The Chat-Slash command `/connector` is trimmed to read-only operations. All setup verbs (`add`, `setup`, `remove`, `test`) are removed from the slash handler. Setup happens through one of two paths:
+
+- **Terminal** — `mycelos connector setup <id>` (interactive prompts, OAuth via browser link the CLI prints).
+- **Web UI** — `/connectors` page (full wizard, OAuth redirect, file upload).
+
+Rationale:
+
+- Chat setup duplicates CLI and Web logic without adding a use case — OAuth flows cannot run inside a chat transcript, and `/connector add x --secret <token>` writes raw credentials into conversation history, violating Constitution Rule 4 (Credentials Never Visible).
+- Chat remains useful for discovery (`/connector list`) and status inspection (`/connector test` — see caveat below).
+- A follow-up spec adds a `ui.open_page` tool so the Chat agent can actively route users into the right admin page instead of explaining setup in prose.
+
+**Kept in Chat:** `/connector list`, `/connector help`.
+**Removed from Chat:** `/connector add`, `/connector setup`, `/connector remove`, `/connector test`. `test` moves to CLI only (it already exists there).
 
 ## Architecture
 
@@ -126,6 +142,15 @@ def list_channels() -> list[ChannelRecipe]: ...
 
 - `Kind` enum: keep `channel` and `mcp`. No `service`.
 - On boot: if a row has `kind='service'`, log a warning and render it under "Installed" with badge `unknown (legacy)`. Do not delete.
+
+### `src/mycelos/chat/slash_commands.py` (trimmed)
+
+Remove setup verbs from `/connector`:
+
+- **Keep:** `/connector list`, `/connector help` (or bare `/connector`).
+- **Remove:** `/connector add`, `/connector setup`, `/connector remove`, `/connector test`, `_connector_add_smart`, `_connector_add_with_key`, `_connector_add_custom`, `_connector_add` — entire setup code path in the slash handler.
+- Help text rewritten to point at CLI (`mycelos connector setup <id>`) and Web UI (`/connectors` page) for setup actions.
+- Update the autocomplete registry in `src/mycelos/cli/completer.py` (`SLASH_COMMANDS` dict) to reflect the reduced verb set — per CLAUDE.md "Slash Commands & Autocomplete" rule.
 
 ### Gateway endpoint `/api/connectors/recipes`
 
@@ -214,6 +239,7 @@ Every change ships with tests. The baseline must stay green (zero failing tests 
 
 - `tests/test_connector_setup.py` — delete `CONNECTORS`-based assertions. Test `_setup_mcp` with a real `MCPRecipe` fixture; test `_setup_channel` with the Telegram `ChannelRecipe`. Keep the policy-grant assertion pattern.
 - `tests/test_telegram_channel.py` — replace `CONNECTORS["telegram"]` lookups with `CHANNELS["telegram"]`. Fields on `ChannelRecipe` match what the test asserts.
+- `tests/test_slash_commands.py` (and any test that invokes `/connector add`/`setup`/`test`/`remove`) — delete or rewrite to assert that those verbs now return a "not supported in chat; use CLI / Web UI" message.
 
 ### Tests that should stay green unchanged
 
@@ -228,10 +254,20 @@ Every change ships with tests. The baseline must stay green (zero failing tests 
 3. `mycelos connector setup telegram` and `mycelos connector setup github` both work.
 4. `mycelos connector list` shows three sections: Installed / Channels / MCP Connectors.
 5. Web UI `/connectors` page matches the CLI structure.
-6. Full test baseline passes (zero failures, zero regressions).
-7. `CHANGELOG.md` updated.
+6. `/connector` slash command supports only read-only verbs (`list`, `help`). Setup verbs return a pointer to CLI / Web UI.
+7. Autocomplete (`completer.SLASH_COMMANDS`) reflects the reduced verb set.
+8. Full test baseline passes (zero failures, zero regressions).
+9. `CHANGELOG.md` updated.
 
-## Non-Goals (deferred to Spec 2)
+## Non-Goals (deferred to follow-up specs)
+
+**Deferred to Spec 1.5 (`ui.open_page` tool + deep-link catalog):**
+
+- A Chat-agent tool that renders a clickable "open in admin page" link.
+- System prompt additions that direct the agent to use deep links for all admin tasks.
+- Frontend anchor handling on target pages (`/connectors#gmail`, `/settings/models`, etc.).
+
+**Deferred to Spec 2 (Capability Hybrid):**
 
 - Runtime discovery of capabilities for ad-hoc user-registered MCP servers.
 - `discovered_capabilities` DB column.
