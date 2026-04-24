@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mycelos.app import App
+from mycelos.connectors.mcp_recipes import MCPRecipe
 from mycelos.i18n import t
 
 console = Console()
@@ -551,6 +552,141 @@ def _add_manual_ids(allowed_users: list[int], required: bool = False) -> None:
             console.print("  [red]At least one user ID is required.[/red]")
         else:
             break
+
+
+def _setup_mcp(app: App, recipe: MCPRecipe) -> None:
+    """Set up an MCP-kind recipe — credential prompt, policy grant, registry row."""
+    console.print(f"\n[bold]{t('connector.setup_title', name=recipe.name)}[/bold]")
+    console.print(f"[dim]{recipe.description}[/dim]\n")
+
+    app.connector_registry.register(
+        connector_id=recipe.id,
+        name=recipe.name,
+        connector_type=recipe.kind,
+        capabilities=list(recipe.capabilities_preview),
+        description=recipe.description,
+        setup_type=recipe.setup_flow or ("key" if recipe.credentials else "none"),
+    )
+
+    if not recipe.credentials:
+        console.print(f"[green]{t('connector.no_key_needed')}[/green]")
+        for cap in recipe.capabilities_preview:
+            app.policy_engine.set_policy("default", None, cap, "always")
+        app.audit.log(
+            "connector.setup",
+            details={"connector": recipe.id, "capabilities": list(recipe.capabilities_preview)},
+        )
+        app.config.apply_from_state(
+            state_manager=app.state_manager,
+            description=f"Connector '{recipe.name}' eingerichtet",
+            trigger="connector_setup",
+        )
+        console.print(f"\n[green]{t('connector.ready', name=recipe.name)}[/green]")
+        return
+
+    # OAuth recipes can't run in the terminal — OAuth needs a browser redirect.
+    if recipe.setup_flow == "oauth_http":
+        console.print(
+            f"[yellow]{recipe.name} uses OAuth. Open the Connectors page "
+            f"in the web UI and click Setup.[/yellow]"
+        )
+        return
+
+    cred = recipe.credentials[0]
+    help_text = cred.get("help", "")
+    if help_text:
+        console.print(f"[yellow]{help_text}[/yellow]\n")
+
+    existing = app.credentials.get_credential(recipe.id)
+    if existing:
+        console.print(f"[green]{t('connector.already_configured')}[/green]")
+        if not click.confirm(t("connector.reconfigure"), default=False):
+            return
+
+    api_key = click.prompt(f"Enter your {cred['name']}", hide_input=True)
+
+    app.credentials.store_credential(
+        recipe.id,
+        {
+            "api_key": api_key,
+            "env_var": cred["env_var"],
+            "connector": recipe.id,
+        },
+    )
+
+    for cap in recipe.capabilities_preview:
+        app.policy_engine.set_policy("default", None, cap, "always")
+
+    app.audit.log(
+        "connector.setup",
+        details={"connector": recipe.id, "capabilities": list(recipe.capabilities_preview)},
+    )
+
+    console.print(f"\n[green]{t('connector.configured', name=recipe.name)}[/green]")
+    console.print(f"[dim]{t('connector.key_encrypted')}[/dim]")
+
+    app.config.apply_from_state(
+        state_manager=app.state_manager,
+        description=f"Connector '{recipe.name}' eingerichtet",
+        trigger="connector_setup",
+    )
+
+    if click.confirm(f"\n{t('connector.test_prompt')}", default=True):
+        _test_connector_by_recipe(app, recipe, api_key)
+
+
+def _test_connector_by_recipe(app: App, recipe: MCPRecipe, api_key: str) -> None:
+    """Lightweight connectivity test dispatched by recipe.id."""
+    if recipe.id == "brave-search":
+        _test_brave(api_key)
+    elif recipe.id == "github":
+        _test_github(api_key)
+    else:
+        console.print(
+            f"[yellow]No quick test available for '{recipe.id}'. "
+            f"Connector registered.[/yellow]"
+        )
+
+
+def _test_brave(api_key: str) -> None:
+    import httpx
+    try:
+        resp = httpx.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": "hello world", "count": 1},
+            headers={"X-Subscription-Token": api_key, "Accept": "application/json"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            console.print(f"[green]{t('connector.success')}[/green] {t('connector.api_responded')}")
+        elif resp.status_code == 401:
+            console.print(f"[red]{t('connector.api_key_invalid')}[/red]")
+        else:
+            console.print(f"[yellow]{t('connector.api_status', status=resp.status_code)}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
+
+
+def _test_github(api_key: str) -> None:
+    import httpx
+    try:
+        resp = httpx.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/vnd.github+json"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            console.print(
+                f"[green]{t('connector.success')}[/green] "
+                f"Authenticated as [bold]{data.get('login', '?')}[/bold]"
+            )
+        elif resp.status_code == 401:
+            console.print("[red]Token invalid or expired.[/red]")
+        else:
+            console.print(f"[yellow]GitHub returned status {resp.status_code}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
 
 
 def _setup_telegram_connector(app: App, key: str, info: dict[str, Any]) -> None:
