@@ -235,6 +235,8 @@ connector:
   test_prompt: "Test the connector now?"
   not_initialized: "Mycelos not initialized. Run mycelos init first."
   not_initialized_short: "Mycelos not initialized."
+  unknown_id: "Unknown connector: {name}"
+  see_list: "Run mycelos connector list to see available connectors."
   unknown: "Unknown connector: {name}"
   available: "Available: {names}"
   available_title: "Available Connectors:"

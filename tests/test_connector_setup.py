@@ -100,7 +100,7 @@ def test_setup_mcp_registers_in_connector_registry(tmp_data_dir: Path) -> None:
 # ── setup_cmd routing ───────────────────────────────────────────
 
 def test_setup_cmd_routes_mcp_recipe(tmp_data_dir: Path) -> None:
-    """`connector setup fetch` routes to _setup_mcp (no credential, auto-configures)."""
+    """`connector setup fetch` routes to _setup_mcp (registers recipe in the registry)."""
     from mycelos.app import App
 
     os.environ["MYCELOS_MASTER_KEY"] = "test-key-route-mcp"
@@ -112,6 +112,13 @@ def test_setup_cmd_routes_mcp_recipe(tmp_data_dir: Path) -> None:
             ["setup", "fetch", "--data-dir", str(tmp_data_dir)],
         )
         assert result.exit_code == 0, result.output
+
+        # Re-open the app and verify the MCP path wrote a registry row
+        # (_setup_channel would not have, since fetch is kind="mcp").
+        app = App(tmp_data_dir)
+        row = app.connector_registry.get("fetch")
+        assert row is not None, "fetch was not registered — MCP path did not run"
+        assert row["connector_type"] == "mcp"
     finally:
         os.environ.pop("MYCELOS_MASTER_KEY", None)
 

@@ -60,8 +60,8 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
         recipe = get_recipe(connector_name)
         if recipe is None:
             console.print(
-                f"[red]Unknown connector: {connector_name}[/red]\n"
-                f"Run [bold]mycelos connector list[/bold] to see available connectors."
+                f"[red]{t('connector.unknown_id', name=connector_name)}[/red]\n"
+                f"{t('connector.see_list')}"
             )
             raise SystemExit(1)
         if recipe.kind == "channel":
@@ -171,7 +171,6 @@ def _show_connector_menu(app: App) -> None:
 
     console.print(f"\n[bold]{t('connector.available_title')}[/bold]\n")
 
-    configured_services = app.credentials.list_services()
     entries: list[MCPRecipe] = sorted(
         RECIPES.values(),
         key=lambda r: (0 if r.kind == "channel" else 1, r.category, r.id),
@@ -188,7 +187,7 @@ def _show_connector_menu(app: App) -> None:
             last_kind = recipe.kind
         numbered.append(recipe)
         idx = len(numbered)
-        if recipe.id in configured_ids or recipe.id in configured_services:
+        if recipe.id in configured_ids:
             status = "[green](configured)[/green]"
         elif not recipe.credentials:
             status = "[green](ready, no key needed)[/green]"
