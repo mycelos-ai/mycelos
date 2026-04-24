@@ -13,7 +13,7 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class MCPRecipe:
-    """A predefined MCP connector recipe."""
+    """A predefined connector recipe (MCP server or chat channel, see `kind`)."""
 
     id: str                          # "github", "brave-search", "filesystem"
     name: str                        # "GitHub"
