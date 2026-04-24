@@ -1649,6 +1649,51 @@ def setup_routes(api: FastAPI) -> None:
 
     # ── Connectors ────────────────────────────────────────────
 
+    def _recipe_payload(recipe) -> dict[str, Any]:
+        """Serialize a recipe for the HTTP API (without the resolved setup guide).
+
+        The single-recipe endpoint extends this with `setup_guide` resolved
+        via `get_setup_guide(oauth_setup_guide_id)`; the list endpoint
+        returns just the metadata.
+        """
+        return {
+            "id": recipe.id,
+            "name": recipe.name,
+            "description": recipe.description,
+            "kind": recipe.kind,
+            "command": recipe.command,
+            "transport": recipe.transport,
+            "category": recipe.category,
+            "credentials": list(recipe.credentials),
+            "capabilities_preview": list(recipe.capabilities_preview),
+            "setup_flow": recipe.setup_flow,
+            "oauth_setup_guide_id": recipe.oauth_setup_guide_id,
+            "oauth_client_credential_service": recipe.oauth_client_credential_service,
+            "oauth_token_credential_service": recipe.oauth_token_credential_service,
+            "http_endpoint": recipe.http_endpoint,
+            "requires_node": recipe.requires_node,
+        }
+
+    @api.get("/api/connectors/recipes")
+    async def list_recipes_grouped() -> dict[str, list[dict[str, Any]]]:
+        """List all connector recipes grouped by `kind`.
+
+        Returns `{"channels": [...], "mcp": [...]}`. The frontend uses
+        this split to render chat channels (Telegram, Slack, ...) and
+        MCP connectors (GitHub, Gmail, ...) as separate sections.
+        """
+        from mycelos.connectors.mcp_recipes import RECIPES
+
+        channels: list[dict[str, Any]] = []
+        mcp: list[dict[str, Any]] = []
+        for recipe in RECIPES.values():
+            payload = _recipe_payload(recipe)
+            if recipe.kind == "channel":
+                channels.append(payload)
+            else:
+                mcp.append(payload)
+        return {"channels": channels, "mcp": mcp}
+
     @api.get("/api/connectors/recipes/{recipe_id}")
     async def get_recipe(recipe_id: str) -> dict[str, Any]:
         """Recipe metadata + resolved setup guide in one roundtrip.
@@ -1669,23 +1714,7 @@ def setup_routes(api: FastAPI) -> None:
             if recipe.oauth_setup_guide_id
             else None
         )
-        return {
-            "id": recipe.id,
-            "name": recipe.name,
-            "description": recipe.description,
-            "command": recipe.command,
-            "transport": recipe.transport,
-            "category": recipe.category,
-            "credentials": recipe.credentials,
-            "capabilities_preview": recipe.capabilities_preview,
-            "setup_flow": recipe.setup_flow,
-            "oauth_setup_guide_id": recipe.oauth_setup_guide_id,
-            "setup_guide": guide,
-            "oauth_client_credential_service": recipe.oauth_client_credential_service,
-            "oauth_token_credential_service": recipe.oauth_token_credential_service,
-            "http_endpoint": recipe.http_endpoint,
-            "requires_node": recipe.requires_node,
-        }
+        return {**_recipe_payload(recipe), "setup_guide": guide}
 
     @api.post("/api/connectors/oauth/start")
     async def oauth_start_passthrough(
