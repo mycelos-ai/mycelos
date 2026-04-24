@@ -23,64 +23,6 @@ from mycelos.i18n import t
 
 console = Console()
 
-# Available connectors with their configuration requirements
-CONNECTORS: dict[str, dict[str, Any]] = {
-    "web-search-duckduckgo": {
-        "name": "Web Search (DuckDuckGo)",
-        "description": "Search the web -- no API key needed",
-        "requires_key": False,
-        "capabilities": ["search.web", "search.news"],
-        "category": "search",
-    },
-    "web-search-brave": {
-        "name": "Web Search (Brave)",
-        "description": "Search the web via Brave Search API",
-        "requires_key": True,
-        "env_var": "BRAVE_API_KEY",
-        "key_help": (
-            "Get a free API key at https://brave.com/search/api/ "
-            "(2000 queries/month free)"
-        ),
-        "capabilities": ["search.web", "search.news"],
-        "category": "search",
-    },
-    "http": {
-        "name": "HTTP / Web Access",
-        "description": "Fetch web pages and call APIs",
-        "requires_key": False,
-        "capabilities": ["http.get", "http.post"],
-        "category": "web",
-    },
-    "telegram": {
-        "name": "Telegram Bot",
-        "description": "Chat with Mycelos via Telegram",
-        "requires_key": True,
-        "env_var": "TELEGRAM_BOT_TOKEN",
-        "key_help": (
-            "Create a bot at @BotFather in Telegram:\n"
-            "  1. Open Telegram and message @BotFather\n"
-            "  2. Send /newbot and follow the instructions\n"
-            "  3. Copy the bot token (looks like: 123456:ABC-DEF...)"
-        ),
-        "capabilities": [],
-        "category": "channel",
-        "setup_type": "telegram",
-    },
-    "github": {
-        "name": "GitHub",
-        "description": "Access repositories, issues, and pull requests via MCP",
-        "requires_key": True,
-        "env_var": "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "key_help": (
-            "Create a Personal Access Token at https://github.com/settings/tokens\n"
-            "  Recommended scopes: repo, issues, pull_requests"
-        ),
-        "capabilities": ["github.read", "github.write"],
-        "category": "code",
-    },
-}
-
-
 @click.group()
 def connector_cmd() -> None:
     """Manage external service connectors."""
@@ -106,7 +48,6 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
         )
         raise SystemExit(1)
 
-    # Load master key from file if not already set
     if not os.environ.get("MYCELOS_MASTER_KEY"):
         key_file = data_dir / ".master_key"
         if key_file.exists():
@@ -115,14 +56,19 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
     app = App(data_dir)
 
     if connector_name:
-        # Direct setup for named connector
-        if connector_name not in CONNECTORS:
-            console.print(f"[red]{t('connector.unknown', name=connector_name)}[/red]")
-            console.print(t("connector.available", names=', '.join(CONNECTORS.keys())))
+        from mycelos.connectors.mcp_recipes import get_recipe
+        recipe = get_recipe(connector_name)
+        if recipe is None:
+            console.print(
+                f"[red]Unknown connector: {connector_name}[/red]\n"
+                f"Run [bold]mycelos connector list[/bold] to see available connectors."
+            )
             raise SystemExit(1)
-        _setup_connector(app, connector_name, CONNECTORS[connector_name])
+        if recipe.kind == "channel":
+            _setup_channel(app, recipe)
+        else:
+            _setup_mcp(app, recipe)
     else:
-        # Interactive selection
         _show_connector_menu(app)
 
 
@@ -220,235 +166,56 @@ def list_cmd(data_dir: Path) -> None:
 
 
 def _show_connector_menu(app: App) -> None:
-    """Show interactive connector selection menu."""
+    """Show interactive connector selection menu grouped by kind."""
+    from mycelos.connectors.mcp_recipes import RECIPES
+
     console.print(f"\n[bold]{t('connector.available_title')}[/bold]\n")
 
-    available: list[tuple[str, dict[str, Any]]] = []
-    configured = app.credentials.list_services()
+    configured_services = app.credentials.list_services()
+    entries: list[MCPRecipe] = sorted(
+        RECIPES.values(),
+        key=lambda r: (0 if r.kind == "channel" else 1, r.category, r.id),
+    )
 
-    for i, (key, info) in enumerate(CONNECTORS.items(), 1):
-        if info.get("coming_soon"):
-            status = "[dim](coming soon)[/dim]"
-        elif not info["requires_key"]:
-            status = "[green](ready, no key needed)[/green]"
-        elif f"connector:{key}" in configured:
+    configured_ids = {c["id"] for c in app.connector_registry.list_connectors()}
+
+    last_kind: str | None = None
+    numbered: list[MCPRecipe] = []
+    for recipe in entries:
+        if recipe.kind != last_kind:
+            header = "Channels" if recipe.kind == "channel" else "MCP Connectors"
+            console.print(f"\n[bold cyan]{header}[/bold cyan]")
+            last_kind = recipe.kind
+        numbered.append(recipe)
+        idx = len(numbered)
+        if recipe.id in configured_ids or recipe.id in configured_services:
             status = "[green](configured)[/green]"
+        elif not recipe.credentials:
+            status = "[green](ready, no key needed)[/green]"
         else:
             status = "[yellow](not configured)[/yellow]"
-
-        console.print(f"  ({i}) {info['name']}  {status}")
-        console.print(f"      [dim]{info['description']}[/dim]")
-        available.append((key, info))
+        console.print(f"  ({idx}) {recipe.name}  {status}")
+        console.print(f"      [dim]{recipe.description}[/dim]")
 
     console.print()
     choice = click.prompt(
         "Which connector to set up? (number or 'q' to quit)",
         default="q",
     )
-
     if choice.lower() == "q":
         return
-
     try:
         idx = int(choice) - 1
-        if 0 <= idx < len(available):
-            key, info = available[idx]
-            if info.get("coming_soon"):
-                console.print(f"\n[yellow]{t('connector.coming_soon', name=info['name'])}[/yellow]")
-                return
-            _setup_connector(app, key, info)
+        if 0 <= idx < len(numbered):
+            recipe = numbered[idx]
+            if recipe.kind == "channel":
+                _setup_channel(app, recipe)
+            else:
+                _setup_mcp(app, recipe)
         else:
             console.print(f"[red]{t('connector.invalid_selection')}[/red]")
     except ValueError:
         console.print(f"[red]{t('connector.invalid_input')}[/red]")
-
-
-def _setup_connector(app: App, key: str, info: dict[str, Any]) -> None:
-    """Set up a specific connector."""
-    if info.get("setup_type") == "telegram":
-        _setup_telegram_connector(app, key, info)
-        return
-
-    console.print(f"\n[bold]{t('connector.setup_title', name=info['name'])}[/bold]")
-    console.print(f"[dim]{info['description']}[/dim]\n")
-
-    # Register connector in DB
-    app.connector_registry.register(
-        connector_id=key,
-        name=info["name"],
-        connector_type=info["category"],
-        capabilities=info["capabilities"],
-        description=info.get("description"),
-        setup_type="key" if info["requires_key"] else info.get("setup_type", "none"),
-    )
-
-    if not info["requires_key"]:
-        console.print(
-            f"[green]{t('connector.no_key_needed')}[/green]"
-        )
-        # Set policy for capabilities
-        for cap in info["capabilities"]:
-            app.policy_engine.set_policy("default", None, cap, "always")
-        app.audit.log(
-            "connector.setup",
-            details={"connector": key, "capabilities": info["capabilities"]},
-        )
-        console.print(t("connector.capabilities_enabled", caps=', '.join(info['capabilities'])))
-
-        # Create new config generation
-        app.config.apply_from_state(
-            state_manager=app.state_manager,
-            description=f"Connector '{info['name']}' eingerichtet",
-            trigger="connector_setup",
-        )
-
-        console.print(f"\n[green]{t('connector.ready', name=info['name'])}[/green]")
-        return
-
-    # Connector needs an API key
-    console.print(
-        f"[yellow]{info.get('key_help', t('connector.key_help'))}[/yellow]\n"
-    )
-
-    # Check if already configured — MCP connector credentials live under
-    # the bare connector id now; we still check the legacy prefixed key
-    # so configs stored before the migration are detected.
-    service_name = key
-    existing = (
-        app.credentials.get_credential(service_name)
-        or app.credentials.get_credential(f"connector:{key}")
-    )
-    if existing:
-        console.print(f"[green]{t('connector.already_configured')}[/green]")
-        if not click.confirm(t("connector.reconfigure"), default=False):
-            return
-
-    # Ask for API key
-    api_key = click.prompt(
-        f"Enter your {info['name']} API key", hide_input=True
-    )
-
-    # Store encrypted
-    app.credentials.store_credential(
-        service_name,
-        {
-            "api_key": api_key,
-            "env_var": info.get("env_var", ""),
-            "connector": key,
-        },
-    )
-
-    # Set policy for capabilities
-    for cap in info["capabilities"]:
-        app.policy_engine.set_policy("default", None, cap, "always")
-
-    app.audit.log(
-        "connector.setup",
-        details={"connector": key, "capabilities": info["capabilities"]},
-    )
-
-    console.print(f"\n[green]{t('connector.configured', name=info['name'])}[/green]")
-    console.print(f"[dim]{t('connector.key_encrypted')}[/dim]")
-    console.print(t("connector.capabilities_enabled", caps=', '.join(info['capabilities'])))
-
-    # Create new config generation
-    app.config.apply_from_state(
-        state_manager=app.state_manager,
-        description=f"Connector '{info['name']}' eingerichtet",
-        trigger="connector_setup",
-    )
-
-    # Test the connector
-    if click.confirm(f"\n{t('connector.test_prompt')}", default=True):
-        _test_connector(app, key, info, api_key)
-
-
-def _test_connector(
-    app: App, key: str, info: dict[str, Any], api_key: str
-) -> None:
-    """Run a quick test of the connector."""
-    console.print(f"\n[dim]{t('connector.testing')}[/dim]")
-
-    if key == "web-search-brave":
-        try:
-            import httpx
-
-            resp = httpx.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": "hello world", "count": 1},
-                headers={
-                    "X-Subscription-Token": api_key,
-                    "Accept": "application/json",
-                },
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("web", {}).get("results", [])
-                if results:
-                    console.print(
-                        f"[green]{t('connector.success')}[/green] {t('connector.found', result=results[0].get('title', 'result'))}"
-                    )
-                else:
-                    console.print(f"[green]{t('connector.success')}[/green] {t('connector.api_responded')}")
-            elif resp.status_code == 401:
-                console.print(f"[red]{t('connector.api_key_invalid')}[/red] {t('connector.brave_key_check')}")
-            else:
-                console.print(f"[yellow]{t('connector.api_status', status=resp.status_code)}[/yellow]")
-        except Exception as e:
-            console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
-
-    elif key == "web-search-duckduckgo":
-        try:
-            from duckduckgo_search import DDGS
-
-            with DDGS() as ddgs:
-                results = list(ddgs.text("hello world", max_results=1))
-            if results:
-                console.print(
-                    f"[green]{t('connector.success')}[/green] {t('connector.found', result=results[0].get('title', 'result'))}"
-                )
-            else:
-                console.print(f"[green]{t('connector.success')}[/green] {t('connector.search_works')}")
-        except Exception as e:
-            console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
-
-    elif key == "http":
-        try:
-            import httpx
-
-            resp = httpx.get("https://example.com", timeout=10)
-            console.print(f"[green]{t('connector.success')}[/green] {t('connector.http_status', status=resp.status_code)}")
-        except Exception as e:
-            console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
-
-    elif key == "github":
-        try:
-            import httpx
-
-            resp = httpx.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/vnd.github+json",
-                },
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                console.print(
-                    f"[green]{t('connector.success')}[/green] "
-                    f"Authenticated as [bold]{data.get('login', '?')}[/bold]"
-                )
-            elif resp.status_code == 401:
-                console.print(f"[red]Token invalid or expired. Check your token at github.com/settings/tokens[/red]")
-            else:
-                console.print(f"[yellow]GitHub API returned status {resp.status_code}[/yellow]")
-        except Exception as e:
-            console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
-
-    else:
-        console.print(f"[yellow]No test available for '{key}'. Connector registered.[/yellow]")
 
 
 def _collect_telegram_allowlist(token: str) -> list[int]:
