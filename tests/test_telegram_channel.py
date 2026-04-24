@@ -160,13 +160,17 @@ def test_setup_with_webhook_secret():
 
 # --- Connector CLI entry ---
 
-def test_telegram_in_connector_dict():
-    """Telegram should be in the CONNECTORS dict."""
-    from mycelos.cli.connector_cmd import CONNECTORS
-    assert "telegram" in CONNECTORS
-    assert CONNECTORS["telegram"]["category"] == "channel"
-    assert CONNECTORS["telegram"]["requires_key"] is True
-    assert CONNECTORS["telegram"]["setup_type"] == "telegram"
+def test_telegram_recipe_schema() -> None:
+    """Telegram recipe has the right shape for channel setup."""
+    from mycelos.connectors.mcp_recipes import get_recipe
+
+    recipe = get_recipe("telegram")
+    assert recipe is not None
+    assert recipe.kind == "channel"
+    assert recipe.credentials, "telegram recipe must declare a credential"
+    cred = recipe.credentials[0]
+    assert cred["env_var"] == "TELEGRAM_BOT_TOKEN"
+    assert cred.get("help")
 
 
 # --- Webhook registration ---

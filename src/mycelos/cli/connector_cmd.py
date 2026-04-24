@@ -690,6 +690,22 @@ def _test_github(api_key: str) -> None:
         console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
 
 
+def _setup_channel(app: App, recipe: MCPRecipe) -> None:
+    """Set up a channel-kind recipe. Today only Telegram; other channels
+    plug in here by branching on recipe.id."""
+    if recipe.id == "telegram":
+        # Wrap the legacy dict-shape that _setup_telegram_connector expects.
+        info = {
+            "name": recipe.name,
+            "description": recipe.description,
+            "key_help": recipe.credentials[0]["help"] if recipe.credentials else "",
+        }
+        _setup_telegram_connector(app, recipe.id, info)
+        return
+    console.print(f"[red]No channel setup handler for '{recipe.id}'.[/red]")
+    raise SystemExit(1)
+
+
 def _setup_telegram_connector(app: App, key: str, info: dict[str, Any]) -> None:
     """Set up Telegram bot — token, allowlist, mode. Writes to channels table (NixOS State)."""
     import json as _json
