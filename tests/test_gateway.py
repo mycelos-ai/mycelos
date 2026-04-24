@@ -426,6 +426,103 @@ def test_connector_tools_panel_returns_tools(client: TestClient):
     assert body["operational_state"] in {"ready", "healthy", "failing", "setup_incomplete"}
 
 
+def test_connector_tools_panel_includes_input_schema(client: TestClient):
+    """The tools-panel endpoint must surface the JSON schema so the
+    CLI's `mycelos connector call` can prompt for the right fields."""
+    from unittest.mock import MagicMock
+    app = client.app.state.mycelos
+    app.connector_registry.register("gh", "GitHub", "mcp", [])
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "limit": {"type": "integer", "default": 10},
+        },
+        "required": ["query"],
+    }
+    fake_mcp = MagicMock()
+    fake_mcp.list_tools.return_value = [
+        {"name": "gh.search", "description": "Search", "input_schema": schema},
+    ]
+    app._mcp_manager = fake_mcp
+
+    resp = client.get("/api/connectors/gh/tools")
+    assert resp.status_code == 200
+    tool = resp.json()["tools"][0]
+    assert tool["input_schema"] == schema
+
+
+def test_connector_tool_call_invokes_mcp_manager(client: TestClient):
+    """POST /api/connectors/{id}/tools/{tool}/call dispatches the call
+    to mcp_manager.call_tool with the prefixed full name and returns
+    the MCP result in {result: ...} shape."""
+    from unittest.mock import MagicMock
+    app = client.app.state.mycelos
+    app.connector_registry.register("gh", "GitHub", "mcp", [])
+
+    fake_mcp = MagicMock()
+    fake_mcp.call_tool.return_value = {
+        "content": [{"type": "text", "text": "issue #42 opened"}],
+    }
+    app._mcp_manager = fake_mcp
+
+    resp = client.post(
+        "/api/connectors/gh/tools/create_issue/call",
+        json={"arguments": {"title": "bug", "body": "boom"}},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["connector"] == "gh"
+    assert body["tool"] == "create_issue"
+    assert body["result"]["content"][0]["text"] == "issue #42 opened"
+
+    # Manager was called with the full prefixed name.
+    fake_mcp.call_tool.assert_called_once_with(
+        "gh.create_issue", {"title": "bug", "body": "boom"}
+    )
+
+
+def test_connector_tool_call_unknown_connector_404(client: TestClient):
+    resp = client.post(
+        "/api/connectors/no-such/tools/foo/call",
+        json={"arguments": {}},
+    )
+    assert resp.status_code == 404
+
+
+def test_connector_tool_call_propagates_mcp_error_as_502(client: TestClient):
+    """If mcp_manager.call_tool returns {error: ...}, surface as 502
+    so the CLI sees a non-2xx and prints the error."""
+    from unittest.mock import MagicMock
+    app = client.app.state.mycelos
+    app.connector_registry.register("gh", "GitHub", "mcp", [])
+
+    fake_mcp = MagicMock()
+    fake_mcp.call_tool.return_value = {"error": "credential missing"}
+    app._mcp_manager = fake_mcp
+
+    resp = client.post(
+        "/api/connectors/gh/tools/list/call",
+        json={"arguments": {}},
+    )
+    assert resp.status_code == 502
+    assert "credential missing" in resp.json()["error"]
+
+
+def test_connector_tool_call_rejects_non_object_arguments(client: TestClient):
+    from unittest.mock import MagicMock
+    app = client.app.state.mycelos
+    app.connector_registry.register("gh", "GitHub", "mcp", [])
+    app._mcp_manager = MagicMock()
+
+    resp = client.post(
+        "/api/connectors/gh/tools/foo/call",
+        json={"arguments": "not an object"},
+    )
+    assert resp.status_code == 400
+
+
 def test_credential_add_returns_200(client: TestClient):
     """POST /api/credentials should accept valid credential (not 422)."""
     resp = client.post("/api/credentials", json={

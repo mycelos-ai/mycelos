@@ -620,3 +620,237 @@ def _test_telegram_bot(token: str) -> None:
         console.print(f"[red]Connection failed: {e}[/red]")
 
 
+
+# ---------------------------------------------------------------------------
+# `mycelos connector tools <id>` and `mycelos connector call <id> [tool]`
+# ---------------------------------------------------------------------------
+
+def _gateway_url() -> str:
+    from mycelos.cli.serve_cmd import DEFAULT_PORT
+    return f"http://localhost:{DEFAULT_PORT}"
+
+
+def _fetch_connector_tools(connector_id: str) -> list[dict]:
+    """GET /api/connectors/<id>/tools or raise with a friendly message.
+
+    Talks to the running gateway — needs `mycelos serve` to be up.
+    Centralized so both `tools` and `call` share error handling.
+    """
+    import httpx
+    try:
+        resp = httpx.get(f"{_gateway_url()}/api/connectors/{connector_id}/tools", timeout=10)
+    except httpx.ConnectError as e:
+        raise click.ClickException(
+            f"Cannot reach the gateway at {_gateway_url()}. "
+            "Start it with `mycelos serve` first."
+        ) from e
+    if resp.status_code == 404:
+        raise click.ClickException(f"Unknown connector '{connector_id}'.")
+    if resp.status_code >= 400:
+        raise click.ClickException(f"Gateway returned {resp.status_code}: {resp.text}")
+    body = resp.json()
+    return body.get("tools") or []
+
+
+@connector_cmd.command("tools")
+@click.argument("connector_id")
+def tools_cmd(connector_id: str) -> None:
+    """List the MCP tools exposed by one connector.
+
+    Example:
+        mycelos connector tools gmail
+    """
+    tools = _fetch_connector_tools(connector_id)
+    if not tools:
+        console.print(
+            f"[yellow]Connector '{connector_id}' has no tools registered. "
+            "Either the MCP session isn't running, or this connector type "
+            "doesn't expose MCP tools (e.g. http, search built-ins).[/yellow]"
+        )
+        return
+
+    table = Table(title=f"Tools for '{connector_id}'")
+    table.add_column("Tool", style="bold")
+    table.add_column("Required args")
+    table.add_column("Description", overflow="fold")
+    table.add_column("Policy", style="dim")
+
+    for tool in tools:
+        schema = tool.get("input_schema") or {}
+        required = schema.get("required") or []
+        req_str = ", ".join(required) if required else "[dim]—[/dim]"
+        policy = tool.get("policy") or "default"
+        if tool.get("blocked"):
+            policy = f"[red]{policy} (blocked)[/red]"
+        table.add_row(
+            tool["name"],
+            req_str,
+            (tool.get("description") or "").strip().splitlines()[0] if tool.get("description") else "",
+            policy,
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[dim]Use [/dim][bold]mycelos connector call {connector_id} <tool>[/bold]"
+        f"[dim] to invoke one interactively.[/dim]"
+    )
+
+
+def _prompt_for_arguments(input_schema: dict) -> dict:
+    """Walk the JSON schema's `properties` and ask the user for each.
+
+    Required fields are mandatory; optional ones can be skipped with
+    Enter. Numeric / boolean / array types get parsed best-effort.
+    """
+    properties = input_schema.get("properties") or {}
+    required = set(input_schema.get("required") or [])
+    if not properties:
+        return {}
+
+    args: dict = {}
+    console.print("[dim]Press Enter to skip optional arguments.[/dim]")
+    for prop_name, prop_def in properties.items():
+        is_required = prop_name in required
+        prop_type = prop_def.get("type", "string")
+        desc = (prop_def.get("description") or "").strip().splitlines()[0]
+        default = prop_def.get("default")
+        label_bits = [prop_name]
+        if is_required:
+            label_bits.append("[bold red]*[/bold red]")
+        label_bits.append(f"[dim]({prop_type})[/dim]")
+        if desc:
+            label_bits.append(f"[dim]— {desc[:80]}[/dim]")
+        prompt_label = " ".join(label_bits)
+        # click.prompt doesn't render Rich markup; use console first.
+        console.print(prompt_label)
+        raw = click.prompt(
+            "  >",
+            default="" if not is_required else (str(default) if default is not None else None),
+            show_default=False,
+        )
+        raw = (raw or "").strip()
+        if not raw and not is_required:
+            continue
+        # Type coercion (best-effort). json.JSONDecodeError is a
+        # subclass of ValueError, so a single ValueError catch covers
+        # both bad ints/floats and malformed JSON for array/object.
+        try:
+            if prop_type == "integer":
+                args[prop_name] = int(raw)
+            elif prop_type == "number":
+                args[prop_name] = float(raw)
+            elif prop_type == "boolean":
+                args[prop_name] = raw.lower() in ("true", "1", "yes", "y", "ja", "j")
+            elif prop_type in ("array", "object"):
+                import json as _json
+                args[prop_name] = _json.loads(raw)
+            else:
+                args[prop_name] = raw
+        except ValueError:
+            console.print(
+                f"[yellow]Could not parse {prop_name} as {prop_type}; "
+                "sending as string.[/yellow]"
+            )
+            args[prop_name] = raw
+    return args
+
+
+@connector_cmd.command("call")
+@click.argument("connector_id")
+@click.argument("tool_name", required=False)
+@click.option(
+    "--json",
+    "json_args",
+    default=None,
+    help="JSON-encoded arguments object. Skips interactive prompts.",
+)
+def call_cmd(connector_id: str, tool_name: str | None, json_args: str | None) -> None:
+    """Invoke one MCP tool on a connector.
+
+    \b
+    Examples:
+        mycelos connector call gmail                                    # pick tool interactively
+        mycelos connector call gmail list_labels                        # prompts for args
+        mycelos connector call gmail search_threads --json '{"query":"is:unread","pageSize":3}'
+
+    Needs `mycelos serve` to be running.
+    """
+    import httpx
+    import json as _json
+
+    tools = _fetch_connector_tools(connector_id)
+    if not tools:
+        raise click.ClickException(
+            f"Connector '{connector_id}' has no tools available — "
+            "is the MCP session running? Try `mycelos connector tools {cid}`."
+        )
+
+    # Resolve which tool.
+    by_name = {t["name"]: t for t in tools}
+    if tool_name is None:
+        # Interactive picker.
+        console.print(f"\n[bold]Select a tool from '{connector_id}':[/bold]\n")
+        for idx, t in enumerate(tools, start=1):
+            desc = (t.get("description") or "").strip().splitlines()[0]
+            console.print(f"  [bold cyan]{idx:>2}[/bold cyan]  {t['name']}  [dim]— {desc[:80]}[/dim]")
+        choice = click.prompt(
+            "\nPick a number",
+            type=click.IntRange(1, len(tools)),
+        )
+        tool = tools[choice - 1]
+        tool_name = tool["name"]
+    else:
+        if tool_name not in by_name:
+            raise click.ClickException(
+                f"Tool '{tool_name}' not found on '{connector_id}'. "
+                f"Available: {', '.join(by_name) or '(none)'}"
+            )
+        tool = by_name[tool_name]
+
+    # Resolve arguments.
+    if json_args is not None:
+        try:
+            arguments = _json.loads(json_args)
+        except _json.JSONDecodeError as e:
+            raise click.ClickException(f"--json is not valid JSON: {e}") from e
+        if not isinstance(arguments, dict):
+            raise click.ClickException("--json must be an object")
+    else:
+        console.print(f"\n[bold]Arguments for {tool_name}:[/bold]")
+        arguments = _prompt_for_arguments(tool.get("input_schema") or {})
+
+    # Call.
+    console.print(
+        f"\n[dim]→ Calling[/dim] [bold]{connector_id}.{tool_name}[/bold]"
+        f"[dim]({_json.dumps(arguments)})[/dim]"
+    )
+    try:
+        resp = httpx.post(
+            f"{_gateway_url()}/api/connectors/{connector_id}/tools/{tool_name}/call",
+            json={"arguments": arguments},
+            timeout=120,
+        )
+    except httpx.ConnectError as e:
+        raise click.ClickException(
+            f"Cannot reach the gateway at {_gateway_url()}. "
+            "Start it with `mycelos serve` first."
+        ) from e
+
+    if resp.status_code >= 400:
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        msg = body.get("error") or body.get("detail") or resp.text
+        console.print(f"[red]✗ Call failed ({resp.status_code}):[/red] {msg}")
+        raise SystemExit(1)
+
+    body = resp.json()
+    result = body.get("result")
+    console.print("[green]✓ OK[/green]\n")
+    # Pretty-print result. MCP tools usually return {content: [{type, text}, ...]}
+    if isinstance(result, dict) and "content" in result and isinstance(result["content"], list):
+        for block in result["content"]:
+            if isinstance(block, dict) and block.get("type") == "text":
+                console.print(block.get("text", ""))
+            else:
+                console.print_json(_json.dumps(block, default=str))
+    else:
+        console.print_json(_json.dumps(result, default=str))

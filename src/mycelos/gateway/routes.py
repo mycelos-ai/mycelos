@@ -2062,6 +2062,7 @@ def setup_routes(api: FastAPI) -> None:
                 "name": t["name"][len(prefix):],
                 "full_name": t["name"],
                 "description": t.get("description", ""),
+                "input_schema": t.get("input_schema") or {},
                 "policy": decision or "default",
                 "blocked": blocked,
             })
@@ -2074,6 +2075,43 @@ def setup_routes(api: FastAPI) -> None:
             "last_error_at": existing.get("last_error_at"),
             "tools": tools_out,
         }
+
+    @api.post("/api/connectors/{connector_id}/tools/{tool_name}/call")
+    async def connector_tool_call(
+        request: Request,
+        connector_id: str,
+        tool_name: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Invoke one MCP tool on a connector. Powers `mycelos
+        connector call` and any future UI 'try this tool' button.
+
+        Body: {arguments: {...}}. Returns the raw MCP tool result.
+        Failures from the underlying MCP call surface as 502 with the
+        error message; a totally missing tool is 404.
+        """
+        mycelos = api.state.mycelos
+        existing = mycelos.connector_registry.get(connector_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"Connector '{connector_id}' not found")
+
+        mcp_mgr = getattr(mycelos, "_mcp_manager", None)
+        if mcp_mgr is None:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+
+        full_name = f"{connector_id}.{tool_name}"
+        arguments = payload.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise HTTPException(status_code=400, detail="arguments must be an object")
+
+        result = mcp_mgr.call_tool(full_name, arguments)
+        # call_tool returns either a dict-with-content (success) or a
+        # {error: "..."} dict (manager-level failure). Treat the error
+        # shape as 502 so curl/CLI users see a non-2xx; otherwise pass
+        # through verbatim so the caller can inspect the MCP payload.
+        if isinstance(result, dict) and "error" in result and len(result) == 1:
+            return JSONResponse({"error": result["error"]}, status_code=502)
+        return {"connector": connector_id, "tool": tool_name, "result": result}
 
     @api.post("/api/connectors/{connector_id}/test")
     async def test_connector(request: Request, connector_id: str) -> dict[str, Any]:
