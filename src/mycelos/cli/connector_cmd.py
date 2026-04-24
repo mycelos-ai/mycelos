@@ -183,17 +183,33 @@ def list_cmd(data_dir: Path) -> None:
         console.print("[dim]No connectors configured yet.[/dim]")
 
     # ── Available recipes (what else can be installed) ───────────
+    # Recipes are not all MCP connectors: channels (Telegram, Slack)
+    # surface incoming messages and don't expose tools; builtin
+    # services (email-via-IMAP) are in-process helpers. Show the
+    # `Kind` column so users understand which tier each entry is
+    # before they try `connector setup`.
+    def _kind_of(recipe) -> str:
+        t = (recipe.transport or "").lower()
+        if t == "channel":
+            return "channel"
+        if t == "builtin":
+            return "service"
+        if t == "http":
+            return "mcp (http)"
+        return "mcp"
+
     available = [r for rid, r in RECIPES.items() if rid not in registered_ids]
     if available:
         available_table = Table(title="Available recipes (not yet configured)")
         available_table.add_column("Recipe", style="bold")
+        available_table.add_column("Kind", style="dim")
         available_table.add_column("Category", style="dim")
         available_table.add_column("Setup", style="dim")
         available_table.add_column("Description", overflow="fold")
-        for r in sorted(available, key=lambda x: (x.category, x.id)):
+        for r in sorted(available, key=lambda x: (_kind_of(x), x.category, x.id)):
             setup_hint = r.setup_flow or "secret"
             desc = (r.description or "").splitlines()[0] if r.description else ""
-            available_table.add_row(r.id, r.category, setup_hint, desc)
+            available_table.add_row(r.id, _kind_of(r), r.category, setup_hint, desc)
         console.print()
         console.print(available_table)
         console.print(
