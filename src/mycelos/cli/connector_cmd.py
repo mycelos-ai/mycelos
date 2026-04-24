@@ -79,16 +79,12 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
     default=default_data_dir,
 )
 def list_cmd(data_dir: Path) -> None:
-    """List configured connectors and their status.
-
-    The source of truth is the connector_registry in the DB (what
-    the web UI reads). Recipes that aren't registered yet are shown
-    in a second table so the user knows what else is available to
-    install.
-    """
+    """List configured connectors plus available recipes, split by kind."""
     db_path = data_dir / "mycelos.db"
     if not db_path.exists():
-        console.print(f"[red]{t('common.error')}:[/red] {t('connector.not_initialized_short')}")
+        console.print(
+            f"[red]{t('common.error')}:[/red] {t('connector.not_initialized_short')}"
+        )
         raise SystemExit(1)
 
     if not os.environ.get("MYCELOS_MASTER_KEY"):
@@ -108,57 +104,62 @@ def list_cmd(data_dir: Path) -> None:
         "setup_incomplete": "[yellow]● setup incomplete[/yellow]",
     }
 
-    # ── Configured connectors (from the registry) ────────────────
-    configured_table = Table(title="Configured connectors")
-    configured_table.add_column("Connector", style="bold")
-    configured_table.add_column("Type", style="dim")
-    configured_table.add_column("State")
-    configured_table.add_column("Capabilities", overflow="fold")
-
+    # ── Installed ─────────────────────────────────────────────────
     if registered:
+        installed = Table(title="Installed connectors")
+        installed.add_column("Connector", style="bold")
+        installed.add_column("Type", style="dim")
+        installed.add_column("State")
+        installed.add_column("Capabilities", overflow="fold")
         for c in registered:
-            state = state_styles.get(c.get("operational_state"), c.get("operational_state") or "?")
+            state = state_styles.get(
+                c.get("operational_state"), c.get("operational_state") or "?"
+            )
             caps = ", ".join(c.get("capabilities") or []) or "[dim]—[/dim]"
-            configured_table.add_row(
+            installed.add_row(
                 c.get("name") or c["id"],
                 c.get("connector_type") or "?",
                 state,
                 caps,
             )
-        console.print(configured_table)
+        console.print(installed)
     else:
         console.print("[dim]No connectors configured yet.[/dim]")
 
-    # ── Available recipes (what else can be installed) ───────────
-    # Recipes are not all MCP connectors: channels (Telegram, Slack)
-    # surface incoming messages and don't expose tools; builtin
-    # services (email-via-IMAP) are in-process helpers. Show the
-    # `Kind` column so users understand which tier each entry is
-    # before they try `connector setup`.
-    def _kind_of(recipe) -> str:
-        t = (recipe.transport or "").lower()
-        if t == "channel":
-            return "channel"
-        if t == "builtin":
-            return "service"
-        if t == "http":
-            return "mcp (http)"
-        return "mcp"
-
-    available = [r for rid, r in RECIPES.items() if rid not in registered_ids]
-    if available:
-        available_table = Table(title="Available recipes (not yet configured)")
-        available_table.add_column("Recipe", style="bold")
-        available_table.add_column("Kind", style="dim")
-        available_table.add_column("Category", style="dim")
-        available_table.add_column("Setup", style="dim")
-        available_table.add_column("Description", overflow="fold")
-        for r in sorted(available, key=lambda x: (_kind_of(x), x.category, x.id)):
-            setup_hint = r.setup_flow or "secret"
+    # ── Available channels ────────────────────────────────────────
+    available_channels = [
+        r for r in RECIPES.values()
+        if r.kind == "channel" and r.id not in registered_ids
+    ]
+    if available_channels:
+        tbl = Table(title="Channels (not yet configured)")
+        tbl.add_column("Recipe", style="bold")
+        tbl.add_column("Setup", style="dim")
+        tbl.add_column("Description", overflow="fold")
+        for r in sorted(available_channels, key=lambda x: x.id):
             desc = (r.description or "").splitlines()[0] if r.description else ""
-            available_table.add_row(r.id, _kind_of(r), r.category, setup_hint, desc)
+            tbl.add_row(r.id, r.setup_flow or "secret", desc)
         console.print()
-        console.print(available_table)
+        console.print(tbl)
+
+    # ── Available MCP connectors ──────────────────────────────────
+    available_mcp = [
+        r for r in RECIPES.values()
+        if r.kind == "mcp" and r.id not in registered_ids
+    ]
+    if available_mcp:
+        tbl = Table(title="MCP Connectors (not yet configured)")
+        tbl.add_column("Recipe", style="bold")
+        tbl.add_column("Category", style="dim")
+        tbl.add_column("Setup", style="dim")
+        tbl.add_column("Description", overflow="fold")
+        for r in sorted(available_mcp, key=lambda x: (x.category, x.id)):
+            desc = (r.description or "").splitlines()[0] if r.description else ""
+            tbl.add_row(r.id, r.category, r.setup_flow or "secret", desc)
+        console.print()
+        console.print(tbl)
+
+    if available_channels or available_mcp:
         console.print(
             "\n[dim]Use [/dim][bold]mycelos connector setup <id>[/bold]"
             "[dim] to configure one, or open the Connectors page in the web UI.[/dim]"
