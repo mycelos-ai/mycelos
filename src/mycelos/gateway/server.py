@@ -362,8 +362,22 @@ def create_app(
     api.state.password_protected = bool(password)
 
     # Localhost restriction — gate all /api/* routes when bound to localhost
-    from mycelos.gateway.routes import LocalhostMiddleware
+    from mycelos.gateway.routes import LocalhostMiddleware, CSRFMiddleware
     api.add_middleware(LocalhostMiddleware)
+
+    # CSRF — block cross-origin browser POSTs on /api/*. CLI + curl
+    # pass through (they don't send Origin). Env var
+    # MYCELOS_ALLOWED_ORIGINS (comma-separated) lets self-hosters open
+    # up same-API access to e.g. an external dashboard.
+    extra_origins = {
+        o.strip().rstrip("/")
+        for o in (os.environ.get("MYCELOS_ALLOWED_ORIGINS") or "").split(",")
+        if o.strip()
+    }
+    # Stash on app.state so the middleware can read it per-request
+    # without re-reading the env on the hot path.
+    api.state.csrf_allowed_origins = extra_origins
+    api.add_middleware(CSRFMiddleware, allowed_origins=extra_origins)
 
     # CORS — allow Next.js dev server (port 3000) in development
     from fastapi.middleware.cors import CORSMiddleware

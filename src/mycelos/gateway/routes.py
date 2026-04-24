@@ -55,6 +55,99 @@ class LocalhostMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Methods that a malicious cross-origin site could use to mutate state.
+# GET/HEAD/OPTIONS are considered safe by the HTTP spec (server must not
+# mutate state on them), so we only gate the dangerous verbs. OPTIONS
+# specifically must pass through because browsers use it for CORS preflight.
+_CSRF_GUARDED_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# Allowed Origin values compared against the Origin / Referer header.
+# Built from bind host + env override at app startup and stashed on
+# `app.state.csrf_allowed_origins` — this set can stay empty at import
+# time and still match correctly at request time.
+_LOCAL_ORIGIN_PREFIXES = ("http://localhost:", "http://127.0.0.1:", "http://[::1]:")
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Reject cross-origin browser requests that change state.
+
+    Threat: a user has Mycelos running on localhost (or a LAN IP) and
+    opens a malicious website in the same browser. Without this
+    middleware, that page's JavaScript can POST to /api/connectors/gmail/
+    tools/search_threads/call and exfiltrate email through the user's
+    own open session — classic CSRF.
+
+    Defense: for POST / PUT / PATCH / DELETE requests we require either
+    - no `Origin` or `Referer` header at all (curl, mycelos CLI, server-
+      to-server scripts — not browser-initiated), or
+    - an `Origin` / `Referer` whose scheme+host+port matches one of the
+      allowed origins (the gateway's own bind host + anything in
+      MYCELOS_ALLOWED_ORIGINS).
+
+    GET / HEAD / OPTIONS are passed through unchanged. OPTIONS
+    specifically MUST pass so CORS preflight works.
+    """
+
+    def __init__(self, app, allowed_origins: set[str] | None = None) -> None:
+        super().__init__(app)
+        # Normalize to scheme://host[:port] with no trailing slash.
+        self._static_allowed = {o.rstrip("/") for o in (allowed_origins or set())}
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        if request.method not in _CSRF_GUARDED_METHODS:
+            return await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            return await call_next(request)
+
+        origin = request.headers.get("origin") or ""
+        referer = request.headers.get("referer") or ""
+
+        # No Origin AND no Referer → not a browser-initiated request.
+        # curl, httpx, the Mycelos CLI, etc. — allow through. This is
+        # the intentional escape hatch for CLI / scripting; attackers
+        # can't strip Origin from a real browser fetch.
+        if not origin and not referer:
+            return await call_next(request)
+
+        allowed = set(self._static_allowed)
+        allowed.update(getattr(request.app.state, "csrf_allowed_origins", set()) or set())
+
+        def _origin_ok(value: str) -> bool:
+            if not value:
+                return False
+            # Normalize: take scheme://host:port, drop path.
+            try:
+                from urllib.parse import urlparse
+                p = urlparse(value)
+                if not p.scheme or not p.netloc:
+                    return False
+                normalized = f"{p.scheme}://{p.netloc}"
+            except Exception:
+                return False
+            if normalized in allowed:
+                return True
+            # Always-accept localhost regardless of port — single-process
+            # dev setup cycles ports a lot.
+            return any(normalized.startswith(p) for p in _LOCAL_ORIGIN_PREFIXES)
+
+        # Origin wins over Referer (Origin is set by the browser on
+        # cross-origin POST/fetch and is harder for a page to forge).
+        if origin:
+            if not _origin_ok(origin):
+                return JSONResponse(
+                    {"error": "Cross-origin request blocked (CSRF)"},
+                    status_code=403,
+                )
+        elif referer:
+            if not _origin_ok(referer):
+                return JSONResponse(
+                    {"error": "Cross-origin request blocked (CSRF)"},
+                    status_code=403,
+                )
+
+        return await call_next(request)
+
+
 class ChatRequest(BaseModel):
     """Request body for POST /api/chat."""
     message: str
