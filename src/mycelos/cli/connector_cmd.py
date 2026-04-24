@@ -132,7 +132,13 @@ def setup_cmd(connector_name: str | None, data_dir: Path) -> None:
     default=default_data_dir,
 )
 def list_cmd(data_dir: Path) -> None:
-    """List configured connectors and their status."""
+    """List configured connectors and their status.
+
+    The source of truth is the connector_registry in the DB (what
+    the web UI reads). Recipes that aren't registered yet are shown
+    in a second table so the user knows what else is available to
+    install.
+    """
     db_path = data_dir / "mycelos.db"
     if not db_path.exists():
         console.print(f"[red]{t('common.error')}:[/red] {t('connector.not_initialized_short')}")
@@ -144,31 +150,56 @@ def list_cmd(data_dir: Path) -> None:
             os.environ["MYCELOS_MASTER_KEY"] = key_file.read_text().strip()
 
     app = App(data_dir)
-    configured = app.credentials.list_services()
-    registered = {c["id"]: c for c in app.connector_registry.list_connectors()}
+    from mycelos.connectors.mcp_recipes import RECIPES
+    registered = app.connector_registry.list_connectors()
+    registered_ids = {c["id"] for c in registered}
 
-    table = Table(title="Connectors")
-    table.add_column("Connector", style="bold")
-    table.add_column("Status")
-    table.add_column("Capabilities")
+    state_styles = {
+        "healthy": "[green]● healthy[/green]",
+        "ready": "[cyan]● ready[/cyan]",
+        "failing": "[red]● failing[/red]",
+        "setup_incomplete": "[yellow]● setup incomplete[/yellow]",
+    }
 
-    for key, info in CONNECTORS.items():
-        if info.get("coming_soon"):
-            status = "[dim]Coming soon[/dim]"
-        elif key in registered:
-            status = "[green]Registered[/green]"
-        elif not info["requires_key"]:
-            status = "[green]Ready[/green] (no key needed)"
-        elif f"connector:{key}" in configured:
-            status = "[green]Configured[/green]"
-        else:
-            status = "[yellow]Not configured[/yellow]"
-        caps = ", ".join(
-            registered[key]["capabilities"] if key in registered else info["capabilities"]
+    # ── Configured connectors (from the registry) ────────────────
+    configured_table = Table(title="Configured connectors")
+    configured_table.add_column("Connector", style="bold")
+    configured_table.add_column("Type", style="dim")
+    configured_table.add_column("State")
+    configured_table.add_column("Capabilities", overflow="fold")
+
+    if registered:
+        for c in registered:
+            state = state_styles.get(c.get("operational_state"), c.get("operational_state") or "?")
+            caps = ", ".join(c.get("capabilities") or []) or "[dim]—[/dim]"
+            configured_table.add_row(
+                c.get("name") or c["id"],
+                c.get("connector_type") or "?",
+                state,
+                caps,
+            )
+        console.print(configured_table)
+    else:
+        console.print("[dim]No connectors configured yet.[/dim]")
+
+    # ── Available recipes (what else can be installed) ───────────
+    available = [r for rid, r in RECIPES.items() if rid not in registered_ids]
+    if available:
+        available_table = Table(title="Available recipes (not yet configured)")
+        available_table.add_column("Recipe", style="bold")
+        available_table.add_column("Category", style="dim")
+        available_table.add_column("Setup", style="dim")
+        available_table.add_column("Description", overflow="fold")
+        for r in sorted(available, key=lambda x: (x.category, x.id)):
+            setup_hint = r.setup_flow or "secret"
+            desc = (r.description or "").splitlines()[0] if r.description else ""
+            available_table.add_row(r.id, r.category, setup_hint, desc)
+        console.print()
+        console.print(available_table)
+        console.print(
+            "\n[dim]Use [/dim][bold]mycelos connector setup <id>[/bold]"
+            "[dim] to configure one, or open the Connectors page in the web UI.[/dim]"
         )
-        table.add_row(info["name"], status, caps)
-
-    console.print(table)
 
 
 def _show_connector_menu(app: App) -> None:
