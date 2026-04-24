@@ -97,15 +97,14 @@ def list_cmd(data_dir: Path) -> None:
     registered = app.connector_registry.list_connectors()
     registered_ids = {c["id"] for c in registered}
 
-    state_styles = {
-        "healthy": "[green]● healthy[/green]",
-        "ready": "[cyan]● ready[/cyan]",
-        "failing": "[red]● failing[/red]",
-        "setup_incomplete": "[yellow]● setup incomplete[/yellow]",
-    }
-
     # ── Installed ─────────────────────────────────────────────────
     if registered:
+        state_styles = {
+            "healthy": "[green]● healthy[/green]",
+            "ready": "[cyan]● ready[/cyan]",
+            "failing": "[red]● failing[/red]",
+            "setup_incomplete": "[yellow]● setup incomplete[/yellow]",
+        }
         installed = Table(title="Installed connectors")
         installed.add_column("Connector", style="bold")
         installed.add_column("Type", style="dim")
@@ -137,8 +136,8 @@ def list_cmd(data_dir: Path) -> None:
         tbl.add_column("Setup", style="dim")
         tbl.add_column("Description", overflow="fold")
         for r in sorted(available_channels, key=lambda x: x.id):
-            desc = (r.description or "").splitlines()[0] if r.description else ""
-            tbl.add_row(r.id, r.setup_flow or "secret", desc)
+            desc = r.description.splitlines()[0] if r.description else ""
+            tbl.add_row(r.id, r.setup_flow, desc)
         console.print()
         console.print(tbl)
 
@@ -154,8 +153,8 @@ def list_cmd(data_dir: Path) -> None:
         tbl.add_column("Setup", style="dim")
         tbl.add_column("Description", overflow="fold")
         for r in sorted(available_mcp, key=lambda x: (x.category, x.id)):
-            desc = (r.description or "").splitlines()[0] if r.description else ""
-            tbl.add_row(r.id, r.category, r.setup_flow or "secret", desc)
+            desc = r.description.splitlines()[0] if r.description else ""
+            tbl.add_row(r.id, r.category, r.setup_flow, desc)
         console.print()
         console.print(tbl)
 
