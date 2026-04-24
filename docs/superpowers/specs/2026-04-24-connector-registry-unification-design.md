@@ -24,12 +24,15 @@ Concrete symptoms:
 
 ## Decisions
 
-### D1: Two registries, one kind per registry
+### D1: One registry, explicit `kind` field
 
-- `RECIPES` (existing) — all MCP connectors.
-- `CHANNELS` (new) — all channel connectors. Today only `telegram`.
+Telegram is already in the `RECIPES` registry today (differentiated only by `transport="channel"`). Rather than extract it into a separate `CHANNELS` registry and break ~15 call sites, we make the distinction explicit on `MCPRecipe` itself:
 
-No "service" kind. HTTP / DuckDuckGo are removed from the connector framework entirely.
+- Add `kind: Literal["channel", "mcp"]` to `MCPRecipe`. Default `"mcp"`.
+- `transport="channel"` is deprecated; the Telegram recipe sets `kind="channel"` and its `transport` field becomes irrelevant.
+- CLI `list`, Web UI, and gateway endpoints read `recipe.kind` to decide which section a recipe belongs to.
+
+No `service` kind. HTTP / DuckDuckGo are removed from the connector framework entirely.
 
 ### D2: HTTP and DuckDuckGo remain as always-on Python tools
 
@@ -67,10 +70,10 @@ Rationale:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  src/mycelos/channels/channel_recipes.py (NEW)           │
-│    @dataclass ChannelRecipe                              │
-│    CHANNELS: dict[str, ChannelRecipe] = { "telegram": ..}│
-│    get_channel(id), list_channels()                      │
+│  src/mycelos/connectors/mcp_recipes.py                  │
+│    MCPRecipe gains `kind: "channel" | "mcp"` field      │
+│    RECIPES["telegram"] updated: kind="channel"          │
+│    get_recipe, list_recipes unchanged                   │
 └─────────────────────────────────────────────────────────┘
                          ▲
                          │
@@ -78,65 +81,58 @@ Rationale:
 │  src/mycelos/cli/connector_cmd.py (REDUCED ~903 → ~500) │
 │    CONNECTORS dict: REMOVED                             │
 │    _setup_mcp(app, recipe: MCPRecipe)                   │
-│    _setup_channel(app, channel: ChannelRecipe)          │
-│    setup_cmd: routes to MCP or Channel                  │
+│    _setup_channel(app, recipe: MCPRecipe)               │
+│       — handles recipe.kind == "channel" (Telegram)     │
+│    setup_cmd: dispatches on recipe.kind                 │
 │    list_cmd: renders 2 separate "available" sections    │
+│       by grouping on recipe.kind                        │
 └─────────────────────────────────────────────────────────┘
                          ▲
                          │
 ┌─────────────────────────────────────────────────────────┐
-│  src/mycelos/connectors/mcp_recipes.py (UNCHANGED)      │
-│    MCPRecipe, RECIPES, get_recipe, list_recipes         │
+│  src/mycelos/chat/slash_commands.py                     │
+│    /connector setup/add/remove/test verbs REMOVED       │
+│    /connector list + /connector help retained           │
+│    Help text points to CLI and Web UI for setup         │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Components
 
-### `src/mycelos/channels/channel_recipes.py` (new, ~40 lines)
+### `src/mycelos/connectors/mcp_recipes.py` (extended)
+
+Add a `kind` field to `MCPRecipe`:
 
 ```python
-from dataclasses import dataclass, field
+from typing import Literal
 
 @dataclass(frozen=True)
-class ChannelRecipe:
+class MCPRecipe:
     id: str
     name: str
     description: str
-    env_var: str
-    key_help: str
-    setup_handler_name: str       # string to avoid circular imports
-    capabilities: list[str] = field(default_factory=list)
-
-CHANNELS: dict[str, ChannelRecipe] = {
-    "telegram": ChannelRecipe(
-        id="telegram",
-        name="Telegram Bot",
-        description="Chat with Mycelos via Telegram",
-        env_var="TELEGRAM_BOT_TOKEN",
-        key_help="Create a bot at @BotFather in Telegram...",
-        setup_handler_name="telegram",
-        capabilities=[],
-    ),
-}
-
-def get_channel(channel_id: str) -> ChannelRecipe | None: ...
-def list_channels() -> list[ChannelRecipe]: ...
+    kind: Literal["channel", "mcp"] = "mcp"
+    # ... all existing fields unchanged
 ```
+
+Update the `telegram` entry in `RECIPES` to set `kind="channel"`. Everything else stays `kind="mcp"` (default, no change needed).
+
+No new module. No new imports. `get_recipe` / `list_recipes` work unchanged.
 
 ### `src/mycelos/cli/connector_cmd.py` (reduced)
 
 - Remove the top-level `CONNECTORS` dict.
-- Split `_setup_connector` into two functions:
-  - `_setup_mcp(app, recipe: MCPRecipe)` — uses `recipe.capabilities` for policy grants and `recipe.setup_flow` to dispatch credential collection.
-  - `_setup_channel(app, channel: ChannelRecipe)` — collects credential from `env_var` + `key_help`, then calls the channel-specific handler (today only Telegram webhook registration).
+- Split `_setup_connector(app, key, info)` into two functions:
+  - `_setup_mcp(app, recipe: MCPRecipe)` — handles `kind="mcp"` recipes. Uses `recipe.credentials[0]` for env-var/help prompting and `recipe.capabilities_preview` for policy grants. Dispatches OAuth flow if `recipe.setup_flow == "oauth_http"`.
+  - `_setup_channel(app, recipe: MCPRecipe)` — handles `kind="channel"` recipes. Keeps Telegram-specific logic (allowlist collection via `getUpdates`, mode selection, `channels`-table write). Future channels plug in here by adding their own branch; for now it's Telegram-only.
 - `setup_cmd(name)`:
-  1. Try `get_recipe(name)` → `_setup_mcp`
-  2. Try `get_channel(name)` → `_setup_channel`
-  3. Unknown → error with pointer to `connector list`.
+  1. `get_recipe(name)` → if `recipe.kind == "channel"`: `_setup_channel`; else: `_setup_mcp`.
+  2. `None` → error with pointer to `connector list`.
 - `list_cmd` renders three sections:
-  - **Installed** (configured connectors from DB, kind badge kept — single table)
+  - **Installed** (configured connectors from `connector_registry`, kind badge kept — single table)
   - **Channels (not yet configured)** — columns: Recipe, Setup, Description
   - **MCP Connectors (not yet configured)** — columns: Recipe, Category, Setup, Description
+  - Grouping is done by `recipe.kind` from `RECIPES.values()`.
 
 ### `src/mycelos/connectors/connector_registry.py`
 
@@ -154,22 +150,23 @@ Remove setup verbs from `/connector`:
 
 ### Gateway endpoint `/api/connectors/recipes`
 
-Returns both registries in one response:
+Returns the registry grouped by `kind`:
 
 ```json
 {
   "channels": [
-    { "id": "telegram", "name": "Telegram Bot", "description": "...",
-      "env_var": "TELEGRAM_BOT_TOKEN", "key_help": "...", "capabilities": [] }
+    { "id": "telegram", "name": "Telegram Bot", "kind": "channel",
+      "description": "...", "setup_flow": "secret" }
   ],
   "mcp": [
-    { "id": "github", "name": "GitHub", "category": "code",
-      "setup_flow": "secret", "description": "...", "capabilities": [...] }
+    { "id": "github", "name": "GitHub", "kind": "mcp",
+      "category": "code", "setup_flow": "secret",
+      "description": "...", "capabilities_preview": [...] }
   ]
 }
 ```
 
-The existing `/api/connectors/recipes/{id}` keeps working: it searches both registries.
+The existing `/api/connectors/recipes/{id}` keeps working unchanged — it returns a single recipe by id, now including the `kind` field.
 
 ### Web UI
 
@@ -182,24 +179,23 @@ The existing `/api/connectors/recipes/{id}` keeps working: it searches both regi
 ```
 mycelos connector setup <id>
   ↓
-setup_cmd resolves id:
-  ├─ get_recipe(id)   → _setup_mcp(recipe)
-  │                       ├─ collect credential (recipe.setup_flow)
-  │                       ├─ credential_store.put(recipe.credential_service, secret)
-  │                       ├─ policy_engine.grant(recipe.capabilities)
-  │                       ├─ connector_registry.register(id, kind="mcp")
-  │                       ├─ config.apply_from_state()
-  │                       └─ audit.log("connector.setup", id=id, kind="mcp")
+recipe = get_recipe(id)
+  ├─ None                    → error + "see mycelos connector list"
+  ├─ recipe.kind == "channel" → _setup_channel(recipe)
+  │                               ├─ collect credential (recipe.credentials[0])
+  │                               ├─ channel-specific setup (Telegram: getUpdates, mode, allowlist, channels row)
+  │                               ├─ credential_store.store(recipe.id, ...)
+  │                               ├─ connector_registry.register(id, kind="channel")
+  │                               ├─ config.apply_from_state()
+  │                               └─ audit.log("connector.setup", id=id, kind="channel")
   │
-  ├─ get_channel(id)  → _setup_channel(channel)
-  │                       ├─ collect credential (env_var + key_help)
-  │                       ├─ credential_store.put(channel.id, secret)
-  │                       ├─ channel setup handler (e.g. telegram webhook)
-  │                       ├─ connector_registry.register(id, kind="channel")
-  │                       ├─ config.apply_from_state()
-  │                       └─ audit.log("connector.setup", id=id, kind="channel")
-  │
-  └─ neither          → error + "see mycelos connector list"
+  └─ recipe.kind == "mcp"    → _setup_mcp(recipe)
+                                  ├─ collect credential (recipe.credentials[0], or OAuth flow if setup_flow="oauth_http")
+                                  ├─ credential_store.store(recipe.id, ...)
+                                  ├─ policy_engine grants for recipe.capabilities_preview
+                                  ├─ connector_registry.register(id, kind="mcp")
+                                  ├─ config.apply_from_state()
+                                  └─ audit.log("connector.setup", id=id, kind="mcp")
 ```
 
 ### List
@@ -231,14 +227,14 @@ Every change ships with tests. The baseline must stay green (zero failing tests 
 
 ### New tests
 
-- `tests/channels/test_channel_recipes.py` — CHANNELS dict schema, `get_channel`, `list_channels`.
+- `tests/test_recipe_kind.py` — `MCPRecipe.kind` defaults to `"mcp"`; `RECIPES["telegram"].kind == "channel"`; all other recipes have `kind == "mcp"`.
 - `tests/test_connector_list_two_sections.py` — output contains both "Channels" and "MCP Connectors" headers; Telegram is under Channels; GitHub is under MCP.
 - `tests/test_frontend_connectors_api.py` — `/api/connectors/recipes` returns `channels` and `mcp` keys with correct contents.
 
 ### Tests to rewrite
 
-- `tests/test_connector_setup.py` — delete `CONNECTORS`-based assertions. Test `_setup_mcp` with a real `MCPRecipe` fixture; test `_setup_channel` with the Telegram `ChannelRecipe`. Keep the policy-grant assertion pattern.
-- `tests/test_telegram_channel.py` — replace `CONNECTORS["telegram"]` lookups with `CHANNELS["telegram"]`. Fields on `ChannelRecipe` match what the test asserts.
+- `tests/test_connector_setup.py` — delete `CONNECTORS`-based assertions. Test `_setup_mcp` with a real `MCPRecipe` fixture; test `_setup_channel` with the Telegram recipe. Keep the policy-grant assertion pattern.
+- `tests/test_telegram_channel.py` — replace `CONNECTORS["telegram"]` lookups with `RECIPES["telegram"]` / `get_recipe("telegram")`. Assertions target the same fields (`env_var`, `kind == "channel"`).
 - `tests/test_slash_commands.py` (and any test that invokes `/connector add`/`setup`/`test`/`remove`) — delete or rewrite to assert that those verbs now return a "not supported in chat; use CLI / Web UI" message.
 
 ### Tests that should stay green unchanged
@@ -250,7 +246,7 @@ Every change ships with tests. The baseline must stay green (zero failing tests 
 ## Success Criteria
 
 1. `CONNECTORS` dict is removed from `cli/connector_cmd.py`.
-2. `CHANNELS` registry exists in `channels/channel_recipes.py`, contains `telegram`.
+2. `MCPRecipe` has `kind: Literal["channel", "mcp"]` field; `RECIPES["telegram"].kind == "channel"`.
 3. `mycelos connector setup telegram` and `mycelos connector setup github` both work.
 4. `mycelos connector list` shows three sections: Installed / Channels / MCP Connectors.
 5. Web UI `/connectors` page matches the CLI structure.
