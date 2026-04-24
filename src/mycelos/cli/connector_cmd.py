@@ -559,6 +559,15 @@ def _setup_mcp(app: App, recipe: MCPRecipe) -> None:
     console.print(f"\n[bold]{t('connector.setup_title', name=recipe.name)}[/bold]")
     console.print(f"[dim]{recipe.description}[/dim]\n")
 
+    # OAuth recipes require a browser redirect; no state mutation here —
+    # the web UI flow does the registry/credential/audit writes.
+    if recipe.setup_flow == "oauth_http":
+        console.print(
+            f"[yellow]{recipe.name} uses OAuth. Open the Connectors page "
+            f"in the web UI and click Setup.[/yellow]"
+        )
+        return
+
     app.connector_registry.register(
         connector_id=recipe.id,
         name=recipe.name,
@@ -582,14 +591,6 @@ def _setup_mcp(app: App, recipe: MCPRecipe) -> None:
             trigger="connector_setup",
         )
         console.print(f"\n[green]{t('connector.ready', name=recipe.name)}[/green]")
-        return
-
-    # OAuth recipes can't run in the terminal — OAuth needs a browser redirect.
-    if recipe.setup_flow == "oauth_http":
-        console.print(
-            f"[yellow]{recipe.name} uses OAuth. Open the Connectors page "
-            f"in the web UI and click Setup.[/yellow]"
-        )
         return
 
     cred = recipe.credentials[0]
@@ -682,9 +683,9 @@ def _test_github(api_key: str) -> None:
                 f"Authenticated as [bold]{data.get('login', '?')}[/bold]"
             )
         elif resp.status_code == 401:
-            console.print("[red]Token invalid or expired.[/red]")
+            console.print(f"[red]{t('connector.api_key_invalid')}[/red]")
         else:
-            console.print(f"[yellow]GitHub returned status {resp.status_code}[/yellow]")
+            console.print(f"[yellow]{t('connector.api_status', status=resp.status_code)}[/yellow]")
     except Exception as e:
         console.print(f"[red]{t('connector.test_failed', error=e)}[/red]")
 
