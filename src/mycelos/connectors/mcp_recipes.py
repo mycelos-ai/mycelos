@@ -8,6 +8,7 @@ and Mycelos handles the rest.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class MCPRecipe:
     description: str                 # "Access repositories, issues, and PRs"
     command: str                     # "npx -y @modelcontextprotocol/server-github"
     transport: str = "stdio"         # "stdio", "http", "sse"
+    kind: Literal["channel", "mcp"] = "mcp"
     credentials: list[dict] = field(default_factory=list)
         # [{"env_var": "GITHUB_TOKEN", "name": "GitHub Personal Access Token",
         #   "help": "Create at https://github.com/settings/tokens"}]
@@ -204,6 +206,7 @@ RECIPES: dict[str, MCPRecipe] = {
         description="Chat with Mycelos via Telegram",
         command="",
         transport="channel",
+        kind="channel",
         credentials=[{
             "env_var": "TELEGRAM_BOT_TOKEN",
             "name": "Telegram Bot Token",
