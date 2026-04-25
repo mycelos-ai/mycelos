@@ -67,6 +67,14 @@ deployment on localhost.
 - `MYCELOS_ALLOWED_ORIGINS` env var lets a user whitelist specific external origins (e.g. an internal Grafana dashboard) without opening the door to every site.
 - Threat model: a Mycelos user on `localhost:9100` opens a malicious site in the same browser; the site's JS fires `fetch('http://localhost:9100/api/...')` to exfiltrate or plant data through the user's own session. The Origin/Referer check stops it before the handler runs, while the no-Origin escape hatch keeps the CLI usable.
 
+### Custom MCP connector setup
+- The "Add Connector" form on the Connectors page is a real Custom-MCP setup wizard now. Name, Command, and a repeatable Environment Variables list (Key + Value + delete row + "+ Variable" button) replace the previous single-secret field.
+- When the user pastes a Command, the form looks up the npm package against the MCP Registry (`GET /api/connectors/lookup-env-vars?package=<pkg>`) and pre-fills the env-vars rows on a hit. On miss or registry error, the form silently leaves an empty row for manual entry.
+- `POST /api/connectors` now accepts `env_vars: dict[str, str]` alongside the legacy `secret: string`. When `env_vars` is set, the credential is stored as a JSON blob with the `__multi__` sentinel on the `env_var` field; recipe-setup code paths keep using the old single-var shape.
+- MCP spawn (`mcp_client._build_env`) detects the `__multi__` sentinel, parses the JSON blob, and merges every key/value into the subprocess env. Blocked env vars (`PATH`, `HOME`, ...) are still filtered.
+- MCP auto-start after registration now runs in a background thread (recipe + custom paths), so the POST returns immediately even when npm is slow or unreachable.
+- Spec / plan: `docs/superpowers/specs/2026-04-25-custom-mcp-setup-design.md`, `docs/superpowers/plans/2026-04-25-custom-mcp-setup-plan.md`.
+
 ### Connectors page cleanup
 - Connectors page now leads with an "Installed" section. The two "Available" sections (Channels, MCP Connectors) sit below and never show a recipe that's already installed. No more duplicate cards or confusing "Configured"/"View" buttons in the catalog. Page subtitle reads "Your installed connectors plus what's available to add."
 - `mcp-memory` recipe (upstream `@modelcontextprotocol/server-memory`, generic knowledge graph) was removed — it overlaps with Mycelos's own Knowledge Base and offering both confused users about where data lands.
