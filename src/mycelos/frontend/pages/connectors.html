@@ -154,28 +154,51 @@
             <div class="h-[1px] flex-1 mycelium-line"></div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-            <!-- Name -->
-            <div>
-              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Name</label>
-              <input type="text" x-model="newConnector.name"
-                     class="input-field" placeholder="e.g. playwright">
-            </div>
-            <!-- Secret (optional) -->
-            <div>
-              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Secret <span class="opacity-40">(optional)</span></label>
-              <input type="password" x-model="newConnector.secret"
-                     class="input-field" placeholder="API key or token">
-            </div>
+          <!-- Name -->
+          <div class="mb-5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Name</label>
+            <input type="text" x-model="newConnector.name"
+                   class="input-field" placeholder="e.g. context7">
           </div>
 
           <!-- Command -->
           <div class="mb-5">
             <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Command</label>
             <textarea x-model="newConnector.command"
+                      @blur="onCommandBlur()"
                       class="input-field resize-none"
                       rows="2"
-                      placeholder="npx -y @playwright/mcp-server"></textarea>
+                      placeholder="npx -y @upstash/context7-mcp"></textarea>
+          </div>
+
+          <!-- Environment Variables -->
+          <div class="mb-5">
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant">Environment Variables</label>
+              <span x-show="newConnector.lookupHit > 0"
+                    class="text-[10px] text-tertiary font-label">
+                MCP Registry suggested <span x-text="newConnector.lookupHit"></span> variable(s)
+              </span>
+            </div>
+            <template x-for="(row, idx) in newConnector.envVars" :key="idx">
+              <div class="flex items-center gap-2 mb-2">
+                <input type="text" x-model="row.key"
+                       class="input-field flex-1" placeholder="Key">
+                <input :type="row.isSecret ? 'password' : 'text'" x-model="row.value"
+                       class="input-field flex-1" placeholder="Value">
+                <button @click="removeEnvVar(idx)" type="button"
+                        class="p-2 rounded-lg text-on-surface-variant/40 hover:text-error hover:bg-error/10 transition-colors"
+                        title="Remove">
+                  <span class="material-symbols-outlined text-base">delete</span>
+                </button>
+              </div>
+            </template>
+            <button @click="addEnvVar()" type="button"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label
+                           text-on-surface-variant/60 hover:text-primary hover:bg-primary/5 transition-colors">
+              <span class="material-symbols-outlined text-sm">add</span>
+              Variable
+            </button>
           </div>
 
           <!-- Actions row -->
@@ -192,11 +215,10 @@
               </button>
               <button @click="addConnector()"
                       :disabled="!newConnector.name.trim() || !newConnector.command.trim() || submitting"
-                      class="btn-primary text-xs px-5 py-2"
-                      :class="(!newConnector.name.trim() || !newConnector.command.trim() || submitting) && 'opacity-40 cursor-not-allowed'">
-                <span class="material-symbols-outlined text-sm" x-show="!submitting">add</span>
-                <span class="material-symbols-outlined text-sm animate-spin" x-show="submitting">progress_activity</span>
-                <span x-text="submitting ? 'Adding...' : t('connectors.add')">Add Connector</span>
+                      class="btn-primary text-xs">
+                <span x-show="!submitting" class="material-symbols-outlined text-sm">add</span>
+                <span x-show="submitting" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                <span>Add</span>
               </button>
             </div>
           </div>
@@ -933,7 +955,12 @@
         showAddForm: false,
         showSearch: false,
         submitting: false,
-        newConnector: { name: '', command: '', secret: '' },
+        newConnector: {
+          name: '',
+          command: '',
+          envVars: [{ key: '', value: '', isSecret: true }],
+          lookupHit: 0,  // 0 = no lookup yet, N = registry suggested N vars
+        },
         searchQuery: '',
         searchResults: [],
         searching: false,
@@ -1113,6 +1140,44 @@
           return Math.round(secs / 86400) + ' d ago';
         },
 
+        addEnvVar() {
+          this.newConnector.envVars.push({ key: '', value: '', isSecret: true });
+        },
+
+        removeEnvVar(idx) {
+          this.newConnector.envVars.splice(idx, 1);
+          if (this.newConnector.envVars.length === 0) this.addEnvVar();
+        },
+
+        async onCommandBlur() {
+          const cmd = (this.newConnector.command || '').trim();
+          if (!cmd) return;
+          const parts = cmd.split(/\s+/);
+          // First arg that looks like a package: starts with @scope/ or contains /
+          const pkg = parts.find(p =>
+            p && !p.startsWith('-') && (p.startsWith('@') || p.includes('/'))
+          );
+          if (!pkg) return;
+          try {
+            const resp = await fetch('/api/connectors/lookup-env-vars?package=' + encodeURIComponent(pkg));
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const known = Array.isArray(data?.env_vars) ? data.env_vars : [];
+            if (!known.length) {
+              this.newConnector.lookupHit = 0;
+              return;
+            }
+            this.newConnector.envVars = known.map(v => ({
+              key: v.name,
+              value: '',
+              isSecret: v.secret !== false,
+            }));
+            this.newConnector.lookupHit = known.length;
+          } catch (_) {
+            /* network error → leave the form alone */
+          }
+        },
+
         /**
          * Add a new connector via POST.
          */
@@ -1121,12 +1186,18 @@
           this.submitting = true;
 
           try {
+            const env_vars = {};
+            for (const row of this.newConnector.envVars) {
+              const k = (row.key || '').trim();
+              if (!k) continue;
+              env_vars[k] = (row.value || '').toString();
+            }
             const payload = {
               name: this.newConnector.name.trim(),
               command: this.newConnector.command.trim(),
             };
-            if (this.newConnector.secret.trim()) {
-              payload.secret = this.newConnector.secret.trim();
+            if (Object.keys(env_vars).length > 0) {
+              payload.env_vars = env_vars;
             }
 
             await MycelosAPI.post('/api/connectors', payload);
@@ -1280,7 +1351,8 @@
           if (needsCredentials) {
             this.newConnector.name = recipe.id;
             this.newConnector.command = recipe.command || '';
-            this.newConnector.secret = '';
+            this.newConnector.envVars = [{ key: '', value: '', isSecret: true }];
+            this.newConnector.lookupHit = 0;
             this.showAddForm = true;
             return;
           }
@@ -1480,7 +1552,12 @@
          * Reset the add form fields.
          */
         resetForm() {
-          this.newConnector = { name: '', command: '', secret: '' };
+          this.newConnector = {
+            name: '',
+            command: '',
+            envVars: [{ key: '', value: '', isSecret: true }],
+            lookupHit: 0,
+          };
           this.searchQuery = '';
           this.searchResults = [];
           this.showSearch = false;
