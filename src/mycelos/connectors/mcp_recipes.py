@@ -323,17 +323,6 @@ RECIPES: dict[str, MCPRecipe] = {
         category="tools",
         requires_node=True,
     ),
-    "mcp-memory": MCPRecipe(
-        id="mcp-memory",
-        name="Memory (Knowledge Graph)",
-        description="Persistent memory via knowledge graph — entities, relations, observations",
-        command="npx -y @modelcontextprotocol/server-memory",
-        transport="stdio",
-        credentials=[],
-        capabilities_preview=["memory.entities", "memory.relations", "memory.search"],
-        category="tools",
-        requires_node=True,
-    ),
 }
 
 

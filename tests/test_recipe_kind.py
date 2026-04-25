@@ -26,3 +26,9 @@ def test_kind_only_accepts_channel_or_mcp() -> None:
     # Exhaustive check: every recipe's kind is one of the two allowed values.
     for recipe in RECIPES.values():
         assert recipe.kind in ("channel", "mcp")
+
+
+def test_mcp_memory_recipe_is_gone() -> None:
+    """mcp-memory was removed — Mycelos's own Knowledge Base owns this concept."""
+    from mycelos.connectors.mcp_recipes import RECIPES
+    assert "mcp-memory" not in RECIPES
