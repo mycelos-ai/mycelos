@@ -169,6 +169,7 @@ class ConnectorAddRequest(BaseModel):
     name: str
     command: str = ""
     secret: str | None = None
+    env_vars: dict[str, str] | None = None  # multi-var path; wins over `secret`
 
 
 class CredentialAddRequest(BaseModel):
@@ -2029,13 +2030,52 @@ def setup_routes(api: FastAPI) -> None:
         # one namespace. The MCP subsystem substitutes `credential:<id>`
         # in env_vars and the SecurityProxy resolves that via the bare
         # name.
+        # env_vars (multi-var) wins over legacy single `secret`. We support
+        # both shapes so recipe-setup code (which sends `secret`) keeps working.
+        cleaned_env_vars: dict[str, str] | None = None
+        if body.env_vars:
+            cleaned_env_vars = {
+                k: v for k, v in body.env_vars.items() if k.strip()
+            }
+            if not cleaned_env_vars:
+                cleaned_env_vars = None  # all keys were blank — fall through
+
         logger.info(
-            "add_connector: name=%s has_secret=%s secret_len=%d",
+            "add_connector: name=%s mode=%s",
             body.name,
-            bool(body.secret),
-            len(body.secret) if body.secret else 0,
+            "multi" if cleaned_env_vars else ("secret" if body.secret else "none"),
         )
-        if body.secret:
+
+        if cleaned_env_vars:
+            try:
+                import json as _json
+                logger.info(
+                    "add_connector: storing multi-var credential service=%s vars=%s",
+                    body.name, list(cleaned_env_vars.keys()),
+                )
+                mycelos.credentials.store_credential(
+                    body.name,
+                    {
+                        "api_key": _json.dumps(cleaned_env_vars),
+                        "env_var": "__multi__",
+                        "connector": body.name,
+                    },
+                    description=f"Credentials for {body.name}",
+                )
+                mycelos.audit.log(
+                    "credential.stored",
+                    details={"connector": body.name, "env_var": "__multi__",
+                             "var_names": list(cleaned_env_vars.keys())},
+                    user_id=_resolve_user_id(request),
+                )
+            except Exception as e:
+                logger.exception("Credential storage failed for connector %s: %s", body.name, e)
+                mycelos.audit.log(
+                    "credential.store_failed",
+                    details={"connector": body.name, "error": str(e)},
+                    user_id=_resolve_user_id(request),
+                )
+        elif body.secret:
             try:
                 # Recipe-declared env_var name (e.g. BRAVE_API_KEY) if the
                 # connector is a known MCP recipe; otherwise derive from
@@ -2054,7 +2094,6 @@ def setup_routes(api: FastAPI) -> None:
                     {"api_key": body.secret, "env_var": env_var_name},
                     description=f"Credentials for {body.name}",
                 )
-                logger.info("add_connector: store_credential returned OK for %s", body.name)
                 mycelos.audit.log(
                     "credential.stored",
                     details={"connector": body.name, "env_var": env_var_name},
@@ -2068,7 +2107,7 @@ def setup_routes(api: FastAPI) -> None:
                     user_id=_resolve_user_id(request),
                 )
         else:
-            logger.info("add_connector: no secret provided for %s — skipping store", body.name)
+            logger.info("add_connector: no creds provided for %s — skipping store", body.name)
 
         # Channel connectors also need a row in `channels` so the channel
         # layer (Telegram polling, Slack socket, ...) actually picks them up.
