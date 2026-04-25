@@ -1675,6 +1675,22 @@ def setup_routes(api: FastAPI) -> None:
             "requires_node": recipe.requires_node,
         }
 
+    @api.get("/api/connectors/lookup-env-vars")
+    async def lookup_connector_env_vars(package: str) -> dict:
+        """Return env-var hints for a known MCP package.
+
+        Wraps mcp_search.lookup_env_vars so the Custom-MCP setup form
+        can prefill its fields when the user types a known package.
+        Failures are silenced — registry availability is not the user's
+        problem; an empty list lets the user enter vars manually.
+        """
+        from mycelos.connectors.mcp_search import lookup_env_vars
+        try:
+            env_vars = lookup_env_vars(package) or []
+        except Exception:
+            env_vars = []
+        return {"env_vars": env_vars}
+
     @api.get("/api/connectors/recipes")
     async def list_recipes_grouped() -> dict[str, list[dict[str, Any]]]:
         """List all connector recipes grouped by `kind`.
