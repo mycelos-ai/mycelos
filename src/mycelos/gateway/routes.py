@@ -2048,7 +2048,6 @@ def setup_routes(api: FastAPI) -> None:
 
         if cleaned_env_vars:
             try:
-                import json as _json
                 logger.info(
                     "add_connector: storing multi-var credential service=%s vars=%s",
                     body.name, list(cleaned_env_vars.keys()),
@@ -2056,7 +2055,7 @@ def setup_routes(api: FastAPI) -> None:
                 mycelos.credentials.store_credential(
                     body.name,
                     {
-                        "api_key": _json.dumps(cleaned_env_vars),
+                        "api_key": json.dumps(cleaned_env_vars),
                         "env_var": "__multi__",
                         "connector": body.name,
                     },
