@@ -129,7 +129,7 @@
         <div class="flex items-center justify-between mb-8">
           <div>
             <h1 class="font-headline text-2xl font-bold tracking-tight glow-text mb-1" x-text="t('connectors.title')">Connectors</h1>
-            <p class="text-on-surface-variant text-sm">Channels and MCP connectors</p>
+            <p class="text-on-surface-variant text-sm">Your installed connectors plus what's available to add.</p>
           </div>
           <button @click="showAddForm = !showAddForm"
                   class="btn-secondary"
@@ -331,22 +331,16 @@
             </div>
             <div id="channels-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <template x-for="recipe in recipeChannels" :key="recipe.id">
-                <div class="usecase-tile group" :class="isConnectorInstalled(recipe.id) && 'installed'"
+                <div class="usecase-tile group"
                      :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
                   <div class="flex items-center gap-2.5 mb-1.5">
                     <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
                     <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
-                    <span x-show="isConnectorInstalled(recipe.id)"
-                          class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">active</span>
                   </div>
                   <p class="text-xs text-on-surface-variant/70 mb-3" x-text="recipe.description"></p>
                   <button @click="setupRecipe(recipe)"
-                          :disabled="isConnectorInstalled(recipe.id)"
-                          class="w-full py-2 rounded-xl text-xs font-bold transition-all"
-                          :class="isConnectorInstalled(recipe.id)
-                            ? 'bg-surface-container text-on-surface-variant/50 cursor-default'
-                            : 'bg-primary/10 text-primary hover:bg-primary/20'">
-                    <span x-text="isConnectorInstalled(recipe.id) ? 'Configured' : 'Set up'"></span>
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all bg-primary/10 text-primary hover:bg-primary/20">
+                    <span>Set up</span>
                   </button>
                 </div>
               </template>
@@ -363,13 +357,11 @@
             </div>
             <div id="mcp-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <template x-for="recipe in recipeMcp" :key="recipe.id">
-                <div class="usecase-tile group" :class="isConnectorInstalled(recipe.id) && 'installed'"
+                <div class="usecase-tile group"
                      :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
                   <div class="flex items-center gap-2.5 mb-1.5">
                     <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
                     <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
-                    <span x-show="isConnectorInstalled(recipe.id)"
-                          class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">installed</span>
                   </div>
                   <p class="text-xs text-on-surface-variant/70 mb-3 line-clamp-2" x-text="recipe.description"></p>
                   <div x-show="(recipe.credentials && recipe.credentials.length > 0) || recipe.setup_flow === 'oauth_http'"
@@ -378,19 +370,13 @@
                     <span class="text-[10px] font-label text-on-surface-variant/40"
                           x-text="recipe.setup_flow === 'oauth_http' ? 'OAuth' : 'Requires API key'"></span>
                   </div>
-                  <button @click="isConnectorInstalled(recipe.id) ? jumpToInstalled(recipe.id) : setupRecipe(recipe)"
-                          :disabled="!isConnectorInstalled(recipe.id) && submitting"
-                          :title="isConnectorInstalled(recipe.id) ? 'Jump to the installed connector below' : ''"
-                          class="w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                          :class="isConnectorInstalled(recipe.id)
-                            ? 'bg-[#48c78e]/10 text-[#48c78e] hover:bg-[#48c78e]/20'
-                            : 'bg-primary/10 text-primary hover:bg-primary/20'">
+                  <button @click="setupRecipe(recipe)"
+                          :disabled="submitting"
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-primary/10 text-primary hover:bg-primary/20">
                     <span class="material-symbols-outlined text-sm"
-                          x-text="isConnectorInstalled(recipe.id) ? 'south'
-                                 : recipe.setup_flow === 'oauth_http' ? 'key'
+                          x-text="recipe.setup_flow === 'oauth_http' ? 'key'
                                  : (recipe.credentials && recipe.credentials.length > 0) ? 'tune' : 'add'"></span>
-                    <span x-text="isConnectorInstalled(recipe.id) ? 'View'
-                                 : recipe.setup_flow === 'oauth_http' ? 'Connect'
+                    <span x-text="recipe.setup_flow === 'oauth_http' ? 'Connect'
                                  : (recipe.credentials && recipe.credentials.length > 0) ? 'Setup' : 'Add'"></span>
                   </button>
                 </div>
@@ -965,8 +951,8 @@
          * by `kind`. Channels render chat endpoints (Telegram, Slack, ...);
          * MCP renders external tool servers (GitHub, Gmail, ...).
          */
-        recipeChannels: [],
-        recipeMcp: [],
+        allChannels: [],
+        allMcp: [],
 
         /**
          * Cosmetic icons for well-known recipes. The backend registry
@@ -995,6 +981,16 @@
           sentry: '\uD83D\uDEA8',
         },
 
+        get installedIds() {
+          return new Set(this.connectors.map(c => c.id || c.name));
+        },
+        get recipeChannels() {
+          return this.allChannels.filter(r => !this.installedIds.has(r.id));
+        },
+        get recipeMcp() {
+          return this.allMcp.filter(r => !this.installedIds.has(r.id));
+        },
+
         recipeIcon(recipe) {
           return this.recipeIcons[recipe.id] || '\uD83D\uDD0C';
         },
@@ -1017,12 +1013,12 @@
             const resp = await fetch('/api/connectors/recipes');
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
-            this.recipeChannels = Array.isArray(data.channels) ? data.channels : [];
-            this.recipeMcp = Array.isArray(data.mcp) ? data.mcp : [];
+            this.allChannels = Array.isArray(data.channels) ? data.channels : [];
+            this.allMcp = Array.isArray(data.mcp) ? data.mcp : [];
           } catch (e) {
             console.warn('Could not load recipes:', e.message);
-            this.recipeChannels = [];
-            this.recipeMcp = [];
+            this.allChannels = [];
+            this.allMcp = [];
           }
         },
 
