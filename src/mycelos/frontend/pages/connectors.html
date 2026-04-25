@@ -84,6 +84,27 @@
     .usecase-tile.installed {
       border-color: rgba(72, 199, 142, 0.25);
     }
+
+    /* Section blocks (Channels, MCP Connectors, Installed) */
+    .section-block {
+      margin-top: 1.5rem;
+    }
+
+    .section-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 0 0 0.75rem 0;
+      color: var(--on-surface, #1f2937);
+    }
+
+    /* Recipe grid — mirrors the inline Tailwind grid used by the
+       Channels / MCP / Installed containers so the layout still works
+       if the inline utility classes are ever removed. */
+    .recipe-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.75rem;
+    }
   </style>
 </head>
 
@@ -108,7 +129,7 @@
         <div class="flex items-center justify-between mb-8">
           <div>
             <h1 class="font-headline text-2xl font-bold tracking-tight glow-text mb-1" x-text="t('connectors.title')">Connectors</h1>
-            <p class="text-on-surface-variant text-sm">Channels, services, and MCP connectors</p>
+            <p class="text-on-surface-variant text-sm">Channels and MCP connectors</p>
           </div>
           <button @click="showAddForm = !showAddForm"
                   class="btn-secondary"
