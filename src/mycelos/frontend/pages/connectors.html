@@ -139,6 +139,185 @@
           </button>
         </div>
 
+        <!-- Installed connectors — connector_registry rows -->
+        <section class="installed-connectors mb-8">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="material-symbols-outlined text-primary text-sm">check_circle</span>
+            <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">Installed</h3>
+            <div class="h-[1px] flex-1 mycelium-line"></div>
+          </div>
+
+          <!-- Loading state -->
+          <div x-show="loading" class="flex flex-col items-center justify-center py-24">
+            <div class="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
+            <span class="text-xs text-on-surface-variant font-label" x-text="t('common.loading')">Loading...</span>
+          </div>
+
+          <!-- Empty state -->
+          <div x-show="!loading && connectors.length === 0" class="flex flex-col items-center justify-center py-24 text-center">
+            <div class="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-5">
+              <span class="material-symbols-outlined text-3xl text-on-surface-variant/30">cable</span>
+            </div>
+            <h3 class="font-headline font-bold text-lg text-on-surface-variant mb-2" x-text="t('connectors.no_connectors')">No connectors yet</h3>
+            <p class="text-sm text-on-surface-variant/60 max-w-sm mb-6">
+              Add an MCP connector to give your agents access to external tools and services.
+            </p>
+            <button @click="showAddForm = true" class="btn-primary text-sm">
+              <span class="material-symbols-outlined text-sm">add_circle</span>
+              Add your first connector
+            </button>
+          </div>
+
+          <!-- Connector cards grid -->
+          <div x-show="!loading && connectors.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <template x-for="connector in connectors" :key="connector.id || connector.name">
+              <div class="card group relative animate-fade-in transition-shadow"
+                   :id="'connector-card-' + (connector.id || connector.name)"
+                   :class="connector._highlight && 'ring-2 ring-primary ring-offset-2 ring-offset-background'">
+
+                <!-- Delete button (top-right, visible on hover) -->
+                <button @click="confirmDelete(connector)"
+                        class="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant/30 hover:text-error hover:bg-error/10
+                               opacity-0 group-hover:opacity-100 transition-all"
+                        title="Remove connector">
+                  <span class="material-symbols-outlined text-sm">delete</span>
+                </button>
+
+                <!-- Header: name + status -->
+                <div class="flex items-start gap-3 mb-3">
+                  <div class="w-10 h-10 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0"
+                       style="border: 1px solid rgba(70, 72, 77, 0.15);">
+                    <span class="material-symbols-outlined text-primary">extension</span>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <h3 class="font-headline font-bold text-sm text-on-surface truncate" x-text="connector.name"></h3>
+                    <div class="flex items-center gap-2 mt-1">
+                      <!-- Status dot -->
+                      <div :class="connector.status === 'connected' ? 'dot-connected'
+                                 : connector.status === 'error' ? 'dot-error'
+                                 : 'dot-disconnected'"></div>
+                      <span class="text-[10px] font-label uppercase tracking-widest"
+                            :class="connector.status === 'connected' ? 'text-[#48c78e]'
+                                  : connector.status === 'error' ? 'text-error'
+                                  : 'text-on-surface-variant/50'"
+                            x-text="connector.status || 'disconnected'"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Type badge + tool count + operational state chip -->
+                <div class="flex items-center gap-2 mb-3 flex-wrap">
+                  <span class="status-badge"
+                        :class="connector.type === 'mcp' ? 'status-badge--active'
+                              : connector.type === 'search' ? 'status-badge--proposed'
+                              : connector.type === 'channel' ? 'status-badge--success'
+                              : 'status-badge--paused'"
+                        x-text="connector.type || 'mcp'"></span>
+                  <span x-show="connector.tool_count"
+                        class="text-[10px] font-label font-bold text-on-surface-variant bg-surface-container-low px-2 py-0.5 rounded-full"
+                        x-text="connector.tool_count + ' tools'"></span>
+                  <!-- Derived operational state: setup_incomplete / ready / healthy / failing -->
+                  <span x-show="connector.operational_state"
+                        class="text-[10px] font-label font-bold px-2 py-0.5 rounded-full"
+                        :class="connector.operational_state === 'healthy' ? 'bg-[#48c78e]/15 text-[#48c78e]'
+                              : connector.operational_state === 'failing' ? 'bg-error/15 text-error'
+                              : connector.operational_state === 'setup_incomplete' ? 'bg-warning/15 text-warning'
+                              : 'bg-surface-container-low text-on-surface-variant'"
+                        x-text="connector.operational_state === 'healthy' ? '● healthy'
+                              : connector.operational_state === 'failing' ? '● failing'
+                              : connector.operational_state === 'setup_incomplete' ? '● setup incomplete'
+                              : '○ ready'"></span>
+                </div>
+
+                <!-- Last error (only while failing) -->
+                <div x-show="connector.operational_state === 'failing' && connector.last_error"
+                     class="text-[11px] text-error/80 bg-error/5 border border-error/15 rounded-lg px-2 py-1 mb-2">
+                  <span class="material-symbols-outlined text-xs align-middle">error_outline</span>
+                  <span x-text="connector.last_error"></span>
+                </div>
+
+                <!-- Description -->
+                <p x-show="connector.description"
+                   class="text-xs text-on-surface-variant/70 leading-relaxed mb-3 line-clamp-2"
+                   x-text="connector.description"></p>
+
+                <!-- Actions: test + transparency panel -->
+                <div class="flex items-center gap-3 text-[10px] font-label uppercase tracking-widest">
+                  <button @click="testConnector(connector)"
+                          :disabled="connector._testing"
+                          class="flex items-center gap-1 text-primary/80 hover:text-primary disabled:opacity-50 transition-colors">
+                    <span class="material-symbols-outlined text-xs"
+                          :class="connector._testing && 'animate-spin'"
+                          x-text="connector._testing ? 'progress_activity' : 'network_check'"></span>
+                    <span x-text="connector._testing ? 'Testing…' : 'Test connection'"></span>
+                  </button>
+                  <button @click="toggleDetails(connector)"
+                          class="flex items-center gap-1 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <span class="material-symbols-outlined text-xs transition-transform"
+                          :class="connector._expanded && 'rotate-180'">expand_more</span>
+                    <span x-text="connector._expanded ? 'Hide details' : 'Show details'"></span>
+                  </button>
+                </div>
+
+                <!-- Test result (transient) -->
+                <div x-show="connector._test_result" x-transition
+                     class="text-[11px] rounded-lg px-2 py-1 mt-2"
+                     :class="connector._test_result?.ok === true ? 'bg-[#48c78e]/10 text-[#48c78e]'
+                           : connector._test_result?.ok === false ? 'bg-error/10 text-error'
+                           : 'bg-surface-container-low text-on-surface-variant'"
+                     x-text="connector._test_result?.detail"></div>
+
+                <!-- Tool transparency panel -->
+                <div x-show="connector._expanded" x-transition
+                     class="mt-3 pt-3 border-t border-on-surface/5 space-y-2">
+                  <!-- Last activity line -->
+                  <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70">
+                    Last activity
+                  </div>
+                  <div class="text-xs text-on-surface-variant">
+                    <template x-if="connector.last_success_at">
+                      <span>✓ last success <span x-text="formatRelative(connector.last_success_at)"></span></span>
+                    </template>
+                    <template x-if="!connector.last_success_at && !connector.last_error_at">
+                      <span class="text-on-surface-variant/60">no activity recorded yet</span>
+                    </template>
+                    <template x-if="connector.last_error_at">
+                      <div class="mt-1">✗ last error <span x-text="formatRelative(connector.last_error_at)"></span></div>
+                    </template>
+                  </div>
+
+                  <!-- Tool list (fetched on expand) -->
+                  <template x-if="connector._tools_loading">
+                    <div class="text-[11px] text-on-surface-variant/60">Loading tools…</div>
+                  </template>
+                  <template x-if="connector._tools && connector._tools.length > 0">
+                    <div class="space-y-1">
+                      <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70 mt-2">
+                        Tools (<span x-text="connector._tools.length"></span>)
+                      </div>
+                      <template x-for="tool in connector._tools" :key="tool.full_name">
+                        <div class="flex items-start gap-2 px-3 py-1.5 rounded-lg bg-surface-container-low/50 text-xs"
+                             :class="tool.blocked && 'opacity-60'">
+                          <span class="material-symbols-outlined text-xs text-on-surface-variant/40 mt-0.5"
+                                x-text="tool.blocked ? 'block' : 'build'"></span>
+                          <div class="flex-1 min-w-0">
+                            <div class="font-mono text-[11px] text-on-surface-variant" x-text="tool.name"></div>
+                            <div x-show="tool.description" class="text-[11px] text-on-surface-variant/70 mt-0.5" x-text="tool.description"></div>
+                            <div x-show="tool.blocked" class="text-[10px] text-error mt-0.5">blocked by policy</div>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="connector._tools && connector._tools.length === 0 && !connector._tools_loading">
+                    <div class="text-[11px] text-on-surface-variant/60">No tools discovered.</div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+
         <!-- Available connectors: Channels + MCP, populated from /api/connectors/recipes -->
         <section class="available-connectors" x-show="!loading">
 
@@ -576,176 +755,6 @@
               No results found. Try a different search term.
             </p>
           </div>
-        </div>
-
-        <!-- Loading state -->
-        <div x-show="loading" class="flex flex-col items-center justify-center py-24">
-          <div class="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
-          <span class="text-xs text-on-surface-variant font-label" x-text="t('common.loading')">Loading...</span>
-        </div>
-
-        <!-- Empty state -->
-        <div x-show="!loading && connectors.length === 0" class="flex flex-col items-center justify-center py-24 text-center">
-          <div class="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-5">
-            <span class="material-symbols-outlined text-3xl text-on-surface-variant/30">cable</span>
-          </div>
-          <h3 class="font-headline font-bold text-lg text-on-surface-variant mb-2" x-text="t('connectors.no_connectors')">No connectors yet</h3>
-          <p class="text-sm text-on-surface-variant/60 max-w-sm mb-6">
-            Add an MCP connector to give your agents access to external tools and services.
-          </p>
-          <button @click="showAddForm = true" class="btn-primary text-sm">
-            <span class="material-symbols-outlined text-sm">add_circle</span>
-            Add your first connector
-          </button>
-        </div>
-
-        <!-- Connector cards grid -->
-        <div x-show="!loading && connectors.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <template x-for="connector in connectors" :key="connector.id || connector.name">
-            <div class="card group relative animate-fade-in transition-shadow"
-                 :id="'connector-card-' + (connector.id || connector.name)"
-                 :class="connector._highlight && 'ring-2 ring-primary ring-offset-2 ring-offset-background'">
-
-              <!-- Delete button (top-right, visible on hover) -->
-              <button @click="confirmDelete(connector)"
-                      class="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant/30 hover:text-error hover:bg-error/10
-                             opacity-0 group-hover:opacity-100 transition-all"
-                      title="Remove connector">
-                <span class="material-symbols-outlined text-sm">delete</span>
-              </button>
-
-              <!-- Header: name + status -->
-              <div class="flex items-start gap-3 mb-3">
-                <div class="w-10 h-10 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0"
-                     style="border: 1px solid rgba(70, 72, 77, 0.15);">
-                  <span class="material-symbols-outlined text-primary">extension</span>
-                </div>
-                <div class="min-w-0 flex-1">
-                  <h3 class="font-headline font-bold text-sm text-on-surface truncate" x-text="connector.name"></h3>
-                  <div class="flex items-center gap-2 mt-1">
-                    <!-- Status dot -->
-                    <div :class="connector.status === 'connected' ? 'dot-connected'
-                               : connector.status === 'error' ? 'dot-error'
-                               : 'dot-disconnected'"></div>
-                    <span class="text-[10px] font-label uppercase tracking-widest"
-                          :class="connector.status === 'connected' ? 'text-[#48c78e]'
-                                : connector.status === 'error' ? 'text-error'
-                                : 'text-on-surface-variant/50'"
-                          x-text="connector.status || 'disconnected'"></span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Type badge + tool count + operational state chip -->
-              <div class="flex items-center gap-2 mb-3 flex-wrap">
-                <span class="status-badge"
-                      :class="connector.type === 'mcp' ? 'status-badge--active'
-                            : connector.type === 'search' ? 'status-badge--proposed'
-                            : connector.type === 'channel' ? 'status-badge--success'
-                            : 'status-badge--paused'"
-                      x-text="connector.type || 'mcp'"></span>
-                <span x-show="connector.tool_count"
-                      class="text-[10px] font-label font-bold text-on-surface-variant bg-surface-container-low px-2 py-0.5 rounded-full"
-                      x-text="connector.tool_count + ' tools'"></span>
-                <!-- Derived operational state: setup_incomplete / ready / healthy / failing -->
-                <span x-show="connector.operational_state"
-                      class="text-[10px] font-label font-bold px-2 py-0.5 rounded-full"
-                      :class="connector.operational_state === 'healthy' ? 'bg-[#48c78e]/15 text-[#48c78e]'
-                            : connector.operational_state === 'failing' ? 'bg-error/15 text-error'
-                            : connector.operational_state === 'setup_incomplete' ? 'bg-warning/15 text-warning'
-                            : 'bg-surface-container-low text-on-surface-variant'"
-                      x-text="connector.operational_state === 'healthy' ? '● healthy'
-                            : connector.operational_state === 'failing' ? '● failing'
-                            : connector.operational_state === 'setup_incomplete' ? '● setup incomplete'
-                            : '○ ready'"></span>
-              </div>
-
-              <!-- Last error (only while failing) -->
-              <div x-show="connector.operational_state === 'failing' && connector.last_error"
-                   class="text-[11px] text-error/80 bg-error/5 border border-error/15 rounded-lg px-2 py-1 mb-2">
-                <span class="material-symbols-outlined text-xs align-middle">error_outline</span>
-                <span x-text="connector.last_error"></span>
-              </div>
-
-              <!-- Description -->
-              <p x-show="connector.description"
-                 class="text-xs text-on-surface-variant/70 leading-relaxed mb-3 line-clamp-2"
-                 x-text="connector.description"></p>
-
-              <!-- Actions: test + transparency panel -->
-              <div class="flex items-center gap-3 text-[10px] font-label uppercase tracking-widest">
-                <button @click="testConnector(connector)"
-                        :disabled="connector._testing"
-                        class="flex items-center gap-1 text-primary/80 hover:text-primary disabled:opacity-50 transition-colors">
-                  <span class="material-symbols-outlined text-xs"
-                        :class="connector._testing && 'animate-spin'"
-                        x-text="connector._testing ? 'progress_activity' : 'network_check'"></span>
-                  <span x-text="connector._testing ? 'Testing…' : 'Test connection'"></span>
-                </button>
-                <button @click="toggleDetails(connector)"
-                        class="flex items-center gap-1 text-on-surface-variant hover:text-on-surface transition-colors">
-                  <span class="material-symbols-outlined text-xs transition-transform"
-                        :class="connector._expanded && 'rotate-180'">expand_more</span>
-                  <span x-text="connector._expanded ? 'Hide details' : 'Show details'"></span>
-                </button>
-              </div>
-
-              <!-- Test result (transient) -->
-              <div x-show="connector._test_result" x-transition
-                   class="text-[11px] rounded-lg px-2 py-1 mt-2"
-                   :class="connector._test_result?.ok === true ? 'bg-[#48c78e]/10 text-[#48c78e]'
-                         : connector._test_result?.ok === false ? 'bg-error/10 text-error'
-                         : 'bg-surface-container-low text-on-surface-variant'"
-                   x-text="connector._test_result?.detail"></div>
-
-              <!-- Tool transparency panel -->
-              <div x-show="connector._expanded" x-transition
-                   class="mt-3 pt-3 border-t border-on-surface/5 space-y-2">
-                <!-- Last activity line -->
-                <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70">
-                  Last activity
-                </div>
-                <div class="text-xs text-on-surface-variant">
-                  <template x-if="connector.last_success_at">
-                    <span>✓ last success <span x-text="formatRelative(connector.last_success_at)"></span></span>
-                  </template>
-                  <template x-if="!connector.last_success_at && !connector.last_error_at">
-                    <span class="text-on-surface-variant/60">no activity recorded yet</span>
-                  </template>
-                  <template x-if="connector.last_error_at">
-                    <div class="mt-1">✗ last error <span x-text="formatRelative(connector.last_error_at)"></span></div>
-                  </template>
-                </div>
-
-                <!-- Tool list (fetched on expand) -->
-                <template x-if="connector._tools_loading">
-                  <div class="text-[11px] text-on-surface-variant/60">Loading tools…</div>
-                </template>
-                <template x-if="connector._tools && connector._tools.length > 0">
-                  <div class="space-y-1">
-                    <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70 mt-2">
-                      Tools (<span x-text="connector._tools.length"></span>)
-                    </div>
-                    <template x-for="tool in connector._tools" :key="tool.full_name">
-                      <div class="flex items-start gap-2 px-3 py-1.5 rounded-lg bg-surface-container-low/50 text-xs"
-                           :class="tool.blocked && 'opacity-60'">
-                        <span class="material-symbols-outlined text-xs text-on-surface-variant/40 mt-0.5"
-                              x-text="tool.blocked ? 'block' : 'build'"></span>
-                        <div class="flex-1 min-w-0">
-                          <div class="font-mono text-[11px] text-on-surface-variant" x-text="tool.name"></div>
-                          <div x-show="tool.description" class="text-[11px] text-on-surface-variant/70 mt-0.5" x-text="tool.description"></div>
-                          <div x-show="tool.blocked" class="text-[10px] text-error mt-0.5">blocked by policy</div>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
-                </template>
-                <template x-if="connector._tools && connector._tools.length === 0 && !connector._tools_loading">
-                  <div class="text-[11px] text-on-surface-variant/60">No tools discovered.</div>
-                </template>
-              </div>
-            </div>
-          </template>
         </div>
 
       </div>
