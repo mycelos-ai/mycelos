@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -2147,43 +2148,102 @@ def setup_routes(api: FastAPI) -> None:
         # credentials the MCP server needs. Route the mcp_start RPC
         # through proxy_client instead of spawning locally.
         if not is_builtin and recipe and recipe.command and recipe.transport == "stdio":
-            try:
-                env_vars: dict[str, str] = dict(recipe.static_env)
-                for cred_spec in recipe.credentials:
-                    env_var = cred_spec["env_var"]
-                    env_vars[env_var] = f"credential:{body.name}"
+            def _auto_start_recipe() -> None:
+                try:
+                    env_vars: dict[str, str] = dict(recipe.static_env)
+                    for cred_spec in recipe.credentials:
+                        env_var = cred_spec["env_var"]
+                        env_vars[env_var] = f"credential:{body.name}"
 
-                from mycelos.connectors import http_tools as _http_tools
-                proxy_client = getattr(_http_tools, "_proxy_client", None)
-                if proxy_client is not None:
+                    from mycelos.connectors import http_tools as _http_tools
+                    proxy_client = getattr(_http_tools, "_proxy_client", None)
+                    if proxy_client is not None:
+                        import shlex
+                        argv = shlex.split(recipe.command)
+                        resp = proxy_client.mcp_start(
+                            connector_id=body.name,
+                            command=argv,
+                            env_vars=env_vars,
+                            transport=recipe.transport,
+                        )
+                        if resp.get("error"):
+                            raise RuntimeError(resp["error"])
+                        tools = resp.get("tools", [])
+                        mycelos.mcp_manager.register_remote_session(
+                            connector_id=body.name,
+                            session_id=resp.get("session_id", ""),
+                            tools=tools,
+                        )
+                        tool_count = len(tools)
+                    else:
+                        tools = mycelos.mcp_manager.connect(
+                            connector_id=body.name,
+                            command=recipe.command,
+                            env_vars=env_vars,
+                            transport=recipe.transport,
+                        )
+                        tool_count = len(tools)
+                    logger.info("MCP server '%s' auto-started: %d tools", body.name, tool_count)
+                except Exception as e:
+                    logger.warning("MCP auto-start failed for '%s': %s", body.name, e)
+
+            threading.Thread(
+                target=_auto_start_recipe,
+                name=f"mcp-autostart-{body.name}",
+                daemon=True,
+            ).start()
+
+        if not is_builtin and not recipe and body.command:
+            def _auto_start_custom() -> None:
+                try:
+                    stored = mycelos.credentials.get_credential(body.name)
+                    env_vars: dict[str, str] = {}
+                    if stored:
+                        if stored.get("env_var") == "__multi__":
+                            env_vars["__multi__"] = f"credential:{body.name}"
+                        elif stored.get("env_var"):
+                            env_vars[stored["env_var"]] = f"credential:{body.name}"
+
+                    from mycelos.connectors import http_tools as _http_tools
+                    proxy_client = getattr(_http_tools, "_proxy_client", None)
                     import shlex
-                    argv = shlex.split(recipe.command)
-                    resp = proxy_client.mcp_start(
-                        connector_id=body.name,
-                        command=argv,
-                        env_vars=env_vars,
-                        transport=recipe.transport,
+                    argv = shlex.split(body.command)
+                    if proxy_client is not None:
+                        resp = proxy_client.mcp_start(
+                            connector_id=body.name,
+                            command=argv,
+                            env_vars=env_vars,
+                            transport="stdio",
+                        )
+                        if resp.get("error"):
+                            raise RuntimeError(resp["error"])
+                        tools = resp.get("tools", [])
+                        mycelos.mcp_manager.register_remote_session(
+                            connector_id=body.name,
+                            session_id=resp.get("session_id", ""),
+                            tools=tools,
+                        )
+                        tool_count = len(tools)
+                    else:
+                        tools = mycelos.mcp_manager.connect(
+                            connector_id=body.name,
+                            command=body.command,
+                            env_vars=env_vars,
+                            transport="stdio",
+                        )
+                        tool_count = len(tools)
+                    logger.info(
+                        "Custom MCP server '%s' auto-started: %d tools",
+                        body.name, tool_count,
                     )
-                    if resp.get("error"):
-                        raise RuntimeError(resp["error"])
-                    tools = resp.get("tools", [])
-                    mycelos.mcp_manager.register_remote_session(
-                        connector_id=body.name,
-                        session_id=resp.get("session_id", ""),
-                        tools=tools,
-                    )
-                    tool_count = len(tools)
-                else:
-                    tools = mycelos.mcp_manager.connect(
-                        connector_id=body.name,
-                        command=recipe.command,
-                        env_vars=env_vars,
-                        transport=recipe.transport,
-                    )
-                    tool_count = len(tools)
-                logger.info("MCP server '%s' auto-started: %d tools", body.name, tool_count)
-            except Exception as e:
-                logger.warning("MCP auto-start failed for '%s': %s", body.name, e)
+                except Exception as e:
+                    logger.warning("Custom MCP auto-start failed for '%s': %s", body.name, e)
+
+            threading.Thread(
+                target=_auto_start_custom,
+                name=f"mcp-autostart-{body.name}",
+                daemon=True,
+            ).start()
 
         return {"status": "registered", "connector": body.name}
 
