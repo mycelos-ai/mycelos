@@ -981,6 +981,7 @@
           sentry: '\uD83D\uDEA8',
         },
 
+        // Hide already-installed recipes from the Available sections so each connector appears exactly once on the page.
         get installedIds() {
           return new Set(this.connectors.map(c => c.id || c.name));
         },
@@ -1044,29 +1045,6 @@
             this.connectors = [];
           }
           this.loading = false;
-        },
-
-        /**
-         * Scroll to the installed connector card and flash-highlight it.
-         * Called from the 'View' button in the suggested-recipes panel
-         * so users who see an 'Added' recipe immediately know where
-         * their actual installed entry lives — solves a real usability
-         * footgun where the installed list was hidden below the fold.
-         */
-        jumpToInstalled(connectorId) {
-          // setTimeout lets Alpine settle before we scroll — on slow
-          // reflows the card element may not exist yet when this runs
-          // from inside a click handler.
-          setTimeout(() => {
-            const card = document.getElementById('connector-card-' + connectorId);
-            if (!card) return;
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            const target = this.connectors.find(c => (c.id || c.name) === connectorId);
-            if (target) {
-              target._highlight = true;
-              setTimeout(() => { target._highlight = false; }, 2000);
-            }
-          }, 50);
         },
 
         /**
