@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -100,8 +101,7 @@ def test_apply_removes_orphans_and_keeps_real_recipes(tmp_data_dir: Path) -> Non
     assert events, "orphan removal must emit a connector.orphan_removed audit event"
     # audit.query() returns `details` as a JSON string per the SQLite layer
     # (no automatic deserialization). Parse here for the assertion.
-    import json as _json
-    parsed = [_json.loads(e["details"]) if isinstance(e.get("details"), str) else (e.get("details") or {}) for e in events]
+    parsed = [json.loads(e["details"]) if isinstance(e.get("details"), str) else (e.get("details") or {}) for e in events]
     assert any(d.get("id") == "web-search-duckduckgo" for d in parsed)
 
 

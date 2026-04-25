@@ -40,14 +40,15 @@ def _remove_orphan(app, orphan: dict) -> None:
     Single transaction per orphan so partial failure is per-orphan."""
     cid = orphan["id"]
     storage = app.storage
-    storage.execute(
-        "DELETE FROM connector_capabilities WHERE connector_id = ?", (cid,)
-    )
-    storage.execute(
-        "DELETE FROM credentials WHERE service IN (?, ?)",
-        (cid, f"connector:{cid}"),
-    )
-    storage.execute("DELETE FROM connectors WHERE id = ?", (cid,))
+    with storage.transaction():
+        storage.execute(
+            "DELETE FROM connector_capabilities WHERE connector_id = ?", (cid,)
+        )
+        storage.execute(
+            "DELETE FROM credentials WHERE service IN (?, ?)",
+            (cid, f"connector:{cid}"),
+        )
+        storage.execute("DELETE FROM connectors WHERE id = ?", (cid,))
     app.audit.log(
         "connector.orphan_removed",
         details={"id": cid, "name": orphan.get("name") or cid},
@@ -103,10 +104,18 @@ def main(argv: list[str] | None = None) -> int:
 
     backup = _backup_db(db_path)
     print(f"Backup: {backup}")
-    for o in orphans:
-        _remove_orphan(app, o)
-        caps = len(o.get("capabilities") or [])
-        print(f"Removed {o['id']} ({caps} capabilities).")
+    try:
+        for o in orphans:
+            _remove_orphan(app, o)
+            caps = len(o.get("capabilities") or [])
+            print(f"Removed {o['id']} ({caps} capabilities).")
+    except Exception as exc:
+        print(
+            f"\nFAILED mid-cleanup: {exc}\n"
+            f"Restore from {backup} if you want to retry from the original state.",
+            file=sys.stderr,
+        )
+        return 2
 
     app.config.apply_from_state(
         state_manager=app.state_manager,
