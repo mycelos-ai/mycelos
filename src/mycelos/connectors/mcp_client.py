@@ -251,7 +251,14 @@ class MycelosMCPClient:
             if key in os.environ:
                 env[key] = os.environ[key]
 
-        # Inject credentials from CredentialProxy (skip blocked vars)
+        # Inject credentials from CredentialProxy (skip blocked vars).
+        # Two shapes are supported:
+        #  - Single-var: env_vars maps {ENV_NAME: "credential:<service>"}; the
+        #    credential's `api_key` is injected under ENV_NAME.
+        #  - Multi-var (custom MCPs with __multi__ sentinel): env_vars maps
+        #    {"__multi__": "credential:<service>"}; the credential's `api_key`
+        #    is a JSON dict whose keys/values are merged into env directly.
+        import json as _json
         for env_var, source in self._env_vars.items():
             if env_var in _BLOCKED_ENV_VARS:
                 logger.warning(
@@ -259,37 +266,72 @@ class MycelosMCPClient:
                     env_var, self.connector_id,
                 )
                 continue
-            if source.startswith("credential:"):
-                service = source[11:]
-                if self._credential_proxy:
-                    try:
-                        cred = self._credential_proxy.get_credential(service)
-                        if cred and "api_key" in cred:
-                            env[env_var] = cred["api_key"]
-                            logger.info(
-                                "Credential '%s' loaded for MCP server '%s' (env_var=%s, key_len=%d)",
-                                service, self.connector_id, env_var, len(cred["api_key"]),
-                            )
-                        else:
-                            logger.warning(
-                                "Credential '%s' not found for MCP server '%s' "
-                                "(proxy returned %s)",
-                                service, self.connector_id,
-                                "None" if cred is None else "dict without api_key",
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to load credential '%s' for MCP server '%s': %s",
-                            service, self.connector_id, e,
-                        )
-                else:
-                    logger.warning(
-                        "No credential_proxy available for MCP server '%s' — "
-                        "env_var '%s' will not be injected",
-                        self.connector_id, env_var,
-                    )
-            else:
+            if not source.startswith("credential:"):
                 env[env_var] = source
+                continue
+
+            service = source[len("credential:"):]
+            if not self._credential_proxy:
+                logger.warning(
+                    "No credential_proxy available for MCP server '%s' — "
+                    "env_var '%s' will not be injected",
+                    self.connector_id, env_var,
+                )
+                continue
+            try:
+                cred = self._credential_proxy.get_credential(service)
+            except Exception as e:
+                logger.warning(
+                    "Failed to load credential '%s' for MCP server '%s': %s",
+                    service, self.connector_id, e,
+                )
+                continue
+            if not cred or "api_key" not in cred:
+                logger.warning(
+                    "Credential '%s' not found for MCP server '%s' "
+                    "(proxy returned %s)",
+                    service, self.connector_id,
+                    "None" if cred is None else "dict without api_key",
+                )
+                continue
+
+            cred_kind = cred.get("env_var")
+            if cred_kind == "__multi__":
+                try:
+                    blob = _json.loads(cred["api_key"])
+                except Exception as e:
+                    logger.warning(
+                        "Multi-var credential '%s' has malformed JSON for MCP server '%s': %s",
+                        service, self.connector_id, e,
+                    )
+                    continue
+                if not isinstance(blob, dict):
+                    logger.warning(
+                        "Multi-var credential '%s' is not a JSON object for MCP server '%s' "
+                        "(got %s)",
+                        service, self.connector_id, type(blob).__name__,
+                    )
+                    continue
+                injected: list[str] = []
+                for k, v in blob.items():
+                    if k in _BLOCKED_ENV_VARS:
+                        logger.warning(
+                            "Blocked dangerous env var '%s' from multi-var credential "
+                            "for MCP server '%s'", k, self.connector_id,
+                        )
+                        continue
+                    env[k] = str(v)
+                    injected.append(k)
+                logger.info(
+                    "Multi-var credential '%s' loaded for MCP server '%s' (vars=%s)",
+                    service, self.connector_id, injected,
+                )
+            else:
+                env[env_var] = cred["api_key"]
+                logger.info(
+                    "Credential '%s' loaded for MCP server '%s' (env_var=%s, key_len=%d)",
+                    service, self.connector_id, env_var, len(cred["api_key"]),
+                )
 
         return env
 
