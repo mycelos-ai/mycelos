@@ -139,6 +139,116 @@
           </button>
         </div>
 
+        <!-- Add Connector Form -->
+        <div x-show="showAddForm" x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 -translate-y-2"
+             x-transition:enter-end="opacity-1 translate-y-0"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-1"
+             x-transition:leave-end="opacity-0 -translate-y-2"
+             class="card mb-8">
+
+          <div class="flex items-center gap-2 mb-5">
+            <span class="material-symbols-outlined text-primary">extension</span>
+            <h2 class="font-headline font-bold text-sm tracking-widest uppercase text-primary">New Connector</h2>
+            <div class="h-[1px] flex-1 mycelium-line"></div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+            <!-- Name -->
+            <div>
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Name</label>
+              <input type="text" x-model="newConnector.name"
+                     class="input-field" placeholder="e.g. playwright">
+            </div>
+            <!-- Secret (optional) -->
+            <div>
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Secret <span class="opacity-40">(optional)</span></label>
+              <input type="password" x-model="newConnector.secret"
+                     class="input-field" placeholder="API key or token">
+            </div>
+          </div>
+
+          <!-- Command -->
+          <div class="mb-5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Command</label>
+            <textarea x-model="newConnector.command"
+                      class="input-field resize-none"
+                      rows="2"
+                      placeholder="npx -y @playwright/mcp-server"></textarea>
+          </div>
+
+          <!-- Actions row -->
+          <div class="flex items-center justify-between">
+            <button @click="showSearch = !showSearch"
+                    class="flex items-center gap-2 text-xs text-tertiary hover:text-tertiary-container transition-colors font-label">
+              <span class="material-symbols-outlined text-sm">search</span>
+              Search MCP Registry
+            </button>
+            <div class="flex items-center gap-3">
+              <button @click="showAddForm = false; resetForm()"
+                      class="text-xs text-on-surface-variant hover:text-on-surface transition-colors font-label uppercase tracking-widest">
+                Cancel
+              </button>
+              <button @click="addConnector()"
+                      :disabled="!newConnector.name.trim() || !newConnector.command.trim() || submitting"
+                      class="btn-primary text-xs px-5 py-2"
+                      :class="(!newConnector.name.trim() || !newConnector.command.trim() || submitting) && 'opacity-40 cursor-not-allowed'">
+                <span class="material-symbols-outlined text-sm" x-show="!submitting">add</span>
+                <span class="material-symbols-outlined text-sm animate-spin" x-show="submitting">progress_activity</span>
+                <span x-text="submitting ? 'Adding...' : t('connectors.add')">Add Connector</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- MCP Registry Search (nested inside add form) -->
+          <div x-show="showSearch" x-transition class="mt-6 pt-5" style="border-top: 1px solid rgba(70, 72, 77, 0.2);">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-tertiary text-sm">travel_explore</span>
+              <h3 class="text-[10px] font-label uppercase tracking-widest text-tertiary font-bold">MCP Registry</h3>
+            </div>
+
+            <!-- Search bar -->
+            <div class="flex gap-3 mb-4">
+              <input type="text" x-model="searchQuery"
+                     @keydown.enter="searchMCP()"
+                     class="input-field flex-1" placeholder="Search for MCP servers (e.g. playwright, github, slack)">
+              <button @click="searchMCP()"
+                      :disabled="!searchQuery.trim() || searching"
+                      class="btn-secondary px-4"
+                      :class="(!searchQuery.trim() || searching) && 'opacity-40 cursor-not-allowed'">
+                <span class="material-symbols-outlined text-sm" x-show="!searching">search</span>
+                <span class="material-symbols-outlined text-sm animate-spin" x-show="searching">progress_activity</span>
+                Search
+              </button>
+            </div>
+
+            <!-- Search results -->
+            <div x-show="searchResults.length > 0" class="space-y-2">
+              <template x-for="result in searchResults" :key="result.name">
+                <button @click="selectSearchResult(result)"
+                        class="w-full text-left p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-colors group"
+                        style="border: 1px solid rgba(70, 72, 77, 0.1);">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-headline font-bold text-sm text-on-surface group-hover:text-primary transition-colors"
+                          x-text="result.name"></span>
+                    <span class="text-[10px] font-label text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">Click to use</span>
+                  </div>
+                  <p class="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-2" x-text="result.description"></p>
+                  <code class="text-[11px] text-primary/70 bg-primary/5 px-2 py-0.5 rounded font-mono"
+                        x-text="result.command || result.install_command || ''"></code>
+                </button>
+              </template>
+            </div>
+
+            <!-- Search empty state -->
+            <p x-show="searchResults.length === 0 && searchQuery && !searching"
+               class="text-xs text-on-surface-variant/50 text-center py-4 font-label">
+              No results found. Try a different search term.
+            </p>
+          </div>
+        </div>
+
         <!-- Installed connectors — connector_registry rows -->
         <section class="installed-connectors mb-8">
           <div class="flex items-center gap-2 mb-4">
@@ -631,116 +741,6 @@
           <span class="material-symbols-outlined text-sm"
                 x-text="toast.type === 'success' ? 'check_circle' : 'error'"></span>
           <span class="text-sm font-medium" x-text="toast.message"></span>
-        </div>
-
-        <!-- Add Connector Form -->
-        <div x-show="showAddForm" x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0 -translate-y-2"
-             x-transition:enter-end="opacity-1 translate-y-0"
-             x-transition:leave="transition ease-in duration-150"
-             x-transition:leave-start="opacity-1"
-             x-transition:leave-end="opacity-0 -translate-y-2"
-             class="card mb-8">
-
-          <div class="flex items-center gap-2 mb-5">
-            <span class="material-symbols-outlined text-primary">extension</span>
-            <h2 class="font-headline font-bold text-sm tracking-widest uppercase text-primary">New Connector</h2>
-            <div class="h-[1px] flex-1 mycelium-line"></div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-            <!-- Name -->
-            <div>
-              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Name</label>
-              <input type="text" x-model="newConnector.name"
-                     class="input-field" placeholder="e.g. playwright">
-            </div>
-            <!-- Secret (optional) -->
-            <div>
-              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Secret <span class="opacity-40">(optional)</span></label>
-              <input type="password" x-model="newConnector.secret"
-                     class="input-field" placeholder="API key or token">
-            </div>
-          </div>
-
-          <!-- Command -->
-          <div class="mb-5">
-            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Command</label>
-            <textarea x-model="newConnector.command"
-                      class="input-field resize-none"
-                      rows="2"
-                      placeholder="npx -y @playwright/mcp-server"></textarea>
-          </div>
-
-          <!-- Actions row -->
-          <div class="flex items-center justify-between">
-            <button @click="showSearch = !showSearch"
-                    class="flex items-center gap-2 text-xs text-tertiary hover:text-tertiary-container transition-colors font-label">
-              <span class="material-symbols-outlined text-sm">search</span>
-              Search MCP Registry
-            </button>
-            <div class="flex items-center gap-3">
-              <button @click="showAddForm = false; resetForm()"
-                      class="text-xs text-on-surface-variant hover:text-on-surface transition-colors font-label uppercase tracking-widest">
-                Cancel
-              </button>
-              <button @click="addConnector()"
-                      :disabled="!newConnector.name.trim() || !newConnector.command.trim() || submitting"
-                      class="btn-primary text-xs px-5 py-2"
-                      :class="(!newConnector.name.trim() || !newConnector.command.trim() || submitting) && 'opacity-40 cursor-not-allowed'">
-                <span class="material-symbols-outlined text-sm" x-show="!submitting">add</span>
-                <span class="material-symbols-outlined text-sm animate-spin" x-show="submitting">progress_activity</span>
-                <span x-text="submitting ? 'Adding...' : t('connectors.add')">Add Connector</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- MCP Registry Search (nested inside add form) -->
-          <div x-show="showSearch" x-transition class="mt-6 pt-5" style="border-top: 1px solid rgba(70, 72, 77, 0.2);">
-            <div class="flex items-center gap-2 mb-4">
-              <span class="material-symbols-outlined text-tertiary text-sm">travel_explore</span>
-              <h3 class="text-[10px] font-label uppercase tracking-widest text-tertiary font-bold">MCP Registry</h3>
-            </div>
-
-            <!-- Search bar -->
-            <div class="flex gap-3 mb-4">
-              <input type="text" x-model="searchQuery"
-                     @keydown.enter="searchMCP()"
-                     class="input-field flex-1" placeholder="Search for MCP servers (e.g. playwright, github, slack)">
-              <button @click="searchMCP()"
-                      :disabled="!searchQuery.trim() || searching"
-                      class="btn-secondary px-4"
-                      :class="(!searchQuery.trim() || searching) && 'opacity-40 cursor-not-allowed'">
-                <span class="material-symbols-outlined text-sm" x-show="!searching">search</span>
-                <span class="material-symbols-outlined text-sm animate-spin" x-show="searching">progress_activity</span>
-                Search
-              </button>
-            </div>
-
-            <!-- Search results -->
-            <div x-show="searchResults.length > 0" class="space-y-2">
-              <template x-for="result in searchResults" :key="result.name">
-                <button @click="selectSearchResult(result)"
-                        class="w-full text-left p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-colors group"
-                        style="border: 1px solid rgba(70, 72, 77, 0.1);">
-                  <div class="flex items-center justify-between mb-1">
-                    <span class="font-headline font-bold text-sm text-on-surface group-hover:text-primary transition-colors"
-                          x-text="result.name"></span>
-                    <span class="text-[10px] font-label text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">Click to use</span>
-                  </div>
-                  <p class="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-2" x-text="result.description"></p>
-                  <code class="text-[11px] text-primary/70 bg-primary/5 px-2 py-0.5 rounded font-mono"
-                        x-text="result.command || result.install_command || ''"></code>
-                </button>
-              </template>
-            </div>
-
-            <!-- Search empty state -->
-            <p x-show="searchResults.length === 0 && searchQuery && !searching"
-               class="text-xs text-on-surface-variant/50 text-center py-4 font-label">
-              No results found. Try a different search term.
-            </p>
-          </div>
         </div>
 
       </div>
