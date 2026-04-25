@@ -118,160 +118,87 @@
           </button>
         </div>
 
-        <!-- Channels section -->
-        <div x-show="!loading" class="mb-8">
-          <div class="flex items-center gap-2 mb-4">
-            <span class="material-symbols-outlined text-primary text-sm">forum</span>
-            <h2 class="text-[10px] font-label uppercase tracking-widest text-primary font-bold">Channels</h2>
-            <div class="h-[1px] flex-1 mycelium-line"></div>
-          </div>
+        <!-- Available connectors: Channels + MCP, populated from /api/connectors/recipes -->
+        <section class="available-connectors" x-show="!loading">
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <template x-for="ch in channels" :key="ch.id">
-              <div class="usecase-tile group" :class="isChannelConfigured(ch) && 'installed'">
-                <div class="flex items-center gap-2.5 mb-1.5">
-                  <span class="text-xl leading-none" x-text="ch.icon"></span>
-                  <span class="font-headline font-bold text-sm text-on-surface" x-text="ch.name"></span>
-                  <span x-show="isChannelConfigured(ch)"
-                        class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">active</span>
-                </div>
-                <p class="text-xs text-on-surface-variant/70 mb-3" x-text="ch.description"></p>
-                <button @click="setupChannel(ch)"
-                        class="w-full py-2 rounded-xl text-xs font-bold transition-all"
-                        :class="isChannelConfigured(ch)
-                          ? 'bg-surface-container text-on-surface-variant/50 cursor-default'
-                          : 'bg-primary/10 text-primary hover:bg-primary/20'">
-                  <span x-text="isChannelConfigured(ch) ? 'Configured' : 'Set up'"></span>
-                </button>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Services section (builtins) -->
-        <div x-show="!loading" class="mb-8">
-          <div class="flex items-center gap-2 mb-4">
-            <span class="material-symbols-outlined text-primary text-sm">build</span>
-            <h2 class="text-[10px] font-label uppercase tracking-widest text-primary font-bold">Services</h2>
-            <div class="h-[1px] flex-1 mycelium-line"></div>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <template x-for="svc in services" :key="svc.id">
-              <div class="usecase-tile group" :class="isConnectorInstalled(svc.id) && 'installed'">
-                <div class="flex items-center gap-2.5 mb-1.5">
-                  <span class="text-xl leading-none" x-text="svc.icon"></span>
-                  <span class="font-headline font-bold text-sm text-on-surface" x-text="svc.name"></span>
-                  <span x-show="isConnectorInstalled(svc.id)"
-                        class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">active</span>
-                </div>
-                <p class="text-xs text-on-surface-variant/70 mb-3" x-text="svc.description"></p>
-                <button @click="setupService(svc)"
-                        :disabled="isConnectorInstalled(svc.id)"
-                        class="w-full py-2 rounded-xl text-xs font-bold transition-all"
-                        :class="isConnectorInstalled(svc.id)
-                          ? 'bg-surface-container text-on-surface-variant/50 cursor-default'
-                          : 'bg-primary/10 text-primary hover:bg-primary/20'">
-                  <span x-text="isConnectorInstalled(svc.id) ? 'Connected' : 'Set up'"></span>
-                </button>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- MCP Connectors section -->
-        <div x-show="!loading" class="mb-8">
-          <div class="flex items-center gap-2 mb-4">
-            <span class="material-symbols-outlined text-primary text-sm">hub</span>
-            <h2 class="text-[10px] font-label uppercase tracking-widest text-primary font-bold">MCP Connectors</h2>
-            <div class="h-[1px] flex-1 mycelium-line"></div>
-          </div>
-
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            <template x-for="uc in useCases" :key="uc.id">
-              <div class="usecase-tile group" :class="isUseCaseInstalled(uc) && 'installed'"
-                   @click="openUseCase(uc)">
-                <div class="flex items-center gap-2.5 mb-2">
-                  <template x-if="uc.icon && uc.icon.startsWith('http')">
-                    <img :src="uc.icon" :alt="uc.label" class="w-5 h-5 object-contain">
-                  </template>
-                  <template x-if="!uc.icon || !uc.icon.startsWith('http')">
-                    <span class="text-xl leading-none" x-text="uc.icon"></span>
-                  </template>
-                  <span class="font-headline font-bold text-sm text-on-surface group-hover:text-primary transition-colors truncate"
-                        x-text="uc.label"></span>
-                </div>
-                <div class="flex flex-wrap gap-1">
-                  <template x-for="c in uc.connectors" :key="c.id">
-                    <span class="text-[10px] font-label px-1.5 py-0.5 rounded-md transition-colors"
-                          :class="isConnectorInstalled(c.id)
-                            ? 'bg-[#48c78e]/10 text-[#48c78e]'
-                            : 'bg-surface-container-low text-on-surface-variant/60 group-hover:text-on-surface-variant'"
-                          x-text="c.name"></span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Use-case detail panel (shows connectors in selected category) -->
-        <div x-show="activeUseCase" x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0 -translate-y-2"
-             x-transition:enter-end="opacity-1 translate-y-0"
-             x-transition:leave="transition ease-in duration-150"
-             x-transition:leave-start="opacity-1"
-             x-transition:leave-end="opacity-0 -translate-y-2"
-             class="card mb-8">
-
-          <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-2">
-              <template x-if="activeUseCase?.icon && activeUseCase.icon.startsWith('http')">
-                <img :src="activeUseCase.icon" :alt="activeUseCase.label" class="w-5 h-5 object-contain">
-              </template>
-              <template x-if="!activeUseCase?.icon || !activeUseCase.icon.startsWith('http')">
-                <span class="text-xl" x-text="activeUseCase?.icon"></span>
-              </template>
-              <h2 class="font-headline font-bold text-sm tracking-widest uppercase text-primary"
-                  x-text="activeUseCase?.label"></h2>
+          <!-- Channels section -->
+          <div class="section-block mb-8" id="channels-section"
+               x-show="recipeChannels.length > 0">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary text-sm">forum</span>
+              <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">Channels</h3>
+              <div class="h-[1px] flex-1 mycelium-line"></div>
             </div>
-            <button @click="activeUseCase = null"
-                    class="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface transition-colors">
-              <span class="material-symbols-outlined text-sm">close</span>
-            </button>
+            <div id="channels-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <template x-for="recipe in recipeChannels" :key="recipe.id">
+                <div class="usecase-tile group" :class="isConnectorInstalled(recipe.id) && 'installed'"
+                     :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
+                  <div class="flex items-center gap-2.5 mb-1.5">
+                    <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
+                    <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
+                    <span x-show="isConnectorInstalled(recipe.id)"
+                          class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">active</span>
+                  </div>
+                  <p class="text-xs text-on-surface-variant/70 mb-3" x-text="recipe.description"></p>
+                  <button @click="setupRecipe(recipe)"
+                          :disabled="isConnectorInstalled(recipe.id)"
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all"
+                          :class="isConnectorInstalled(recipe.id)
+                            ? 'bg-surface-container text-on-surface-variant/50 cursor-default'
+                            : 'bg-primary/10 text-primary hover:bg-primary/20'">
+                    <span x-text="isConnectorInstalled(recipe.id) ? 'Configured' : 'Set up'"></span>
+                  </button>
+                </div>
+              </template>
+            </div>
           </div>
 
-          <div class="space-y-2">
-            <template x-for="c in activeUseCase?.connectors || []" :key="c.id">
-              <div class="flex items-center justify-between p-3 rounded-xl bg-surface-container-low group/item"
-                   style="border: 1px solid rgba(70, 72, 77, 0.1);">
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2 mb-0.5">
-                    <span class="font-headline font-bold text-sm text-on-surface" x-text="c.name"></span>
-                    <span x-show="isConnectorInstalled(c.id)"
-                          class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full">installed</span>
+          <!-- MCP Connectors section -->
+          <div class="section-block mb-8" id="mcp-section"
+               x-show="recipeMcp.length > 0">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary text-sm">hub</span>
+              <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">MCP Connectors</h3>
+              <div class="h-[1px] flex-1 mycelium-line"></div>
+            </div>
+            <div id="mcp-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <template x-for="recipe in recipeMcp" :key="recipe.id">
+                <div class="usecase-tile group" :class="isConnectorInstalled(recipe.id) && 'installed'"
+                     :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
+                  <div class="flex items-center gap-2.5 mb-1.5">
+                    <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
+                    <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
+                    <span x-show="isConnectorInstalled(recipe.id)"
+                          class="text-[10px] font-label text-[#48c78e] bg-[#48c78e]/10 px-1.5 py-0.5 rounded-full ml-auto">installed</span>
                   </div>
-                  <p class="text-xs text-on-surface-variant/70 leading-relaxed" x-text="c.description"></p>
-                  <div x-show="c.credentials_needed" class="flex items-center gap-1 mt-1">
+                  <p class="text-xs text-on-surface-variant/70 mb-3 line-clamp-2" x-text="recipe.description"></p>
+                  <div x-show="(recipe.credentials && recipe.credentials.length > 0) || recipe.setup_flow === 'oauth_http'"
+                       class="flex items-center gap-1 mb-2">
                     <span class="material-symbols-outlined text-xs text-on-surface-variant/40">key</span>
-                    <span class="text-[10px] font-label text-on-surface-variant/40">Requires API key</span>
+                    <span class="text-[10px] font-label text-on-surface-variant/40"
+                          x-text="recipe.setup_flow === 'oauth_http' ? 'OAuth' : 'Requires API key'"></span>
                   </div>
+                  <button @click="isConnectorInstalled(recipe.id) ? jumpToInstalled(recipe.id) : setupRecipe(recipe)"
+                          :disabled="!isConnectorInstalled(recipe.id) && submitting"
+                          :title="isConnectorInstalled(recipe.id) ? 'Jump to the installed connector below' : ''"
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                          :class="isConnectorInstalled(recipe.id)
+                            ? 'bg-[#48c78e]/10 text-[#48c78e] hover:bg-[#48c78e]/20'
+                            : 'bg-primary/10 text-primary hover:bg-primary/20'">
+                    <span class="material-symbols-outlined text-sm"
+                          x-text="isConnectorInstalled(recipe.id) ? 'south'
+                                 : recipe.setup_flow === 'oauth_http' ? 'key'
+                                 : (recipe.credentials && recipe.credentials.length > 0) ? 'tune' : 'add'"></span>
+                    <span x-text="isConnectorInstalled(recipe.id) ? 'View'
+                                 : recipe.setup_flow === 'oauth_http' ? 'Connect'
+                                 : (recipe.credentials && recipe.credentials.length > 0) ? 'Setup' : 'Add'"></span>
+                  </button>
                 </div>
-                <button @click="isConnectorInstalled(c.id) ? jumpToInstalled(c.id) : installFromUseCase(c)"
-                        :disabled="(!isConnectorInstalled(c.id)) && submitting"
-                        :title="isConnectorInstalled(c.id) ? 'Jump to the installed connector below' : ''"
-                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-shrink-0 ml-4"
-                        :class="isConnectorInstalled(c.id)
-                          ? 'bg-[#48c78e]/10 text-[#48c78e] hover:bg-[#48c78e]/20 cursor-pointer'
-                          : 'bg-primary/10 text-primary hover:bg-primary/20'">
-                  <span class="material-symbols-outlined text-sm"
-                        x-text="isConnectorInstalled(c.id) ? 'south' : c.credentials_needed ? 'tune' : 'add'"></span>
-                  <span x-text="isConnectorInstalled(c.id) ? 'View' : c.credentials_needed ? 'Setup' : 'Add'"></span>
-                </button>
-              </div>
-            </template>
+              </template>
+            </div>
           </div>
-        </div>
+
+        </section>
 
         <!-- ═══ Setup Wizard (Telegram / Email / Slack) ═══ -->
         <div x-show="wizard.active" x-transition:enter="transition ease-out duration-200"
@@ -997,70 +924,77 @@
         deleteTarget: null,
         deleting: false,
         toast: { show: false, message: '', type: 'success' },
-        activeUseCase: null,
         wizard: {
           active: false, type: '', step: 1, totalSteps: 3,
           checking: false, error: '',
           data: { token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '', noUpdates: false, verified: false, email: '', password: '', imapServer: '', smtpServer: '', isGmail: false, testDone: false },
         },
 
-        /** Use-case groups with embedded recipe data. */
-        // --- Channels: communication endpoints (not MCP connectors) ---
-        channels: [
-          { id: 'telegram', icon: '\uD83D\uDCAC', name: 'Telegram', description: 'Chat with Mycelos via Telegram bot (long polling)', setup: 'telegram' },
-          { id: 'slack', icon: '\uD83D\uDCE2', name: 'Slack', description: 'Send and receive messages in Slack workspaces', setup: 'slack' },
-        ],
-
-        // --- Services: built-in integrations (no MCP server, just credentials) ---
-        services: [
-          { id: 'email', icon: '\uD83D\uDCE7', name: 'Email', description: 'Gmail, Outlook, iCloud, Yahoo, Zoho, ProtonMail, custom IMAP \u2014 via @n24q02m/better-email-mcp', credentials_needed: true, command: 'npx -y @n24q02m/better-email-mcp' },
-        ],
-
-        // --- MCP Connectors: real MCP servers ---
-        useCases: [
-          { id: 'browse', icon: '\uD83C\uDF10', label: 'Browse the Web', connectors: [
-            { id: 'playwright', name: 'Playwright', description: 'Browser automation \u2014 navigate, click, fill forms, take screenshots', command: 'npx -y @playwright/mcp', credentials_needed: false },
-            { id: 'puppeteer', name: 'Puppeteer', description: 'Headless Chrome \u2014 screenshots, PDF generation, web scraping', command: 'npx -y @modelcontextprotocol/server-puppeteer', credentials_needed: false },
-            { id: 'chrome-devtools', name: 'Chrome DevTools', description: 'DevTools Protocol \u2014 DOM inspection, network, performance', command: 'npx -y @anthropic-ai/mcp-chrome-devtools', credentials_needed: false },
-          ]},
-          { id: 'search', icon: '\uD83D\uDD0D', label: 'Search', connectors: [
-            { id: 'brave-search', name: 'Brave Search', description: 'Web search via Brave Search API (2000 queries/month free)', command: 'npx -y @brave/brave-search-mcp-server', credentials_needed: true },
-            { id: 'fetch', name: 'HTTP Fetch', description: 'Make HTTP requests to any URL', command: 'npx -y @modelcontextprotocol/server-fetch', credentials_needed: false },
-          ]},
-          { id: 'databases', icon: '\uD83D\uDCBE', label: 'Databases', connectors: [
-            { id: 'postgres', name: 'PostgreSQL', description: 'Query PostgreSQL databases \u2014 read-only by default', command: 'npx -y @modelcontextprotocol/server-postgres', credentials_needed: true },
-            { id: 'sqlite', name: 'SQLite', description: 'Query SQLite databases', command: 'npx -y @modelcontextprotocol/server-sqlite', credentials_needed: false },
-          ]},
-          { id: 'files', icon: '\uD83D\uDCC1', label: 'Files', connectors: [
-            { id: 'filesystem', name: 'Filesystem', description: 'Read and write files in allowed directories', command: 'npx -y @modelcontextprotocol/server-filesystem', credentials_needed: false },
-          ]},
-          { id: 'google', icon: 'https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg', label: 'Google Workspace', connectors: [
-            { id: 'gmail', name: 'Gmail', description: 'Read, search, send, and manage Gmail via Google\u2019s official MCP server', command: '', credentials_needed: true },
-          ]},
-          { id: 'dev', icon: '\uD83D\uDCBB', label: 'Development', connectors: [
-            { id: 'github', name: 'GitHub', description: 'Repositories, Issues, Pull Requests, Code Search', command: '', credentials_needed: true },
-            { id: 'git', name: 'Git', description: 'Git operations \u2014 branches, commits, diffs', command: 'npx -y @modelcontextprotocol/server-git', credentials_needed: false },
-            { id: 'docker', name: 'Docker', description: 'Manage containers, images, volumes, and networks', command: 'npx -y @modelcontextprotocol/server-docker', credentials_needed: false },
-          ]},
-          { id: 'projects', icon: '\uD83D\uDCCB', label: 'Project Mgmt', connectors: [
-            { id: 'notion', name: 'Notion', description: 'Read and write Notion pages, databases, and blocks', command: 'npx -y @notionhq/notion-mcp-server', credentials_needed: true },
-            { id: 'linear', name: 'Linear', description: 'Manage Linear issues, projects, and teams', command: 'npx -y @anthropic-ai/mcp-linear', credentials_needed: true },
-            { id: 'sentry', name: 'Sentry', description: 'Access Sentry issues and events for error tracking', command: 'npx -y @sentry/mcp-server-sentry', credentials_needed: true },
-          ]},
-          // The @modelcontextprotocol/server-memory MCP was deliberately
-          // removed from the recipe list in v0.3 — its "Knowledge Graph"
-          // label overlapped confusingly with Mycelos's own memory +
-          // knowledge base subsystems. Users who explicitly want it can
-          // still register it manually:
-          //   /connector add mcp-memory npx -y @modelcontextprotocol/server-memory
-        ],
+        /**
+         * Connector recipes loaded from /api/connectors/recipes, grouped
+         * by `kind`. Channels render chat endpoints (Telegram, Slack, ...);
+         * MCP renders external tool servers (GitHub, Gmail, ...).
+         */
+        recipeChannels: [],
+        recipeMcp: [],
 
         /**
-         * Initialize: load connectors from the API.
+         * Cosmetic icons for well-known recipes. The backend registry
+         * doesn't carry icons; this keeps the visual language without
+         * forcing icon metadata into MCPRecipe. Recipes without an entry
+         * fall back to a generic plug icon.
+         */
+        recipeIcons: {
+          telegram: '\uD83D\uDCAC',
+          slack: '\uD83D\uDCE2',
+          email: '\uD83D\uDCE7',
+          gmail: '\uD83D\uDCE8',
+          github: '\uD83D\uDCBB',
+          git: '\uD83C\uDF3F',
+          docker: '\uD83D\uDC33',
+          playwright: '\uD83C\uDF10',
+          puppeteer: '\uD83D\uDC15',
+          'chrome-devtools': '\uD83D\uDEE0\uFE0F',
+          'brave-search': '\uD83E\uDD81',
+          fetch: '\uD83D\uDD17',
+          postgres: '\uD83D\uDC18',
+          sqlite: '\uD83D\uDCBE',
+          filesystem: '\uD83D\uDCC1',
+          notion: '\uD83D\uDCDD',
+          linear: '\uD83D\uDCCB',
+          sentry: '\uD83D\uDEA8',
+          'mcp-memory': '\uD83E\uDDE0',
+        },
+
+        recipeIcon(recipe) {
+          return this.recipeIcons[recipe.id] || '\uD83D\uDD0C';
+        },
+
+        /**
+         * Initialize: load connectors and available recipes in parallel.
          */
         async init() {
-          await this.loadConnectors();
+          await Promise.all([this.loadConnectors(), this.loadRecipes()]);
           this.detectOAuthReturn();
+        },
+
+        /**
+         * Fetch the recipe catalogue from the gateway. The endpoint
+         * returns {channels: [...], mcp: [...]} — we render each list
+         * into its own section.
+         */
+        async loadRecipes() {
+          try {
+            const resp = await fetch('/api/connectors/recipes');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            this.recipeChannels = Array.isArray(data.channels) ? data.channels : [];
+            this.recipeMcp = Array.isArray(data.mcp) ? data.mcp : [];
+          } catch (e) {
+            console.warn('Could not load recipes:', e.message);
+            this.recipeChannels = [];
+            this.recipeMcp = [];
+          }
         },
 
         /**
@@ -1095,12 +1029,9 @@
          * footgun where the installed list was hidden below the fold.
          */
         jumpToInstalled(connectorId) {
-          // Close the use-case drawer first so the installed grid is
-          // actually visible when we scroll to it.
-          this.activeUseCase = null;
-
-          // Let Alpine re-render before scrolling — DOM isn't updated
-          // synchronously when we flip activeUseCase.
+          // setTimeout lets Alpine settle before we scroll — on slow
+          // reflows the card element may not exist yet when this runs
+          // from inside a click handler.
           setTimeout(() => {
             const card = document.getElementById('connector-card-' + connectorId);
             if (!card) return;
@@ -1322,43 +1253,59 @@
         },
 
         /**
-         * Check if any connector in a use-case group is installed.
+         * Dispatch Set-up click based on recipe kind and setup_flow.
+         *
+         *   channel           → step-by-step wizard (Telegram today)
+         *   mcp/oauth_http    → OAuth dialog (Gmail and future Google recipes)
+         *   mcp/secret + creds→ pre-filled Add-form for manual secret input
+         *   mcp/secret no cred→ direct install via POST /api/connectors
          */
-        isUseCaseInstalled(uc) {
-          return uc.connectors.some(c => this.isConnectorInstalled(c.id));
+        async setupRecipe(recipe) {
+          if (this.isConnectorInstalled(recipe.id)) return;
+          const needsCredentials =
+            (recipe.credentials && recipe.credentials.length > 0)
+            || recipe.setup_flow === 'oauth_http';
+
+          if (recipe.kind === 'channel') {
+            this._openChannelWizard(recipe.id);
+            return;
+          }
+          if (recipe.setup_flow === 'oauth_http') {
+            this.openOAuthDialog(recipe.id);
+            return;
+          }
+          if (needsCredentials) {
+            this.newConnector.name = recipe.id;
+            this.newConnector.command = recipe.command || '';
+            this.newConnector.secret = '';
+            this.showAddForm = true;
+            return;
+          }
+          // No credentials needed — install immediately.
+          this.submitting = true;
+          try {
+            await MycelosAPI.post('/api/connectors', {
+              name: recipe.id,
+              command: recipe.command || '',
+            });
+            await this.loadConnectors();
+            this.showToast(recipe.name + ' added successfully', 'success');
+          } catch (e) {
+            this.showToast('Failed to add ' + recipe.name + ': ' + e.message, 'error');
+          }
+          this.submitting = false;
         },
 
         /**
-         * Check if a channel is configured (has credentials stored).
+         * Launch the channel setup wizard. Telegram has a 3-step flow;
+         * other channel types fall back to a 2-step placeholder so the
+         * wizard chrome still renders correctly.
          */
-        isChannelConfigured(ch) {
-          return this.connectors.some(c => c.name === ch.id || c.id === ch.id);
-        },
-
-        /**
-         * Open setup wizard for a channel or service.
-         */
-        setupChannel(ch) {
-          if (this.isChannelConfigured(ch)) return;
+        _openChannelWizard(channelId) {
           this.showAddForm = false;
-          this.activeUseCase = null;
           this.wizard = {
-            active: true, type: ch.id, step: 1,
-            totalSteps: ch.id === 'telegram' ? 3 : ch.id === 'email' ? 3 : 2,
-            checking: false, error: '',
-            data: { token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '', noUpdates: false, verified: false, email: '', password: '', imapServer: '', smtpServer: '', isGmail: false, testDone: false },
-          };
-        },
-
-        /** Open email setup wizard from the Services section. */
-        setupService(svc) {
-          if (this.isConnectorInstalled(svc.id)) return;
-          this.showAddForm = false;
-          this.activeUseCase = null;
-          const wizardType = svc.id;
-          this.wizard = {
-            active: true, type: wizardType, step: 1,
-            totalSteps: 3,
+            active: true, type: channelId, step: 1,
+            totalSteps: channelId === 'telegram' ? 3 : 2,
             checking: false, error: '',
             data: { token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '', noUpdates: false, verified: false, email: '', password: '', imapServer: '', smtpServer: '', isGmail: false, testDone: false },
           };
@@ -1524,53 +1471,6 @@
           }
           this.wizard.active = false;
           await this.loadConnectors();
-        },
-
-        /**
-         * Open the use-case detail panel showing available connectors.
-         */
-        openUseCase(uc) {
-          this.activeUseCase = this.activeUseCase?.id === uc.id ? null : uc;
-          this.showAddForm = false;
-        },
-
-        /**
-         * Install a connector from the use-case panel.
-         * If credentials are needed, opens the add form pre-filled.
-         * Otherwise, installs directly via API.
-         */
-        async installFromUseCase(connector) {
-          // OAuth-HTTP recipes (Gmail today; Calendar/Drive to follow)
-          // use the dedicated dialog instead of the plain secret form.
-          if (['gmail'].includes(connector.id)) {
-            this.activeUseCase = null;
-            this.openOAuthDialog(connector.id);
-            return;
-          }
-          if (connector.credentials_needed) {
-            // Open manual form pre-filled with recipe data
-            this.newConnector.name = connector.id;
-            this.newConnector.command = connector.command;
-            this.newConnector.secret = '';
-            this.showAddForm = true;
-            this.activeUseCase = null;
-            return;
-          }
-
-          // Direct install (no credentials needed)
-          this.submitting = true;
-          try {
-            await MycelosAPI.post('/api/connectors', {
-              name: connector.id,
-              command: connector.command,
-            });
-            await this.loadConnectors();
-            this.activeUseCase = null;
-            this.showToast(connector.name + ' added successfully', 'success');
-          } catch (e) {
-            this.showToast('Failed to add ' + connector.name + ': ' + e.message, 'error');
-          }
-          this.submitting = false;
         },
 
         /**
