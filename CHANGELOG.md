@@ -51,6 +51,22 @@ deployment on localhost.
 
 ## Week 17 (2026)
 
+### Connector registry unification (single source of truth)
+- `MCPRecipe.kind` (`"channel"` or `"mcp"`) replaces the parallel `CONNECTORS` dict in `cli/connector_cmd.py`. Every connector now lives in one registry (`RECIPES`) — Telegram is the sole `kind="channel"` entry; everything else inherits the `"mcp"` default. Capabilities / setup_flow / category come from the recipe — no more drift between two parallel lists.
+- `mycelos connector setup <id>` routes via `recipe.kind` to either `_setup_channel` (Telegram-specific handler — allowlist via `getUpdates`, polling vs. webhook, `channels` table write) or `_setup_mcp` (recipe-driven credential prompt, policy grant, registry row). The OAuth path on `_setup_mcp` exits before any state mutation — OAuth recipes now point users to the Web UI instead of leaving half-configured registry rows behind.
+- `mycelos connector list` renders three sections: Installed / Channels (not yet configured) / MCP Connectors (not yet configured). The previous single mixed-kind table with a `Kind` column is gone — sections do that job.
+- Chat `/connector add`, `/connector setup`, `/connector remove`, `/connector test` are removed. `/connector list` and `/connector search` stay. Setup happens in the Web UI or via the CLI (`mycelos connector setup <id>`); the deprecated verbs return a pointer instead of executing. Removes ~650 lines of duplicate setup logic from `slash_commands.py`. Autocomplete (`completer.SLASH_COMMANDS["connector"]`) reflects the trimmed verb set.
+- Gateway `/api/connectors/recipes` now returns `{channels: [...], mcp: [...]}` grouped by `recipe.kind`; every payload includes the new `kind` field. `/api/connectors/recipes/{id}` still returns a single recipe and now exposes `kind` too.
+- Connectors page (Web UI) gains two labeled sections — "Channels" and "MCP Connectors" — each with their own card grid, hidden when empty. Setup-button click handlers and the OAuth dialog are unchanged.
+- `connector.unknown_id` and `connector.see_list` i18n keys added (en/de) so the new "Unknown connector …" error matches the rest of the CLI.
+- New tests: `tests/test_recipe_kind.py`, `tests/test_connector_list_two_sections.py`, `tests/test_frontend_connectors_api.py`, `tests/test_connector_slash_trimmed.py`. Existing tests rewritten where they checked the deleted dict shape.
+- Spec / plan: `docs/superpowers/specs/2026-04-24-connector-registry-unification-design.md`, `docs/superpowers/plans/2026-04-24-connector-registry-unification-plan.md`.
+
+### CSRF middleware on the gateway
+- New `CSRFMiddleware` (in `gateway/routes.py`) blocks cross-origin browser POSTs to `/api/*` with a 403. Same-origin and `localhost:*` always pass. Missing both `Origin` and `Referer` (CLI / curl / server-to-server) passes through unchanged. OPTIONS preflight is exempt so CORS keeps working.
+- `MYCELOS_ALLOWED_ORIGINS` env var lets a user whitelist specific external origins (e.g. an internal Grafana dashboard) without opening the door to every site.
+- Threat model: a Mycelos user on `localhost:9100` opens a malicious site in the same browser; the site's JS fires `fetch('http://localhost:9100/api/...')` to exfiltrate or plant data through the user's own session. The Origin/Referer check stops it before the handler runs, while the no-Origin escape hatch keeps the CLI usable.
+
 ### Settings → Models: migration banner + provider winners
 - New endpoints: `GET /api/models/winners` (top per tier per provider, reusing `register_provider_models`), `GET /api/models/upgrades` (detects stale assignments when a newer model exists in the same provider+tier bucket, skips date-only bumps), `POST /api/models/migrate` (re-points selected agent / system-default slots to the new model and auto-registers it from the catalog if missing).
 - Settings page now surfaces an in-place banner (e.g. "Opus 4.5 → 4.7, 5 places use Opus 4.5") with per-assignment checkboxes so the user can opt out row-by-row before applying the upgrade.
