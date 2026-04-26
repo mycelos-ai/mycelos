@@ -67,6 +67,11 @@ deployment on localhost.
 - `MYCELOS_ALLOWED_ORIGINS` env var lets a user whitelist specific external origins (e.g. an internal Grafana dashboard) without opening the door to every site.
 - Threat model: a Mycelos user on `localhost:9100` opens a malicious site in the same browser; the site's JS fires `fetch('http://localhost:9100/api/...')` to exfiltrate or plant data through the user's own session. The Origin/Referer check stops it before the handler runs, while the no-Origin escape hatch keeps the CLI usable.
 
+### Constitution Rule 2 audit
+- New audit suite `tests/security/test_constitution_rule_2.py` verifies that every state-mutating Web-API endpoint produces a `config_generations` row, and pins that invariant for the future. Initial run: all green — the system is already conformant via service-layer notifiers (`ConfigNotifier.notify_change` is called from `CredentialService`, `ConnectorRegistry`, `ModelRegistry`, `AgentRegistry`, `MountManager`, `PolicyEngine`).
+- CLAUDE.md Rule 2 now spells out which tables count as declarative state (connectors, credentials, agents, policies, etc.) and which don't (knowledge, memory, execution traces, sessions). Saves future code reviewers from re-flagging the same false diagnosis we ran into this week.
+- Spec / plan: `docs/superpowers/specs/2026-04-25-constitution-rule-2-audit-design.md`, `docs/superpowers/plans/2026-04-25-constitution-rule-2-audit-plan.md`.
+
 ### Custom MCP connector setup
 - The "Add Connector" form on the Connectors page is a real Custom-MCP setup wizard now. Name, Command, and a repeatable Environment Variables list (Key + Value + delete row + "+ Variable" button) replace the previous single-secret field.
 - When the user pastes a Command, the form looks up the npm package against the MCP Registry (`GET /api/connectors/lookup-env-vars?package=<pkg>`) and pre-fills the env-vars rows on a hit. On miss or registry error, the form silently leaves an empty row for manual entry.
