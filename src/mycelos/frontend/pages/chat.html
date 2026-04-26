@@ -460,7 +460,7 @@
             <div x-show="msg.role === 'actions'" class="flex justify-start w-full animate-slide-in-up">
               <div class="flex flex-wrap gap-2">
                 <template x-for="action in (msg.actions || [])" :key="action.command">
-                  <button @click="action.prefill ? openCommandDialog(action) : (input = action.command, sendMessage())"
+                  <button @click="action.kind === 'link' ? window.location.assign(action.url) : (action.prefill ? openCommandDialog(action) : (input = action.command, sendMessage()))"
                           class="px-4 py-2 rounded-xl text-sm font-medium
                                  bg-primary/10 text-primary border border-primary/20
                                  hover:bg-primary/20 hover:border-primary/40
