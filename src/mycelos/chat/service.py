@@ -47,13 +47,6 @@ _BUILDER_ONLY_TOOLS = {
     "create_workflow",        # 550 tokens — building workflows is Builder's job
 }
 
-# Web-UI-only tools — only loaded when channel="api" (web client).
-# In CLI/Telegram these widgets don't render, so the LLM doesn't need them.
-_WEB_UI_ONLY_TOOLS = {
-    "show_connector_setup",   # 161 tokens — renders setup form in web chat
-    "show_credential_input",  # 143 tokens — renders secure credential input
-}
-
 # Connector-gated tools — in-process tools that depend on a connector
 # being active. Currently empty: email migrated to MCP (served by
 # @n24q02m/better-email-mcp) and its tools are discovered automatically
@@ -82,7 +75,6 @@ def _get_chat_agent_tools(
     - Dynamic tools (connector_tools, connector_call, github_api) injected at runtime
     - handoff (added dynamically by handlers)
     - Builder-only tools (create_workflow) -- saves ~550 tokens per call
-    - Web-UI widgets (show_*) when channel != "api"
     - Connector-gated tools (email_*) -- only included if the connector is active
     """
     _STATIC_TOOL_NAMES = {
@@ -99,7 +91,6 @@ def _get_chat_agent_tools(
         # (registered as an MCP connector). Agents reach them via
         # connector_call, which is already in this allow list.
         "session_set", "session_list",
-        "show_connector_setup", "show_credential_input",
     }
 
     # Determine which connector-gated tools to include
@@ -164,8 +155,6 @@ def _get_chat_agent_tools(
             if name not in _STATIC_TOOL_NAMES:
                 continue
         if name in _BUILDER_ONLY_TOOLS:
-            continue
-        if name in _WEB_UI_ONLY_TOOLS and channel != "api":
             continue
         if name in excluded_gated:
             continue

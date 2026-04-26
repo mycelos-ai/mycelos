@@ -30,7 +30,7 @@ def test_connector_widget_appears_in_chat(
     input_box.fill("Set up the email connector for me")
     input_box.press("Enter")
 
-    # Wait for assistant response (agent may call show_connector_setup or explain)
+    # Wait for assistant response (agent may call ui.open_page or explain)
     page.wait_for_selector("text=MYCELOS", timeout=20000)
     page.wait_for_timeout(3000)  # Wait for tool calls to complete
 
