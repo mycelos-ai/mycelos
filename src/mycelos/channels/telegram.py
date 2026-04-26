@@ -42,6 +42,19 @@ _polling_thread: threading.Thread | None = None
 _pending_permissions: dict[str, dict] = {}  # permission_id → {telegram_user_id, permission}
 
 
+def _mycelos_base_url() -> str:
+    """Absolute URL base for Web-UI links shown in Telegram.
+
+    Telegram clients can't open `localhost` URLs (the user is usually
+    on a phone, not the host computer), so any link we emit needs an
+    absolute host. Uses MYCELOS_PUBLIC_URL when set; otherwise falls
+    back to http://localhost:9100 — paired with the hint text the user
+    knows what to do.
+    """
+    import os
+    return os.environ.get("MYCELOS_PUBLIC_URL", "http://localhost:9100").rstrip("/")
+
+
 def _build_permission_keyboard(permission_id: str, agent_name: str) -> InlineKeyboardMarkup:
     """Build inline keyboard for permission prompt."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -737,6 +750,21 @@ def _render_events(events: list[ChatEvent]) -> str:
             from mycelos.widgets.telegram_renderer import TelegramRenderer
             widget = widget_from_dict(event.data["widget"])
             parts.append(TelegramRenderer().render(widget))
+        elif event.type == "suggested-actions":
+            # Only handle link-kind actions — slash-command suggestions
+            # are Web-UI-only and don't translate to Telegram.
+            actions = event.data.get("actions") or []
+            link_actions = [a for a in actions if a.get("kind") == "link" and a.get("url")]
+            if not link_actions:
+                continue
+            base = _mycelos_base_url()
+            for action in link_actions:
+                label = action.get("label", "Open link")
+                # `url` from the tool is a path like /pages/connectors.html#gmail
+                # — prepend base so Telegram can render it as a real link.
+                full_url = f"{base}{action['url']}"
+                parts.append(f"[{label}]({full_url})")
+            parts.append(f"_{t('telegram.web_link_hint')}_")
 
     return "\n".join(parts)
 

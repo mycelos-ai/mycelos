@@ -444,6 +444,7 @@ telegram:
   service_not_ready: "Service not ready"
   invalid_callback: "Invalid callback"
   not_your_permission: "Not your permission prompt"
+  web_link_hint: "Open this page on the computer where Mycelos is running."
 
 # --- Web UI translations ---
 web:

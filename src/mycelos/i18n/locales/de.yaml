@@ -431,6 +431,7 @@ telegram:
   service_not_ready: "Service nicht bereit"
   invalid_callback: "Ungueltige Callback-Anfrage"
   not_your_permission: "Nicht deine Berechtigungsanfrage"
+  web_link_hint: "Diese Seite musst du auf dem Computer oeffnen, wo Mycelos laeuft."
 
 # --- Web UI Uebersetzungen ---
 web:
