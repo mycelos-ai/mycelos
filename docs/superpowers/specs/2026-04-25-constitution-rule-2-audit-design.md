@@ -1,131 +1,94 @@
-# Constitution Rule 2 Audit — Design
+# Constitution Rule 2 Audit — Design (revised 2026-04-26)
 
-**Date:** 2026-04-25
+**Date:** 2026-04-25 (revised 2026-04-26 after code audit)
 **Status:** Draft
-**Scope:** Close a systematic NixOS-rollback-promise hole: every Web-API endpoint that mutates declarative state must call `app.config.apply_from_state(...)` so the change is captured as a config generation. Today only one (`POST /api/channels`) does so.
+**Scope:** Verify the NixOS-rollback promise for Web-API mutations and lock the invariant in tests for the future. Plus clarify CLAUDE.md so future code reviews don't re-stumble into the false diagnosis that triggered this spec.
 
-## Problem
+## Background — what the audit found
 
-CLAUDE.md Rule 2 ("Config Generation on State Change") says every change to declarative state MUST create a new config generation. The CLI commands honour this — `connector_cmd.py`, `init_cmd.py`, `model_cmd.py` all call `apply_from_state` after mutations. The Web-API does not, with one exception:
+Initial trigger: a code review of `add_connector` claimed the handler skips `apply_from_state`, breaking Rule 2. A direct grep of `routes.py` shows only one `apply_from_state` call (in `POST /api/channels`), which seemed to confirm a systemic hole across ~12 web endpoints.
 
-```
-$ grep -c apply_from_state src/mycelos/gateway/routes.py
-1
-```
+The audit (subagent ran live tests + I traced the service layer) revealed the real shape:
 
-Result: any change made via the Web UI cannot be rolled back to a "state of just before this change" — `mycelos config rollback` only rewinds to whatever the last CLI-driven generation was. This breaks the NixOS promise.
+- **`ConfigNotifier.notify_change()` (`src/mycelos/config/notifier.py`)** wraps `apply_from_state` and is called from every state-mutating service-layer method:
+  - `CredentialService.store_credential / delete_credential / rotate_credential`
+  - `ConnectorRegistry.register / set_status / update / remove`
+  - `ModelRegistry.add_model / remove_model / set_system_defaults / set_agent_models`
+  - `AgentRegistry.register / update / set_capabilities / set_models / …`
+  - `MountManager.add / revoke / delete`
+  - `PolicyEngine` policy writes
+- The handlers in `routes.py` don't need to call `apply_from_state` themselves because the service-layer methods they call already do. The single explicit call in `POST /api/channels` exists because that handler bypasses the service layer (direct `storage.execute` on the `channels` table).
 
-## Goal
+Memory and Knowledge are not declarative state at all — they're content (user preferences, notes, the LLM's growing model of the user) and are intentionally outside Rule 2's scope.
 
-After this spec ships, every state-mutating Web endpoint that touches a declarative table writes a fresh generation, and a test suite locks the invariant in place so future endpoints don't regress.
+**Conclusion: there are zero open Rule 2 violations.** The spec's premise was wrong. What still has value is (a) a test suite that locks the invariant down for the future and (b) a CLAUDE.md clarification so the same false diagnosis doesn't keep recurring.
 
 ## Decisions
 
-### D1: Test-driven audit (one test per mutating endpoint)
+### D1: No handler-level fixes
 
-A new test file `tests/security/test_constitution_rule_2.py` contains one test per relevant endpoint. Each test:
+`routes.py` stays untouched. Every existing mutator that goes through a service-layer method is already conformant. The `POST /api/channels` direct insert keeps its explicit `apply_from_state` call (D5).
 
-1. Reads the current `MAX(id)` from `config_generations`.
+### D2: Audit test suite as regression guard
+
+A new file `tests/security/test_constitution_rule_2.py` contains one test per state-mutating Web endpoint. Each test:
+
+1. Reads `MAX(id) FROM config_generations`.
 2. Calls the endpoint with a realistic request body.
-3. Asserts the mutation happened (the relevant DB row exists / is updated / is deleted).
-4. Asserts `MAX(id)` from `config_generations` increased by exactly 1.
+3. Asserts the mutation actually happened (DB row exists / removed / updated).
+4. Asserts `MAX(id)` advanced by exactly 1.
 
-A test that's red is a bug; we fix the corresponding handler by adding the missing `apply_from_state` call. A test that's green proves the endpoint is conformant.
+A future endpoint that writes directly to a state table without going through a notifier-wired service will fail this suite — that's the regression-guard property we want.
 
-The file lives under `tests/security/` because Rule 2 is a security-relevant invariant (rollback ability is a recovery primitive).
+The tests should mostly pass on first run because the system is already conformant. Any test that fails reveals a real bug (e.g. someone added a new endpoint with a direct write).
 
-### D2: Declarative tables in scope
+### D3: Endpoints in scope (declarative state only)
 
-These tables hold declarative state and changes to them must produce a generation:
+Per the spec's earlier audit, in scope:
 
-- `connectors` + `connector_capabilities`
-- `channels`
-- `credentials` (the rotation/grant lifecycle is part of declarative config)
-- `agent_llm_models` + `agent_capabilities`
-- `agents` (when shape changes — name, model, system prompt)
-- `policies`
-- `scheduled_tasks`
-- `memory_entries` (system / agent / shared scopes; **session scope excluded**)
-- `mounts`
-- `workflows`
+- `POST /api/connectors`, `DELETE /api/connectors/{id}`
+- `POST /api/credentials`, `DELETE /api/credentials/{service}`
+- `POST /api/setup`
+- `PATCH /api/agents/{id}`
+- `POST /api/models/migrate`, `PUT /api/models/system-defaults`, `PUT /api/models/assignments/{agent_id}`
+- `POST /api/channels` (already explicit)
 
-Out of scope (content / ephemeral / observability):
+Out of scope (clarified in D4):
+- `POST /api/memory`, `PUT /api/system/update-check-enabled` — both write to `memory_entries`, which is content, not config.
+- All knowledge / organizer / chat / session / audio / upload endpoints.
 
-- `audit_events` (write-only log)
-- `workflow_runs`, `workflow_events` (execution traces)
-- `knowledge_notes`, `knowledge_links`, `knowledge_config` (content — filesystem-versioned, plus organizer suggestions)
-- `messages`, `conversations`, `attempts`, `plans`, `tasks`, `background_tasks`, `background_task_steps`
-- `mcp_sessions`, `connector_telemetry`, `tool_usage`, `llm_usage`
-- `session_agents`, `capability_tokens`
-- `organizer_suggestions`
-- `users` (single-user; addressed by separate auth spec)
+### D4: CLAUDE.md clarification — what counts as declarative state
 
-### D3: Endpoints that need a fix
+Add a short paragraph to `CLAUDE.md` Rule 2 to nail down which tables are in scope. Without this, the next code reviewer will trip on the same shape.
 
-Audited list as of 2026-04-25:
+Proposed text (to be inserted in the Rule 2 description in CLAUDE.md):
 
-| Endpoint | Writes to | Status |
-|---|---|---|
-| `POST /api/channels` | channels | ✅ already conformant |
-| `POST /api/connectors` | connectors, connector_capabilities, credentials, channels | ❌ fix |
-| `DELETE /api/connectors/{id}` | connectors + caps + credentials | ❌ fix |
-| `PATCH /api/agents/{id}` | agents | ❌ fix |
-| `POST /api/models/migrate` | agent_llm_models | ❌ fix |
-| `PUT /api/models/system-defaults` | agent_llm_models (system rows) | ❌ fix |
-| `PUT /api/models/assignments/{agent_id}` | agent_llm_models | ❌ fix |
-| `POST /api/setup` | credentials | ❌ fix |
-| `POST /api/credentials` | credentials | ❌ fix |
-| `DELETE /api/credentials/{service}` | credentials | ❌ fix |
-| `POST /api/memory` | memory_entries (non-session scopes) | ❌ fix (session-scope writes are exempt) |
-| `PUT /api/system/update-check-enabled` | system config | ❌ fix |
-| `POST /api/config/rollback` | restores a generation | n/a (rollback uses its own path) |
+> **What counts as declarative state for Rule 2:** the tables that describe *how the system is configured* — `connectors`, `connector_capabilities`, `channels`, `credentials`, `agents`, `agent_capabilities`, `agent_llm_models`, `policies`, `scheduled_tasks`, `mounts`, `workflows`. These are managed via service-layer classes (`ConnectorRegistry`, `CredentialService`, `AgentRegistry`, `ModelRegistry`, `MountManager`, `PolicyEngine`) which call `ConfigNotifier.notify_change()` after every mutation; that's how Rule 2 is enforced today. New endpoints that write to these tables MUST go through the service layer (or call `apply_from_state` explicitly if they bypass it, like `POST /api/channels`).
+>
+> **What does NOT count as declarative state:** content tables (`knowledge_notes`, `knowledge_links`, `memory_entries`), execution traces (`audit_events`, `workflow_runs`, `workflow_events`, `tool_usage`, `llm_usage`), and ephemeral/session data (`messages`, `conversations`, `attempts`, `plans`, `tasks`, `background_tasks`, `mcp_sessions`, `connector_telemetry`, `session_agents`, `capability_tokens`, `organizer_suggestions`). These do not need config generations.
 
-Endpoints that touch tables but only in observability / ephemeral ways are out of scope: `POST /api/chat`, `POST /api/sessions`, `POST /api/transcribe`, `POST /api/upload`, `POST /api/connectors/oauth/start` (writes a transient `oauth_state` row only), all knowledge/organizer endpoints, telegram check/verify, model refresh.
+### D5: Direct `storage.execute` writes are an antipattern
 
-### D4: How handlers call `apply_from_state`
+`POST /api/channels` and the channel-row insert inside `add_connector` (line 2133) bypass the service layer and write directly to the `channels` table. The former calls `apply_from_state` explicitly; the latter relies on the prior `connector_registry.register()` having captured the state via its own notifier (since `apply_from_state` snapshots the whole DB).
 
-The existing pattern (`gateway/routes.py:2532`):
+We won't fix the channel-row direct insert in this spec — it's cosmetic (the snapshot includes it) — but the audit test for `POST /api/connectors` will catch it if someone ever moves the connector_registry call elsewhere and breaks the implicit coverage.
 
-```python
-mycelos.config.apply_from_state(
-    state_manager=mycelos.state_manager,
-    description=f"Channel '{name}' configured",
-    trigger="channel_setup",
-)
-```
+### D6: No handler refactors, no service-layer changes
 
-Each fixed handler gets a similar call AFTER the mutation succeeds. The `description` is human-readable, the `trigger` is a short token used by `mycelos config list` to filter. We use these triggers consistently:
-
-- `connector_setup`, `connector_remove`
-- `agent_update`, `agent_model_assign`, `agent_model_default`
-- `credential_setup`, `credential_remove`
-- `memory_set`
-- `model_migrate`
-- `system_setting`
-
-If a handler is wrapped in a `try/except` that swallows mutation errors (Rule 3 — fail-closed), the `apply_from_state` call goes INSIDE the success path so failed mutations don't produce phantom generations.
-
-### D5: Initial baseline
-
-Per Stefan's call (Frage 2): no automatic baseline-snapshot at boot. The next mutating call after this fix ships writes a generation that captures the current state. Older changes are simply not roll-back-able to a "between-then-and-now" point — but the user is single-user and aware.
-
-### D6: No rollback regression
-
-The `POST /api/config/rollback` endpoint stays as-is — it uses its own `rollback(to_generation=...)` path which is the inverse of `apply_from_state`. We do NOT add a generation for "I rolled back" (that would defeat rollback's purpose). The rollback itself is audit-logged, which is enough.
+The original spec had 11 handler edits and a Memory-service notifier addition. After audit: zero edits needed. This is a tests-only spec.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │ tests/security/test_constitution_rule_2.py (NEW)     │
-│   one test per mutating endpoint                     │
-│   pre-state count → call → post-state +1 assertion   │
+│   1 test per state-mutating endpoint (~10 tests)     │
+│   each: pre-count → call → mutation+1 generation     │
 └──────────────────────────────────────────────────────┘
-                       ↓ red tests reveal:
+
 ┌──────────────────────────────────────────────────────┐
-│ src/mycelos/gateway/routes.py                        │
-│   add `apply_from_state` after each successful       │
-│   mutation in: ~12 handlers (see D3 table)           │
+│ CLAUDE.md (revised)                                  │
+│   Rule 2 section gains "what counts" paragraph (D4)  │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -133,115 +96,105 @@ The `POST /api/config/rollback` endpoint stays as-is — it uses its own `rollba
 
 ### `tests/security/test_constitution_rule_2.py` (new)
 
-One test per endpoint in D3. Common structure:
+Common fixtures + helpers:
 
 ```python
-def test_post_credentials_creates_generation(client, app) -> None:
-    before = app.storage.fetchone(
-        "SELECT COALESCE(MAX(id), 0) AS max_id FROM config_generations"
-    )["max_id"]
+@pytest.fixture
+def app_and_client(tmp_data_dir):
+    """Initialised App + bound TestClient."""
+    os.environ["MYCELOS_MASTER_KEY"] = "constitution-rule-2-test-key"
+    from mycelos.app import App
+    from mycelos.gateway.server import create_app
+    app = App(tmp_data_dir)
+    app.initialize()
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    with TestClient(fastapi_app) as client:
+        yield app, client
 
-    resp = client.post("/api/credentials", json={
-        "service": "test-service",
-        "secret": "test-value",
-    })
-    assert resp.status_code == 200, resp.text
 
-    after = app.storage.fetchone(
+def _generation_count(app):
+    row = app.storage.fetchone(
         "SELECT COALESCE(MAX(id), 0) AS max_id FROM config_generations"
-    )["max_id"]
-    assert after == before + 1, (
-        "Constitution Rule 2: state-mutating endpoint must create a "
-        "config generation"
     )
+    return int(row["max_id"])
+
+
+def assert_generation_added(app, before, *, expected_delta=1):
+    after = _generation_count(app)
+    assert after == before + expected_delta, (
+        f"Constitution Rule 2 violation: expected {expected_delta} new "
+        f"config generation(s) (was {before}, now {after}). "
+        "The endpoint mutated declarative state without going through "
+        "a notifier-wired service-layer method."
+    )
+    return after
 ```
 
-A shared fixture provides `client` (FastAPI `TestClient`) and `app` (the underlying `App` instance for direct DB queries).
+One test per endpoint in D3. For an endpoint with multiple sub-paths (e.g. `POST /api/connectors` recipe vs. custom), one representative test is enough.
 
-For endpoints that modify state without inserting (PUT/PATCH/DELETE), the test uses the same generation-count-delta assertion. The "mutation actually happened" assertion adapts: e.g. `DELETE /api/credentials/x` asserts the row is gone; `PATCH /api/agents/x` asserts the field is updated.
+### `CLAUDE.md`
 
-For endpoints with multiple sub-paths (e.g. `POST /api/connectors` with recipe vs. custom), only one representative test per endpoint — the goal is rule enforcement, not exhaustive endpoint coverage.
-
-### `src/mycelos/gateway/routes.py`
-
-For each red test, find the corresponding handler and add `apply_from_state` after the mutation block. Trigger / description per D4.
-
-Example for `POST /api/credentials` (around line 3165):
-
-```python
-@api.post("/api/credentials")
-async def add_credential(body: CredentialAddRequest, request: Request) -> dict:
-    mycelos = api.state.mycelos
-    mycelos.credentials.store_credential(
-        body.service, {"api_key": body.secret}, description=body.description
-    )
-    mycelos.audit.log("credential.stored", details={"service": body.service},
-                      user_id=_resolve_user_id(request))
-    mycelos.config.apply_from_state(
-        state_manager=mycelos.state_manager,
-        description=f"Credential '{body.service}' stored",
-        trigger="credential_setup",
-    )
-    return {"status": "ok"}
-```
-
-The `state_manager` attribute on `App` already exists (CLI uses it).
+Add the D4 paragraph to the Rule 2 description in the Constitution section.
 
 ## Data Flow
 
+Existing flow, unchanged. Documented for clarity:
+
 ```
-User writes via Web UI
+Handler (e.g. POST /api/credentials)
   ↓
-POST /api/credentials {service, secret}
+mycelos.credentials.store_credential(...)        [service layer]
   ↓
-Handler:
-  credentials.store_credential(...)   ← table mutation
-  audit.log("credential.stored", ...) ← Rule 1
-  config.apply_from_state(...)         ← Rule 2 (NEW)
+self._storage.execute("INSERT INTO credentials ...")
+self._notifier.notify_change("Credential stored", "credential_store")
   ↓
-config_generations gains a new row
+ConfigNotifier.notify_change()
   ↓
-Later: `mycelos config list` shows the change
-       `mycelos config rollback N` restores prior state
+self._config.apply_from_state(state_manager, description, trigger)
+  ↓
+config_generations table gains a new row
 ```
+
+The handler doesn't see any of this — Rule 2 is enforced at the service-layer boundary.
 
 ## Error Handling
 
-- **Mutation succeeds, `apply_from_state` raises:** log a warning with `"connector.gen_failed"` audit event but return 200 to the user — the data IS in the DB even if the generation snapshot failed. Better to have an audit-trail-only record than silently undo the mutation. (Same fail mode the existing `POST /api/channels` handler accepts.)
-- **Mutation fails:** existing error path returns 500 / 4xx; `apply_from_state` is never reached; no phantom generation. ✓
-- **Test detects N+1 ≠ before+1:** test fails with the spec violation message; engineer fixes the handler.
+If a service-layer method raises mid-mutation, neither the row nor the generation is written (transactional). If the generation insert fails after the row is written, `ConfigNotifier` logs a warning and continues — the data is still in the DB but rollback may be off by one. Pre-existing behavior; not in scope to change here.
 
 ## Testing
 
-The test file IS the spec. Running the suite is the audit:
+The test file IS the audit. Running it is the verification:
 
 ```
 PYTHONPATH=src pytest tests/security/test_constitution_rule_2.py -v
 ```
 
-Initial run reveals all violations. Each fix turns one test green. Final run: all green.
+Expected on the first run: all tests pass (the system is already conformant — that's the audit conclusion). Future regressions break red.
 
-The existing baseline (`pytest tests/`) must stay at zero failures throughout — fixing handlers should not break any test that previously passed (the new `apply_from_state` call adds a row to `config_generations`; nothing else observable changes).
+The existing baseline (`pytest tests/`) must stay at zero failures throughout.
 
-Manual verification (Stefan, after the fix lands):
-
-1. Open the Web UI, set up a new connector or change a model assignment.
-2. Run `mycelos config list` — the new entry appears with the correct trigger label.
-3. Note the generation number, change something else, run `mycelos config rollback <N>` to confirm the rollback restores the prior state.
+Manual verification (after merge, optional): open the Web UI, change something, run `mycelos config list` — the change should appear with a service-layer trigger label (`credential_store`, `connector_register`, etc.).
 
 ## Success Criteria
 
 1. `tests/security/test_constitution_rule_2.py` exists with one test per endpoint in D3.
-2. All tests in that file pass.
-3. The existing baseline still passes (zero failures).
-4. Every endpoint listed as "❌ fix" in D3 has a `apply_from_state(...)` call after its mutation.
+2. All tests pass on first run (the audit confirms the system is conformant).
+3. Existing baseline still green (zero failures).
+4. CLAUDE.md gains the D4 paragraph clarifying which tables count.
 5. CHANGELOG entry under Week 17.
-6. New endpoints added to `routes.py` in the future SHOULD include their test in this file (note in the file's docstring).
 
 ## Non-Goals
 
-- Initial baseline snapshot at boot (per D5).
-- Per-row generation deltas (a generation captures everything; that's a NixOS feature, not a database schema change).
-- Migrating existing CLI handlers to a different pattern (they're already conformant).
-- Auth / user model (separate spec, Task #76).
-- The `add_connector` channels-table insert getting its own generation distinct from the connector's — one generation per endpoint call is enough.
+- Memory service notifier addition (memory is content, not config).
+- Channel-row-insert direct-write fix in `add_connector` (cosmetic — covered by the prior `connector_registry.register` generation).
+- Removing the legacy `apply_from_state` call in `POST /api/channels` (it's correct because the handler bypasses the service layer).
+- Refactoring `routes.py` for any reason.
+- Auth / user model.
+
+## Notes for future code reviewers
+
+If you're tempted to flag a `routes.py` handler as missing `apply_from_state`:
+
+1. Check whether the handler calls a service-layer method (`mycelos.credentials.*`, `mycelos.connector_registry.*`, `mycelos.model_registry.*`, `mycelos.agent_registry.*`, `mycelos.mounts.*`, `mycelos.policy_engine.*`).
+2. If yes, that method calls `ConfigNotifier.notify_change()` which calls `apply_from_state`. The handler is conformant.
+3. If no — the handler does direct `storage.execute` on a state table — flag it. Add an explicit `apply_from_state` call (like `POST /api/channels`) or refactor through a service.
