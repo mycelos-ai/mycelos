@@ -29,7 +29,7 @@ def build_context(app: Any) -> str:
         else:
             parts.append(
                 "## Available Connectors\n"
-                "No connectors configured. Set one up with: `mycelos connector setup`"
+                "No connectors configured. Open the Connectors page in the Web UI to set one up."
             )
     except Exception:
         pass
@@ -89,7 +89,7 @@ def handle_system_command(app: Any, user_input: str) -> str:
         try:
             connectors = app.connector_registry.list_connectors()
             if not connectors:
-                return "No connectors configured. Set one up with: `mycelos connector setup`"
+                return "No connectors configured. Open the Connectors page in the Web UI to set one up."
             lines = ["**Configured Connectors:**\n"]
             for c in connectors:
                 caps = ", ".join(c["capabilities"])

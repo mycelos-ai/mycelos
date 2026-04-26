@@ -98,7 +98,7 @@ def _handle_help(app: Any, args: list[str]) -> str:
 **/connector** — Connector management (read-only in chat)
   `/connector list` — Show connectors
   `/connector search <query>` — Search the MCP registry
-  _Setup: open the Web UI or run `mycelos connector setup <id>`._
+  _Setup: open the Connectors page in the Web UI._
 
 **/schedule** — Cron jobs
   `/schedule list` — Show scheduled tasks
@@ -688,17 +688,15 @@ def _handle_connector(app: Any, args: list[str]) -> Any:
         return _connector_search(" ".join(args[1:]))
     if action in {"add", "setup", "remove", "test"}:
         return (
-            f"`/connector {action}` is not supported in chat.\n\n"
-            f"To set up or remove a connector, use one of:\n"
-            f"  - **Web UI**: open the Connectors page\n"
-            f"  - **CLI**: `mycelos connector setup <id>` / `mycelos connector remove <id>` / `mycelos connector test <id>`\n\n"
-            f"Credentials stay out of the chat transcript this way."
+            f"`/connector {action}` is not supported in chat. "
+            f"Use the Connectors page in the Web UI to set up or remove a connector — "
+            f"that keeps credentials out of the chat transcript."
         )
     return (
         "Usage:\n"
         "  `/connector list` — Show available and active connectors\n"
         "  `/connector search <query>` — Search the MCP registry for community servers\n\n"
-        "Setup happens in the Web UI or CLI (`mycelos connector setup <id>`)."
+        "Setup happens on the Connectors page in the Web UI."
     )
 
 
@@ -738,7 +736,7 @@ def _connector_list(app: Any) -> str:
         if cid not in RECIPES:
             lines.append(f"- `{cid}` — {c['name']} [**active**]")
 
-    lines.append("\nSetup: open the Web UI Connectors page or run `mycelos connector setup <id>`.")
+    lines.append("\nSetup: open the Connectors page in the Web UI.")
     return "\n".join(lines)
 
 
