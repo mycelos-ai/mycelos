@@ -764,7 +764,18 @@ def _chat_via_gateway(data_dir: Path, debug: bool, continue_session: bool) -> No
                 idx = int(user_input) - 1
                 if 0 <= idx < len(last_actions):
                     action = last_actions[idx]
-                    if action.get("prefill"):
+                    if action.get("kind") == "link" and action.get("url"):
+                        # Link-kind actions can't be re-submitted as chat
+                        # messages — they're URLs to open in a browser.
+                        # CLI users are usually on the host, so a plain
+                        # printed URL plus a hint is enough.
+                        console.print(
+                            f"\n[bold cyan]Open this URL in your browser:[/bold cyan]\n"
+                            f"  [link={action['url']}]{action['url']}[/link]\n"
+                        )
+                        last_actions = []  # consumed; don't re-trigger on next number
+                        continue  # back to top of input loop, don't submit
+                    elif action.get("prefill"):
                         # Prefill: re-prompt with command pre-filled, user adds token
                         console.print(f"  [dim]Complete the command (token never sent to AI):[/dim]")
                         try:
@@ -896,7 +907,18 @@ def _render_gateway_event(event_type: str, data: dict) -> list[dict] | None:
             console.print()
             for i, a in enumerate(actions, 1):
                 label = a.get("label", "?")
-                console.print(f"  [bold cyan][{i}][/bold cyan] {label}")
+                if a.get("kind") == "link" and a.get("url"):
+                    # OSC-8 ANSI hyperlink — clickable in modern terminals
+                    # (iTerm2, kitty, recent gnome-terminal). Older terminals
+                    # ignore the escape and just show the label, hence the
+                    # plain URL in dim parens as a fallback.
+                    url = a["url"]
+                    console.print(
+                        f"  [bold cyan][{i}][/bold cyan] "
+                        f"[link={url}]{label}[/link] [dim]({url})[/dim]"
+                    )
+                else:
+                    console.print(f"  [bold cyan][{i}][/bold cyan] {label}")
             console.print()
             return actions
     elif event_type == "restart":
