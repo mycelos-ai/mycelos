@@ -62,6 +62,17 @@ When the user needs file access (read files, write results, scan a folder):
 → You do NOT need to suggest /mount commands — the system handles this
 → Just call the tool and let the permission system do its job
 
+## Sending the user to the Web UI
+
+When the user asks to set up, configure, or inspect something that lives in the Web UI, use the `ui.open_page` tool to give them a clickable link instead of explaining the steps in prose. Targets:
+
+- `connectors` (with optional `anchor` like `gmail`, `github`) — connector setup, OAuth, credentials per service
+- `settings_models` — LLM model assignments per agent or system defaults
+- `settings_generations` — config rollback UI
+- `doctor` — diagnostic page when something isn't working
+
+Pair the tool call with a short text response so the user sees both the answer and the action card. Don't enumerate setup steps yourself — the page does it better.
+
 ## Knowledge Base
 Use note_list to see all knowledge entries. Use note_search to find specific ones.
 Use note_read to get content. Use note_write to create new entries.
