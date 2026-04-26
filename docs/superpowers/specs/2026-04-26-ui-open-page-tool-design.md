@@ -121,6 +121,18 @@ Open this:
 
 Most users on the CLI are on the same machine where Mycelos runs, so localhost URLs work fine.
 
+### D9: Dead-code sweep — remove prose-routing strings
+
+After `ui.open_page` ships, the agent shouldn't need to spell out "open the Web UI or run `mycelos connector setup`" in plain text anymore. We remove (or rewrite to call the tool) every place that does so today:
+
+- `src/mycelos/chat/slash_commands.py:101` — `_Setup: open the Web UI or run …_` help-text line in the `/connector list` output. Replace the text with a short pointer; the agent itself uses `ui.open_page` for actual setup requests.
+- `src/mycelos/chat/slash_commands.py:693-694, 701` — the deprecation message returned for `/connector add|setup|remove|test`. Keep the deprecation but trim the prose to just "Use the Connectors page in the Web UI." Without the duplicate `mycelos connector setup` mention. The user who hits this in chat is by definition not in the CLI; pointing them at the CLI is noise.
+- `src/mycelos/chat/slash_commands.py:741` — same pattern in `_connector_list`'s footer line. Trim.
+- `src/mycelos/chat/context.py:32, 92` — "No connectors configured. Set one up with: `mycelos connector setup`" — drop the CLI suggestion. The agent receiving this context can call `ui.open_page` itself if it wants to surface a setup link to the user.
+- Mycelos system prompt — any existing line that tells the agent to "explain how to set up X via the Web UI" gets replaced by the new `ui.open_page` usage section (D6 / Components).
+
+This is not about removing the legitimate CLI commands (they stay — Stefan uses them). It's about removing the prose hints in the chat layer that the agent no longer needs because it has a tool now.
+
 ## Architecture
 
 ```
@@ -425,7 +437,8 @@ Manual verification (after merge):
 7. CLI renderer handles `kind: "link"` actions (ANSI hyperlink + plain URL).
 8. Unit tests cover all 4 targets + edge cases.
 9. Capability test pins Mycelos-only access.
-10. CHANGELOG entry under Week 17 (or 18 if we cross the boundary).
+10. Dead-code sweep complete (D9): no remaining prose-routing strings in `slash_commands.py` and `context.py` that point users at the Web UI in plain text.
+11. CHANGELOG entry under Week 17 (or 18 if we cross the boundary).
 
 ## Non-Goals
 
