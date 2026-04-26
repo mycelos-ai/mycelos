@@ -67,6 +67,15 @@ deployment on localhost.
 - `MYCELOS_ALLOWED_ORIGINS` env var lets a user whitelist specific external origins (e.g. an internal Grafana dashboard) without opening the door to every site.
 - Threat model: a Mycelos user on `localhost:9100` opens a malicious site in the same browser; the site's JS fires `fetch('http://localhost:9100/api/...')` to exfiltrate or plant data through the user's own session. The Origin/Referer check stops it before the handler runs, while the no-Origin escape hatch keeps the CLI usable.
 
+### `ui.open_page` tool — agent links the user into admin pages
+- New `ui.open_page` tool lets the Mycelos chat agent send the user directly to a Web-UI page (Connectors, Model settings, Config Generations, Doctor) instead of explaining setup in prose. Optional `anchor` lands on a specific recipe (e.g. `connectors#gmail`); optional `label` overrides the default button text.
+- Frontend chat renderer recognizes the new `kind: "link"` discriminator on suggested-actions cards and navigates via `window.location` instead of submitting a slash-command.
+- Telegram channel renders link actions as Markdown links with the absolute host (`MYCELOS_PUBLIC_URL` env var, defaults to `http://localhost:9100`) plus a hint that the page must be opened on the host computer (`telegram.web_link_hint` i18n key, en + de).
+- CLI chat renderer emits OSC-8 ANSI hyperlinks (clickable in iTerm2 / kitty / modern gnome-terminal) with the URL in dim parens as fallback for older terminals. Number-selection on a link-action prints the URL with a "Open this URL in your browser" hint instead of trying to re-submit.
+- Mycelos system prompt updated with a "Sending the user to the Web UI" section telling the agent when to use the new tool.
+- Dead-code sweep: removed obsolete CLI-routing prose hints from `slash_commands.py` (3 places) and `context.py` (2 places). The agent now points at the Web UI through the tool, not by spelling out CLI commands in transcripts.
+- Spec / plan: `docs/superpowers/specs/2026-04-26-ui-open-page-tool-design.md`, `docs/superpowers/plans/2026-04-26-ui-open-page-tool-plan.md`.
+
 ### Constitution Rule 2 audit
 - New audit suite `tests/security/test_constitution_rule_2.py` verifies that every state-mutating Web-API endpoint produces a `config_generations` row, and pins that invariant for the future. Initial run: all green — the system is already conformant via service-layer notifiers (`ConfigNotifier.notify_change` is called from `CredentialService`, `ConnectorRegistry`, `ModelRegistry`, `AgentRegistry`, `MountManager`, `PolicyEngine`).
 - CLAUDE.md Rule 2 now spells out which tables count as declarative state (connectors, credentials, agents, policies, etc.) and which don't (knowledge, memory, execution traces, sessions). Saves future code reviewers from re-flagging the same false diagnosis we ran into this week.
