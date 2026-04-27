@@ -1380,12 +1380,26 @@
          */
         _openChannelWizard(channelId) {
           this.showAddForm = false;
-          this.wizard = {
+          // Mutate the existing wizard object instead of replacing it.
+          // Alpine registers the original object as reactive on init —
+          // assigning a fresh object detaches every existing x-show /
+          // x-model binding and the wizard panel never appears.
+          Object.assign(this.wizard, {
             active: true, type: channelId, step: 1,
             totalSteps: channelId === 'telegram' ? 3 : 2,
             checking: false, error: '',
-            data: { token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '', noUpdates: false, verified: false, email: '', password: '', imapServer: '', smtpServer: '', isGmail: false, testDone: false },
-          };
+          });
+          Object.assign(this.wizard.data, {
+            token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '',
+            noUpdates: false, verified: false, email: '', password: '',
+            imapServer: '', smtpServer: '', isGmail: false, testDone: false,
+          });
+          // Scroll the wizard card into view — it sits below the recipe
+          // grid and would otherwise be off-screen on first open.
+          this.$nextTick(() => {
+            document.querySelector('[x-show="wizard.active"]')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
         },
 
         wizardCanProceed() {
