@@ -464,6 +464,7 @@
             <div id="channels-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <template x-for="recipe in recipeChannels" :key="recipe.id">
                 <div class="usecase-tile group"
+                     :id="'recipe-' + recipe.id"
                      :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
                   <div class="flex items-center gap-2.5 mb-1.5">
                     <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
@@ -490,6 +491,7 @@
             <div id="mcp-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <template x-for="recipe in recipeMcp" :key="recipe.id">
                 <div class="usecase-tile group"
+                     :id="'recipe-' + recipe.id"
                      :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
                   <div class="flex items-center gap-2.5 mb-1.5">
                     <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>

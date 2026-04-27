@@ -15,11 +15,22 @@ def test_target_connectors_no_anchor() -> None:
 
 
 def test_target_connectors_with_anchor() -> None:
+    """Connectors page uses id='recipe-<id>' to avoid collisions, so the
+    tool prefixes the anchor automatically."""
     result = execute_open_page(
         {"target": "connectors", "anchor": "gmail"}, context={}
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/connectors.html#gmail"
+    assert actions[0]["url"] == "/pages/connectors.html#recipe-gmail"
+
+
+def test_target_connectors_anchor_already_prefixed() -> None:
+    """If the caller passed `recipe-gmail` we don't double-prefix."""
+    result = execute_open_page(
+        {"target": "connectors", "anchor": "recipe-gmail"}, context={}
+    )
+    actions = result["__suggested_actions__"]
+    assert actions[0]["url"] == "/pages/connectors.html#recipe-gmail"
 
 
 def test_target_settings_models_default_anchor() -> None:
@@ -63,6 +74,17 @@ def test_anchor_strips_leading_hash() -> None:
         a["__suggested_actions__"][0]["url"]
         == b["__suggested_actions__"][0]["url"]
     )
+
+
+def test_settings_anchor_not_prefixed() -> None:
+    """Only the connectors target gets the recipe- prefix; other pages
+    use whatever anchor the caller passes verbatim."""
+    result = execute_open_page(
+        {"target": "settings_models", "anchor": "provider-anthropic"},
+        context={},
+    )
+    actions = result["__suggested_actions__"]
+    assert actions[0]["url"] == "/pages/settings.html#provider-anthropic"
 
 
 def test_all_four_targets_resolve() -> None:

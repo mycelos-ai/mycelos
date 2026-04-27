@@ -95,6 +95,12 @@ def execute_open_page(args: dict[str, Any], context: dict) -> dict:
     url = _URL_TARGETS[target]
     anchor = (args.get("anchor") or "").strip().lstrip("#")
     if anchor:
+        # Recipes on the Connectors page are rendered with id="recipe-<id>"
+        # to avoid collisions with other section ids on the page. We add
+        # the prefix here so the LLM can pass the bare recipe id (its
+        # natural mental model) and we still hit the right element.
+        if target == "connectors" and not anchor.startswith("recipe-"):
+            anchor = f"recipe-{anchor}"
         # Replace any existing default anchor with the explicit one so the
         # caller can target arbitrary sub-sections, not just the default.
         base, _, _ = url.partition("#")
