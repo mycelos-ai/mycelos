@@ -112,5 +112,7 @@ def register(registry: type) -> None:
         execute_open_page,
         ToolPermission.STANDARD,
         concurrent_safe=True,
-        category="ui",
+        category="core",  # always-loaded; without this the budget-aware
+                          # session loader skips low-call-count tools and
+                          # the LLM never sees ui.open_page
     )
