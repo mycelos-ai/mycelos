@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from mycelos.chat.events import suggested_actions_event, system_response_event
 from mycelos.tools.registry import ToolPermission
 
 
@@ -76,16 +75,22 @@ OPEN_PAGE_SCHEMA = {
 }
 
 
-def execute_open_page(args: dict[str, Any], context: dict) -> list:
-    """Build a clickable-link event. Pure function — no side effects."""
+def execute_open_page(args: dict[str, Any], context: dict) -> dict:
+    """Build a clickable-link tool result.
+
+    Returns a JSON-serializable dict. The chat service detects the
+    `__suggested_actions__` marker and emits a `suggested-actions`
+    ChatEvent so the frontend renders a clickable card. The LLM gets
+    a short confirmation string back as the tool result it can read.
+    """
     target = args.get("target", "")
     if target not in _URL_TARGETS:
-        return [
-            system_response_event(
+        return {
+            "error": (
                 f"Unknown UI target: {target!r}. "
                 f"Allowed: {', '.join(sorted(_URL_TARGETS))}."
             )
-        ]
+        }
 
     url = _URL_TARGETS[target]
     anchor = (args.get("anchor") or "").strip().lstrip("#")
@@ -97,11 +102,13 @@ def execute_open_page(args: dict[str, Any], context: dict) -> list:
 
     label = (args.get("label") or "").strip() or _DEFAULT_LABELS[target]
 
-    return [
-        suggested_actions_event([
+    return {
+        "__suggested_actions__": [
             {"label": label, "url": url, "kind": "link"},
-        ])
-    ]
+        ],
+        "status": "link_shown",
+        "url": url,
+    }
 
 
 def register(registry: type) -> None:

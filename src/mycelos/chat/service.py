@@ -956,6 +956,18 @@ class ChatService:
                             "type": widget_type, **result,
                         }}))
 
+                    # Suggested-actions tools (e.g. ui_open_page) — emit a
+                    # suggested-actions event so the frontend renders the
+                    # clickable card. Tool result still goes back to the LLM
+                    # as the dict (minus the marker), so it knows what was
+                    # shown.
+                    if isinstance(result, dict) and "__suggested_actions__" in result:
+                        suggested = result.pop("__suggested_actions__")
+                        if isinstance(suggested, list):
+                            events.append(ChatEvent(type="suggested-actions", data={
+                                "actions": suggested,
+                            }))
+
                     if tool_name == "session_set" and isinstance(result, dict) and "title" in result:
                         events.append(ChatEvent(type="session-meta", data={
                             "session_id": result.get("session_id", ""),
