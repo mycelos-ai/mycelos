@@ -1,4 +1,4 @@
-"""ui.open_page — let the agent send the user to a specific admin page.
+"""ui_open_page — let the agent send the user to a specific admin page.
 
 Returns a suggested-actions event with a single link the user can click
 to navigate. Used when the user asks to set up / configure / inspect
@@ -31,7 +31,7 @@ _DEFAULT_LABELS: dict[str, str] = {
 OPEN_PAGE_SCHEMA = {
     "type": "function",
     "function": {
-        "name": "ui.open_page",
+        "name": "ui_open_page",
         "description": (
             "Send the user directly to a Web-UI admin page. Use this when "
             "the user asks to set up / configure / inspect something that "
@@ -105,14 +105,14 @@ def execute_open_page(args: dict[str, Any], context: dict) -> list:
 
 
 def register(registry: type) -> None:
-    """Register ui.open_page with the tool registry."""
+    """Register ui_open_page with the tool registry."""
     registry.register(
-        "ui.open_page",
+        "ui_open_page",
         OPEN_PAGE_SCHEMA,
         execute_open_page,
         ToolPermission.STANDARD,
         concurrent_safe=True,
         category="core",  # always-loaded; without this the budget-aware
                           # session loader skips low-call-count tools and
-                          # the LLM never sees ui.open_page
+                          # the LLM never sees ui_open_page
     )
