@@ -28,7 +28,7 @@
           No password set. Anyone on your network can access Mycelos.
         </div>
         <div class="text-[10px] text-[var(--on-surface-variant)]/70 mt-1 font-mono">
-          <span x-text="security.bind_host"></span> · <span x-text="security.client_ip"></span>
+          <span x-text="security?.bind_host || ''"></span> · <span x-text="security?.client_ip || ''"></span>
         </div>
       </div>
     </div>
