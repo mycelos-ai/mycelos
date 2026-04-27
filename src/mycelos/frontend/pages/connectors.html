@@ -271,6 +271,241 @@
           </div>
         </div>
 
+        <!-- ═══ Setup Wizard (Telegram / Email / Slack) ═══ -->
+        <div x-show="wizard.active" x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 -translate-y-2"
+             x-transition:enter-end="opacity-1 translate-y-0"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-1"
+             x-transition:leave-end="opacity-0 -translate-y-2"
+             class="card mb-8 relative overflow-hidden">
+          <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl"
+               :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : wizard.type === 'email' ? 'bg-primary' : 'bg-[#E01E5A]'"></div>
+
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-5">
+            <div class="flex items-center gap-2.5">
+              <span class="text-2xl" x-text="wizard.type === 'telegram' ? '\uD83D\uDCAC' : wizard.type === 'email' ? '\uD83D\uDCE7' : '\uD83D\uDCE2'"></span>
+              <div>
+                <h2 class="font-headline font-bold text-base text-on-surface"
+                    x-text="wizard.type === 'telegram' ? 'Telegram Setup' : wizard.type === 'email' ? 'Email Setup' : 'Slack Setup'"></h2>
+                <p class="text-xs text-on-surface-variant"
+                   x-text="'Step ' + wizard.step + ' of ' + wizard.totalSteps"></p>
+              </div>
+            </div>
+            <button @click="wizard.active = false"
+                    class="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface transition-colors">
+              <span class="material-symbols-outlined text-sm">close</span>
+            </button>
+          </div>
+
+          <!-- Progress bar -->
+          <div class="h-1 bg-surface-container-low rounded-full mb-6 overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500"
+                 :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : 'bg-primary'"
+                 :style="'width: ' + (wizard.step / wizard.totalSteps * 100) + '%'"></div>
+          </div>
+
+          <!-- ── Telegram Wizard ── -->
+          <template x-if="wizard.type === 'telegram'">
+            <div>
+              <!-- Step 1: Bot Token -->
+              <div x-show="wizard.step === 1">
+                <p class="text-sm text-on-surface-variant mb-4">
+                  Create a Telegram bot and paste the token here.
+                </p>
+                <ol class="text-sm text-on-surface-variant space-y-2 mb-5 list-decimal list-inside">
+                  <li>Open <a href="https://t.me/BotFather" target="_blank" class="text-primary hover:underline">@BotFather</a> in Telegram</li>
+                  <li>Send <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/newbot</code> and follow the prompts</li>
+                  <li>Copy the <strong>API token</strong> you receive</li>
+                </ol>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Bot Token</label>
+                <p class="text-xs text-on-surface-variant/60 mb-2">
+                  Paste the BotFather message or just the token — it will be extracted automatically.
+                </p>
+                <textarea x-model="wizard.data.tokenRaw"
+                       @input="wizardExtractToken()"
+                       class="input-field w-full text-sm font-mono mb-1 resize-none"
+                       rows="3"
+                       placeholder="Paste the BotFather message or just the token..."></textarea>
+                <div x-show="wizard.data.token" class="flex items-center gap-1.5 text-xs text-[#48c78e] mb-1">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Token detected: <code class="font-mono" x-text="wizard.data.token.substring(0, 10) + '...'"></code>
+                </div>
+                <div x-show="wizard.data.tokenRaw && !wizard.data.token" class="flex items-center gap-1.5 text-xs text-warning mb-1">
+                  <span class="material-symbols-outlined text-sm">warning</span>
+                  No bot token found in text. Token format: <code class="font-mono">123456789:ABCdef...</code>
+                </div>
+                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50 mb-5">
+                  <span class="material-symbols-outlined text-sm">shield_lock</span>
+                  <span>Encrypted locally — never sent to the AI</span>
+                </div>
+              </div>
+
+              <!-- Step 2: Enter Chat ID + Verify -->
+              <div x-show="wizard.step === 2">
+                <!-- Bot validated indicator -->
+                <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[#48c78e] mb-4">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Token valid — bot: <strong x-text="wizard.data.botName"></strong>
+                  <span x-show="wizard.data.botUsername" class="text-on-surface-variant/50">@<span x-text="wizard.data.botUsername"></span></span>
+                </div>
+
+                <p class="text-sm text-on-surface-variant mb-3">
+                  Enter your Telegram Chat ID. The bot will send you a test message to verify.
+                </p>
+
+                <div class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
+                  <strong>How to find your Chat ID:</strong> Send <code class="font-mono bg-surface-container px-1 rounded">/start</code> to
+                  <a href="https://t.me/userinfobot" target="_blank" class="text-primary hover:underline">@userinfobot</a>
+                  in Telegram — it replies with your ID.
+                </div>
+
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Chat ID</label>
+                <input type="text" x-model="wizard.data.chatId"
+                       class="input-field w-full text-sm font-mono mb-3"
+                       placeholder="e.g. 123456789">
+
+                <button @click="wizardVerifyTelegram()"
+                        :disabled="wizard.checking || !wizard.data.chatId.trim()"
+                        class="w-full py-2.5 rounded-xl text-sm font-medium bg-[#2AABEE] text-white
+                               hover:bg-[#2AABEE]/80 transition-colors flex items-center justify-center gap-2
+                               disabled:opacity-50 disabled:cursor-wait">
+                  <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">send</span>
+                  <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                  <span x-text="wizard.checking ? 'Sending test message...' : 'Send Test Message'"></span>
+                </button>
+
+                <p x-show="wizard.data.verified" class="text-sm text-[#48c78e] mt-3 flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Test message sent! Check your Telegram.
+                </p>
+
+                <p x-show="wizard.error" class="text-sm text-error mt-3 flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
+              </div>
+
+              <!-- Step 3: Done -->
+              <div x-show="wizard.step === 3">
+                <div class="text-center py-4">
+                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
+                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Telegram Connected!</h3>
+                  <p class="text-sm text-on-surface-variant mb-4">
+                    Your bot is ready. Mycelos will respond to messages from Chat ID
+                    <strong x-text="wizard.data.chatId"></strong>.
+                  </p>
+                  <div class="bg-surface-container-low rounded-xl p-4 text-sm text-on-surface-variant text-left">
+                    <strong class="text-on-surface">Next steps:</strong>
+                    <ol class="list-decimal list-inside space-y-1.5 mt-2">
+                      <li>Restart the gateway: <code class="font-mono bg-surface-container px-1.5 py-0.5 rounded text-xs">mycelos serve</code></li>
+                      <li>Open Telegram and send a message to your bot</li>
+                      <li>Mycelos will reply — you're connected!</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- ── Email Wizard ── -->
+          <template x-if="wizard.type === 'email'">
+            <div>
+              <!-- Step 1: Email address -->
+              <div x-show="wizard.step === 1">
+                <p class="text-sm text-on-surface-variant mb-4">
+                  Enter your email address. IMAP/SMTP servers will be auto-detected.
+                </p>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Email Address</label>
+                <input type="email" x-model="wizard.data.email"
+                       @input="wizardAutoDetectEmail()"
+                       class="input-field w-full text-sm mb-3"
+                       placeholder="you@gmail.com">
+                <div x-show="wizard.data.imapServer" class="text-xs text-[#48c78e] flex items-center gap-1.5 mb-1">
+                  <span class="material-symbols-outlined text-sm">check</span>
+                  IMAP: <span x-text="wizard.data.imapServer"></span>
+                </div>
+                <div x-show="wizard.data.smtpServer" class="text-xs text-[#48c78e] flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">check</span>
+                  SMTP: <span x-text="wizard.data.smtpServer"></span>
+                </div>
+              </div>
+
+              <!-- Step 2: Password -->
+              <div x-show="wizard.step === 2">
+                <p class="text-sm text-on-surface-variant mb-2">
+                  Enter your password or app password.
+                </p>
+                <div x-show="wizard.data.isGmail"
+                     class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
+                  <strong>Gmail users:</strong> Use an
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" class="text-primary hover:underline">App Password</a>
+                  (not your regular password). 2FA must be enabled.
+                </div>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Password</label>
+                <input type="password" x-model="wizard.data.password"
+                       class="input-field w-full text-sm font-mono mb-1"
+                       placeholder="App password or regular password">
+                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50">
+                  <span class="material-symbols-outlined text-sm">shield_lock</span>
+                  <span>Encrypted locally — never sent to the AI</span>
+                </div>
+              </div>
+
+              <!-- Step 3: Test + Done -->
+              <div x-show="wizard.step === 3">
+                <div x-show="!wizard.data.testDone" class="text-center py-4">
+                  <button @click="wizardTestEmail()"
+                          :disabled="wizard.checking"
+                          class="px-6 py-2.5 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                                 hover:bg-primary-dim transition-colors inline-flex items-center gap-2
+                                 disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">mail</span>
+                    <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                    <span x-text="wizard.checking ? 'Testing connection...' : 'Test Connection'"></span>
+                  </button>
+                </div>
+                <div x-show="wizard.data.testDone" class="text-center py-4">
+                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
+                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Email Connected!</h3>
+                  <p class="text-sm text-on-surface-variant">
+                    <strong x-text="wizard.data.email"></strong> is ready.
+                    Mycelos can now read, search, and send emails for you.
+                  </p>
+                </div>
+                <p x-show="wizard.error" class="text-sm text-error mt-3 text-center flex items-center justify-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
+              </div>
+            </div>
+          </template>
+
+          <!-- Navigation buttons -->
+          <div class="flex items-center justify-between mt-6 pt-4 border-t border-on-surface-variant/10">
+            <button @click="wizardBack()"
+                    x-show="wizard.step > 1 && wizard.step < wizard.totalSteps"
+                    class="text-sm text-on-surface-variant hover:text-on-surface transition-colors">
+              Back
+            </button>
+            <div x-show="wizard.step === 1 || !wizard.step > 1" class="flex-1"></div>
+            <button @click="wizardNext()"
+                    x-show="wizard.step < wizard.totalSteps"
+                    :disabled="!wizardCanProceed()"
+                    class="px-5 py-2 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                           hover:bg-primary-dim transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              Next
+            </button>
+            <button @click="wizardFinish()"
+                    x-show="wizard.step === wizard.totalSteps"
+                    class="px-5 py-2 rounded-xl text-sm font-medium bg-[#48c78e] text-white
+                           hover:bg-[#48c78e]/80 transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+
         <!-- Installed connectors — connector_registry rows -->
         <section class="installed-connectors mb-8">
           <div class="flex items-center gap-2 mb-4">
@@ -519,241 +754,6 @@
           </div>
 
         </section>
-
-        <!-- ═══ Setup Wizard (Telegram / Email / Slack) ═══ -->
-        <div x-show="wizard.active" x-transition:enter="transition ease-out duration-200"
-             x-transition:enter-start="opacity-0 -translate-y-2"
-             x-transition:enter-end="opacity-1 translate-y-0"
-             x-transition:leave="transition ease-in duration-150"
-             x-transition:leave-start="opacity-1"
-             x-transition:leave-end="opacity-0 -translate-y-2"
-             class="card mb-8 relative overflow-hidden">
-          <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl"
-               :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : wizard.type === 'email' ? 'bg-primary' : 'bg-[#E01E5A]'"></div>
-
-          <!-- Header -->
-          <div class="flex items-center justify-between mb-5">
-            <div class="flex items-center gap-2.5">
-              <span class="text-2xl" x-text="wizard.type === 'telegram' ? '\uD83D\uDCAC' : wizard.type === 'email' ? '\uD83D\uDCE7' : '\uD83D\uDCE2'"></span>
-              <div>
-                <h2 class="font-headline font-bold text-base text-on-surface"
-                    x-text="wizard.type === 'telegram' ? 'Telegram Setup' : wizard.type === 'email' ? 'Email Setup' : 'Slack Setup'"></h2>
-                <p class="text-xs text-on-surface-variant"
-                   x-text="'Step ' + wizard.step + ' of ' + wizard.totalSteps"></p>
-              </div>
-            </div>
-            <button @click="wizard.active = false"
-                    class="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface transition-colors">
-              <span class="material-symbols-outlined text-sm">close</span>
-            </button>
-          </div>
-
-          <!-- Progress bar -->
-          <div class="h-1 bg-surface-container-low rounded-full mb-6 overflow-hidden">
-            <div class="h-full rounded-full transition-all duration-500"
-                 :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : 'bg-primary'"
-                 :style="'width: ' + (wizard.step / wizard.totalSteps * 100) + '%'"></div>
-          </div>
-
-          <!-- ── Telegram Wizard ── -->
-          <template x-if="wizard.type === 'telegram'">
-            <div>
-              <!-- Step 1: Bot Token -->
-              <div x-show="wizard.step === 1">
-                <p class="text-sm text-on-surface-variant mb-4">
-                  Create a Telegram bot and paste the token here.
-                </p>
-                <ol class="text-sm text-on-surface-variant space-y-2 mb-5 list-decimal list-inside">
-                  <li>Open <a href="https://t.me/BotFather" target="_blank" class="text-primary hover:underline">@BotFather</a> in Telegram</li>
-                  <li>Send <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/newbot</code> and follow the prompts</li>
-                  <li>Copy the <strong>API token</strong> you receive</li>
-                </ol>
-                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Bot Token</label>
-                <p class="text-xs text-on-surface-variant/60 mb-2">
-                  Paste the BotFather message or just the token — it will be extracted automatically.
-                </p>
-                <textarea x-model="wizard.data.tokenRaw"
-                       @input="wizardExtractToken()"
-                       class="input-field w-full text-sm font-mono mb-1 resize-none"
-                       rows="3"
-                       placeholder="Paste the BotFather message or just the token..."></textarea>
-                <div x-show="wizard.data.token" class="flex items-center gap-1.5 text-xs text-[#48c78e] mb-1">
-                  <span class="material-symbols-outlined text-sm">check_circle</span>
-                  Token detected: <code class="font-mono" x-text="wizard.data.token.substring(0, 10) + '...'"></code>
-                </div>
-                <div x-show="wizard.data.tokenRaw && !wizard.data.token" class="flex items-center gap-1.5 text-xs text-warning mb-1">
-                  <span class="material-symbols-outlined text-sm">warning</span>
-                  No bot token found in text. Token format: <code class="font-mono">123456789:ABCdef...</code>
-                </div>
-                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50 mb-5">
-                  <span class="material-symbols-outlined text-sm">shield_lock</span>
-                  <span>Encrypted locally — never sent to the AI</span>
-                </div>
-              </div>
-
-              <!-- Step 2: Enter Chat ID + Verify -->
-              <div x-show="wizard.step === 2">
-                <!-- Bot validated indicator -->
-                <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[#48c78e] mb-4">
-                  <span class="material-symbols-outlined text-sm">check_circle</span>
-                  Token valid — bot: <strong x-text="wizard.data.botName"></strong>
-                  <span x-show="wizard.data.botUsername" class="text-on-surface-variant/50">@<span x-text="wizard.data.botUsername"></span></span>
-                </div>
-
-                <p class="text-sm text-on-surface-variant mb-3">
-                  Enter your Telegram Chat ID. The bot will send you a test message to verify.
-                </p>
-
-                <div class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
-                  <strong>How to find your Chat ID:</strong> Send <code class="font-mono bg-surface-container px-1 rounded">/start</code> to
-                  <a href="https://t.me/userinfobot" target="_blank" class="text-primary hover:underline">@userinfobot</a>
-                  in Telegram — it replies with your ID.
-                </div>
-
-                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Chat ID</label>
-                <input type="text" x-model="wizard.data.chatId"
-                       class="input-field w-full text-sm font-mono mb-3"
-                       placeholder="e.g. 123456789">
-
-                <button @click="wizardVerifyTelegram()"
-                        :disabled="wizard.checking || !wizard.data.chatId.trim()"
-                        class="w-full py-2.5 rounded-xl text-sm font-medium bg-[#2AABEE] text-white
-                               hover:bg-[#2AABEE]/80 transition-colors flex items-center justify-center gap-2
-                               disabled:opacity-50 disabled:cursor-wait">
-                  <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">send</span>
-                  <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-                  <span x-text="wizard.checking ? 'Sending test message...' : 'Send Test Message'"></span>
-                </button>
-
-                <p x-show="wizard.data.verified" class="text-sm text-[#48c78e] mt-3 flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-sm">check_circle</span>
-                  Test message sent! Check your Telegram.
-                </p>
-
-                <p x-show="wizard.error" class="text-sm text-error mt-3 flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-sm">error</span>
-                  <span x-text="wizard.error"></span>
-                </p>
-              </div>
-
-              <!-- Step 3: Done -->
-              <div x-show="wizard.step === 3">
-                <div class="text-center py-4">
-                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
-                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Telegram Connected!</h3>
-                  <p class="text-sm text-on-surface-variant mb-4">
-                    Your bot is ready. Mycelos will respond to messages from Chat ID
-                    <strong x-text="wizard.data.chatId"></strong>.
-                  </p>
-                  <div class="bg-surface-container-low rounded-xl p-4 text-sm text-on-surface-variant text-left">
-                    <strong class="text-on-surface">Next steps:</strong>
-                    <ol class="list-decimal list-inside space-y-1.5 mt-2">
-                      <li>Restart the gateway: <code class="font-mono bg-surface-container px-1.5 py-0.5 rounded text-xs">mycelos serve</code></li>
-                      <li>Open Telegram and send a message to your bot</li>
-                      <li>Mycelos will reply — you're connected!</li>
-                    </ol>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <!-- ── Email Wizard ── -->
-          <template x-if="wizard.type === 'email'">
-            <div>
-              <!-- Step 1: Email address -->
-              <div x-show="wizard.step === 1">
-                <p class="text-sm text-on-surface-variant mb-4">
-                  Enter your email address. IMAP/SMTP servers will be auto-detected.
-                </p>
-                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Email Address</label>
-                <input type="email" x-model="wizard.data.email"
-                       @input="wizardAutoDetectEmail()"
-                       class="input-field w-full text-sm mb-3"
-                       placeholder="you@gmail.com">
-                <div x-show="wizard.data.imapServer" class="text-xs text-[#48c78e] flex items-center gap-1.5 mb-1">
-                  <span class="material-symbols-outlined text-sm">check</span>
-                  IMAP: <span x-text="wizard.data.imapServer"></span>
-                </div>
-                <div x-show="wizard.data.smtpServer" class="text-xs text-[#48c78e] flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-sm">check</span>
-                  SMTP: <span x-text="wizard.data.smtpServer"></span>
-                </div>
-              </div>
-
-              <!-- Step 2: Password -->
-              <div x-show="wizard.step === 2">
-                <p class="text-sm text-on-surface-variant mb-2">
-                  Enter your password or app password.
-                </p>
-                <div x-show="wizard.data.isGmail"
-                     class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
-                  <strong>Gmail users:</strong> Use an
-                  <a href="https://myaccount.google.com/apppasswords" target="_blank" class="text-primary hover:underline">App Password</a>
-                  (not your regular password). 2FA must be enabled.
-                </div>
-                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Password</label>
-                <input type="password" x-model="wizard.data.password"
-                       class="input-field w-full text-sm font-mono mb-1"
-                       placeholder="App password or regular password">
-                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50">
-                  <span class="material-symbols-outlined text-sm">shield_lock</span>
-                  <span>Encrypted locally — never sent to the AI</span>
-                </div>
-              </div>
-
-              <!-- Step 3: Test + Done -->
-              <div x-show="wizard.step === 3">
-                <div x-show="!wizard.data.testDone" class="text-center py-4">
-                  <button @click="wizardTestEmail()"
-                          :disabled="wizard.checking"
-                          class="px-6 py-2.5 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
-                                 hover:bg-primary-dim transition-colors inline-flex items-center gap-2
-                                 disabled:opacity-50 disabled:cursor-wait">
-                    <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">mail</span>
-                    <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-                    <span x-text="wizard.checking ? 'Testing connection...' : 'Test Connection'"></span>
-                  </button>
-                </div>
-                <div x-show="wizard.data.testDone" class="text-center py-4">
-                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
-                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Email Connected!</h3>
-                  <p class="text-sm text-on-surface-variant">
-                    <strong x-text="wizard.data.email"></strong> is ready.
-                    Mycelos can now read, search, and send emails for you.
-                  </p>
-                </div>
-                <p x-show="wizard.error" class="text-sm text-error mt-3 text-center flex items-center justify-center gap-1.5">
-                  <span class="material-symbols-outlined text-sm">error</span>
-                  <span x-text="wizard.error"></span>
-                </p>
-              </div>
-            </div>
-          </template>
-
-          <!-- Navigation buttons -->
-          <div class="flex items-center justify-between mt-6 pt-4 border-t border-on-surface-variant/10">
-            <button @click="wizardBack()"
-                    x-show="wizard.step > 1 && wizard.step < wizard.totalSteps"
-                    class="text-sm text-on-surface-variant hover:text-on-surface transition-colors">
-              Back
-            </button>
-            <div x-show="wizard.step === 1 || !wizard.step > 1" class="flex-1"></div>
-            <button @click="wizardNext()"
-                    x-show="wizard.step < wizard.totalSteps"
-                    :disabled="!wizardCanProceed()"
-                    class="px-5 py-2 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
-                           hover:bg-primary-dim transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              Next
-            </button>
-            <button @click="wizardFinish()"
-                    x-show="wizard.step === wizard.totalSteps"
-                    class="px-5 py-2 rounded-xl text-sm font-medium bg-[#48c78e] text-white
-                           hover:bg-[#48c78e]/80 transition-colors">
-              Done
-            </button>
-          </div>
-        </div>
 
         <!-- Toast notification -->
         <div x-show="toast.show" x-transition
