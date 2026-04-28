@@ -155,6 +155,54 @@ def test_allowed_origins_env_opens_specific_origin(
     assert resp.status_code == 403
 
 
+def test_lan_origin_passes_when_bound_to_0_0_0_0(monkeypatch, tmp_path):
+    """Binding to 0.0.0.0 (LAN exposure) auto-trusts the host's own
+    hostname/IPs so a Pi at http://raspberrypi.local:9100 isn't blocked
+    as cross-origin against itself.
+
+    The previous behavior required users to set MYCELOS_ALLOWED_ORIGINS
+    by hand for every LAN deployment.
+    """
+    import socket as _socket
+    monkeypatch.setenv("MYCELOS_MASTER_KEY", "csrf-lan-test")
+
+    from mycelos.app import App
+    from mycelos.gateway.server import create_app
+    app = App(tmp_path)
+    app.initialize()
+    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0", port=9100)
+    c = TestClient(fastapi_app)
+
+    # The host's own hostname must be in the allowlist now.
+    local_hostname = _socket.gethostname()
+    expected = f"http://{local_hostname}:9100"
+    assert expected in fastapi_app.state.csrf_allowed_origins, (
+        f"expected {expected} to auto-populate when host=0.0.0.0; "
+        f"got {fastapi_app.state.csrf_allowed_origins}"
+    )
+
+    # And a POST from that origin must pass.
+    resp = c.post(
+        "/api/credentials",
+        json=VALID_POST_BODY,
+        headers={"Origin": expected},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_localhost_bind_does_not_add_lan_origins(monkeypatch, tmp_path):
+    """When bound to 127.0.0.1, LAN-IP auto-population MUST NOT happen —
+    keeping the surface tight for default localhost-only deployments."""
+    monkeypatch.setenv("MYCELOS_MASTER_KEY", "csrf-localhost-bind-test")
+    from mycelos.app import App
+    from mycelos.gateway.server import create_app
+    app = App(tmp_path)
+    app.initialize()
+    fastapi_app = create_app(tmp_path, no_scheduler=True, host="127.0.0.1", port=9100)
+    # No env-set extras and no auto-LAN extras → empty.
+    assert fastapi_app.state.csrf_allowed_origins == set()
+
+
 def test_non_api_path_not_gated(client: TestClient):
     """CSRF only gates /api/*. Static assets / frontend routes
     aren't POST endpoints that mutate state, but also shouldn't be

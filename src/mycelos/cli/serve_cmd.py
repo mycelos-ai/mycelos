@@ -149,7 +149,7 @@ def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug:
     import uvicorn
     from mycelos.gateway.server import create_app
 
-    app = create_app(data_dir, debug=debug, no_scheduler=no_scheduler, host=host, password=password)
+    app = create_app(data_dir, debug=debug, no_scheduler=no_scheduler, host=host, port=port, password=password)
     log_level = "debug" if debug else "info"
     uvicorn.run(app, host=host, port=port, log_level=log_level)
 

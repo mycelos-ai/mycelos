@@ -337,6 +337,7 @@ def create_app(
     debug: bool = False,
     no_scheduler: bool = False,
     host: str = "127.0.0.1",
+    port: int = 9100,
     password: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI gateway application.
@@ -346,6 +347,8 @@ def create_app(
         debug: Enable debug logging (intents, models, tokens, events).
         no_scheduler: Disable the background Huey scheduler.
         host: Bind address. Used to decide localhost-only restriction.
+        port: Bind port. Used to build absolute origin URLs for the
+            CSRF allowlist when bound to 0.0.0.0.
         password: If set, require Basic Auth with user "mycelos" and this password.
     """
     if data_dir is None:
@@ -374,6 +377,30 @@ def create_app(
         for o in (os.environ.get("MYCELOS_ALLOWED_ORIGINS") or "").split(",")
         if o.strip()
     }
+    # When bound to 0.0.0.0 the gateway is intentionally exposed to the
+    # LAN — auto-trust the host's own LAN addresses and hostname so a
+    # browser hitting http://raspberrypi.local:9100 or
+    # http://192.168.x.x:9100 isn't blocked as cross-origin. Without this
+    # every LAN deployment would have to set MYCELOS_ALLOWED_ORIGINS by
+    # hand. Localhost stays open via _LOCAL_ORIGIN_PREFIXES in the
+    # middleware regardless.
+    if host == "0.0.0.0":
+        try:
+            import socket as _socket
+            port_str = f":{port}"
+            local_hostname = _socket.gethostname()
+            extra_origins.add(f"http://{local_hostname}{port_str}")
+            # Hostname.local for mDNS clients (Bonjour, Avahi).
+            if not local_hostname.endswith(".local"):
+                extra_origins.add(f"http://{local_hostname}.local{port_str}")
+            # Every IPv4 the host advertises (covers 192.168.x.x, 10.x.x.x, …).
+            for info in _socket.getaddrinfo(local_hostname, None, _socket.AF_INET):
+                ip = info[4][0]
+                extra_origins.add(f"http://{ip}{port_str}")
+        except Exception:
+            # Hostname resolution fails on some minimal containers — that's
+            # fine; user can always fall back to MYCELOS_ALLOWED_ORIGINS.
+            pass
     # Stash on app.state so the middleware can read it per-request
     # without re-reading the env on the hot path.
     api.state.csrf_allowed_origins = extra_origins
