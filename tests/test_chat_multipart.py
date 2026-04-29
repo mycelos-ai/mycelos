@@ -86,21 +86,19 @@ def test_eviction_kicks_oldest_first(tmp_data_dir: Path) -> None:
 
     service, app = _service(tmp_data_dir)
     store = SessionAttachmentStore(app.data_dir / "sessions")
-    # Three large PDFs — saved at distinct mtimes
+    # Three PDFs of 100k bytes each — at bytes/50, each ≈ 2_000 tokens
     store.save("s1", b"x" * 100_000, "old.pdf")
     time.sleep(0.01)
     store.save("s1", b"x" * 100_000, "mid.pdf")
     time.sleep(0.01)
     store.save("s1", b"x" * 100_000, "new.pdf")
 
-    # Tiny budget forces eviction
+    # Budget: 5_000 tokens — fits 2 of 3 files, oldest evicted
     blocks, evicted = service._build_attachment_blocks(
-        session_id="s1", budget_tokens=500,  # ~50KB worth
+        session_id="s1", budget_tokens=5_000,
     )
-    # Oldest goes first
-    assert "old.pdf" in evicted
-    if "mid.pdf" in evicted:
-        assert evicted.index("old.pdf") < evicted.index("mid.pdf")
+    assert evicted == ["old.pdf"]
+    assert len(blocks) == 2
 
 
 def test_force_include_skips_eviction(tmp_data_dir: Path) -> None:
@@ -117,13 +115,16 @@ def test_force_include_skips_eviction(tmp_data_dir: Path) -> None:
     # kick the newer one instead even though it's not oldest.
     service.mark_force_include("s1", "important.pdf")
 
+    # Budget: 2_500 tokens — fits 1 of 2 files, force-include keeps the older
     blocks, evicted = service._build_attachment_blocks(
-        session_id="s1", budget_tokens=500,
+        session_id="s1", budget_tokens=2_500,
     )
     assert "important.pdf" not in evicted
-    # Force-include flag is consumed
-    assert "s1" not in service._session_force_include or \
-        "important.pdf" not in service._session_force_include.get("s1", set())
+    assert "later.pdf" in evicted
+    assert len(blocks) == 1
+    # Force-include flag is NOT consumed by the build itself — it should
+    # still be set, only handle_message's success path clears it.
+    assert "important.pdf" in service._session_force_include.get("s1", set())
 
 
 def test_unsupported_files_are_skipped(tmp_data_dir: Path) -> None:

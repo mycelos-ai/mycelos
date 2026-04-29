@@ -39,6 +39,15 @@ import logging as _tlog
 _perf = _tlog.getLogger("mycelos.perf")
 _log = _tlog.getLogger("mycelos.chat.service")
 
+# Hard-coded context window for the chat agent — Anthropic's standard
+# prompt budget. Used both as the LLM's context window and as the basis
+# for attachment-budget calculations.
+_CHAT_CONTEXT_WINDOW = 200_000
+
+# Fraction of the context window reserved for attachments. The remainder
+# is for system prompt, conversation history, tool schemas, and reply.
+_ATTACHMENT_BUDGET_FRACTION = 0.85
+
 # Backwards-compatible alias: tools are now defined in mycelos.tools.*
 # but many tests and modules import CHAT_AGENT_TOOLS from here.
 
@@ -115,7 +124,7 @@ def _get_chat_agent_tools(
             user_id=user_id,
             agent_id=agent_id,
             storage=storage,
-            context_window=200_000,
+            context_window=_CHAT_CONTEXT_WINDOW,
         )
     else:
         all_tools = ToolRegistry.get_tools_for("mycelos")
@@ -276,9 +285,9 @@ class ChatService:
         # Per-session set of attachment filenames the agent has explicitly
         # asked to keep in the next turn's context, even if budget pressure
         # would normally evict them. Populated by attachment_load tool;
-        # consumed (and cleared) by the next handle_message call.
+        # consumed (and cleared) by _build_attachment_blocks + handle_message
+        # on the next successful LLM call.
         self._session_force_include: dict[str, set[str]] = {}
-        # NOTE: Consumed by Task 3's attachment-injection block in handle_message.
 
     def _get_session_tools(
         self,
@@ -413,8 +422,9 @@ class ChatService:
         budget pressure.
 
         Tokens are estimated cheaply: ~4 chars/token for text, and
-        ~bytes/100 for base64-encoded binary (PDF/image), since the
-        model also runs page-render / decoding work.
+        ~bytes/50 for base64-encoded binary (PDF/image), tuned to the
+        actual cost of image-rendering for image-heavy PDFs at standard
+        resolution.
         """
         import base64
         from pathlib import Path
@@ -422,12 +432,25 @@ class ChatService:
             SessionAttachmentStore, content_kind, media_type,
         )
 
+        def _binary_block(kind: str, path: Path, raw: bytes) -> dict:
+            return {
+                "type": kind,
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type(path),
+                    "data": base64.b64encode(raw).decode("ascii"),
+                },
+            }
+
         store = SessionAttachmentStore(self._app.data_dir / "sessions")
         attachments = store.list(session_id)
         if not attachments:
             return [], []
 
-        force_include = self._session_force_include.pop(session_id, set())
+        # Read the flag but do NOT clear it yet — we want it to persist
+        # if the downstream LLM call fails. handle_message clears the
+        # flag once the LLM call has successfully produced output.
+        force_include = self._session_force_include.get(session_id, set()).copy()
 
         # Build candidate blocks in upload order.
         candidates: list[tuple[Path, dict]] = []
@@ -440,23 +463,9 @@ class ChatService:
             except OSError:
                 continue
             if kind == "document":
-                candidates.append((path, {
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type(path),
-                        "data": base64.b64encode(raw).decode("ascii"),
-                    },
-                }))
+                candidates.append((path, _binary_block("document", path, raw)))
             elif kind == "image":
-                candidates.append((path, {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type(path),
-                        "data": base64.b64encode(raw).decode("ascii"),
-                    },
-                }))
+                candidates.append((path, _binary_block("image", path, raw)))
             elif kind == "text":
                 try:
                     text = raw.decode("utf-8", errors="replace")
@@ -471,8 +480,10 @@ class ChatService:
             if block.get("type") == "text":
                 return len(block.get("text", "")) // 4
             data = block.get("source", {}).get("data", "")
-            # base64 → original bytes ≈ data * 3/4; conservative tokens ≈ bytes/100
-            return len(data) * 3 // 4 // 100
+            # Anthropic costs ~1 token per ~50 bytes for image-rendered PDFs
+            # at standard resolution. Tighter than bytes/100 to ensure
+            # eviction triggers before context-window overflow.
+            return len(data) * 3 // 4 // 50
 
         # Eviction loop: kick oldest non-force-included until we fit.
         evicted: list[str] = []
@@ -615,7 +626,7 @@ class ChatService:
         # protect specific files from eviction.
         attachment_blocks, evicted = self._build_attachment_blocks(
             session_id=session_id,
-            budget_tokens=int(200_000 * 0.85),
+            budget_tokens=int(_CHAT_CONTEXT_WINDOW * _ATTACHMENT_BUDGET_FRACTION),
         )
         evicted_stubs = "\n".join(
             f"[Attachment '{name}' parked — call attachment_load('{name}') "
@@ -1393,6 +1404,9 @@ class ChatService:
             # Don't pop the user message — it was valid, the error is in processing
             events.append(error_event(f"LLM error: {exc}"))
             return events
+
+        # Force-include flag consumed — only clear after LLM call succeeded.
+        self._session_force_include.pop(session_id, None)
 
         # Final text response — sanitize to prevent credential leakage from LLM
         from mycelos.security.sanitizer import ResponseSanitizer
