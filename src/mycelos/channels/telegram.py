@@ -300,6 +300,45 @@ async def handle_permission_callback(callback: types.CallbackQuery) -> None:
         await _safe_answer(callback.message, response_text)
 
 
+async def _process_telegram_chat(
+    message: types.Message,
+    text: str,
+    session_id: str,
+    user_id: int,
+) -> None:
+    """Run a chat turn for a Telegram message, with continuous typing indicator."""
+    if not _chat_service or not _bot:
+        return
+    chat_id = message.chat.id
+    typing_active = True
+
+    async def _keep_typing() -> None:
+        while typing_active:
+            try:
+                await _bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(_keep_typing())
+    try:
+        events = await asyncio.to_thread(
+            _chat_service.handle_message,
+            message=text,
+            session_id=session_id,
+            user_id=f"telegram:{user_id}",
+            channel="telegram",
+        )
+    finally:
+        typing_active = False
+        typing_task.cancel()
+
+    response_text = _render_events(events)
+    if response_text:
+        for chunk in _split_message(response_text, 4000):
+            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
+
+
 @dp.message(F.document)
 async def handle_document(message: types.Message) -> None:
     """Save the document to the session's attachment folder. If the
@@ -316,6 +355,23 @@ async def handle_document(message: types.Message) -> None:
 
     doc = message.document
     if doc is None:
+        return
+
+    # Fast pre-check using Telegram's reported size (may be None for some
+    # messages). The post-download check still runs as a true-bytes guard.
+    from mycelos.files.session_attachments import SIZE_CAPS_BYTES, content_kind
+    pre_kind = content_kind(Path(doc.file_name or f"doc-{doc.file_unique_id}"))
+    if pre_kind == "unsupported":
+        await _safe_answer(message, f"Dateityp nicht unterstützt: _{doc.file_name or 'unknown'}_")
+        return
+    pre_cap_key = "pdf" if pre_kind == "document" else pre_kind
+    pre_cap = SIZE_CAPS_BYTES.get(pre_cap_key, 0)
+    if pre_cap and doc.file_size and doc.file_size > pre_cap:
+        await _safe_answer(
+            message,
+            f"Datei zu groß ({doc.file_size // 1024 // 1024} MB > "
+            f"{pre_cap // 1024 // 1024} MB für {pre_kind}).",
+        )
         return
 
     await _bot.send_chat_action(message.chat.id, "typing")
@@ -339,7 +395,7 @@ async def handle_document(message: types.Message) -> None:
         await _safe_answer(message, f"Dateityp nicht unterstützt: _{filename}_")
         return
 
-    cap_key = {"document": "pdf", "image": "image", "text": "text"}.get(kind, kind)
+    cap_key = "pdf" if kind == "document" else kind
     cap = SIZE_CAPS_BYTES.get(cap_key, 0)
     if cap and len(file_bytes) > cap:
         await _safe_answer(
@@ -377,6 +433,11 @@ async def handle_document(message: types.Message) -> None:
         # build will see the freshly-saved attachment.
         await _process_telegram_chat(message, message.caption, session_id, user_id)
     else:
+        if session_id in _pending_attachments:
+            logger.debug(
+                "Overwriting pending attachment %s → %s for session %s",
+                _pending_attachments[session_id], saved.name, session_id[:8],
+            )
         _pending_attachments[session_id] = saved.name
         await _safe_answer(message, "Was möchtest du wissen?")
 
@@ -444,6 +505,11 @@ async def handle_photo(message: types.Message) -> None:
     if message.caption:
         await _process_telegram_chat(message, message.caption, session_id, user_id)
     else:
+        if session_id in _pending_attachments:
+            logger.debug(
+                "Overwriting pending attachment %s → %s for session %s",
+                _pending_attachments[session_id], saved.name, session_id[:8],
+            )
         _pending_attachments[session_id] = saved.name
         await _safe_answer(message, "Was möchtest du wissen?")
 
@@ -519,6 +585,7 @@ async def handle_voice_message(message: types.Message) -> None:
 
         # Process as chat message — in thread pool to keep event loop free
         session_id = _get_session(user_id)
+        _pending_attachments.pop(session_id, None)
         events = await asyncio.to_thread(
             _chat_service.handle_message,
             f"[Voice] {text}", session_id, f"telegram:{user_id}",
@@ -719,45 +786,6 @@ def _strip_markdown(text: str) -> str:
     # Remove link syntax [text](url) → text (url)
     text = re.sub(r"\[([^\]]*)\]\(([^)]*)\)", r"\1 (\2)", text)
     return text
-
-
-async def _process_telegram_chat(
-    message: types.Message,
-    text: str,
-    session_id: str,
-    user_id: int,
-) -> None:
-    """Run a chat turn for a Telegram message, with continuous typing indicator."""
-    if not _chat_service or not _bot:
-        return
-    chat_id = message.chat.id
-    typing_active = True
-
-    async def _keep_typing() -> None:
-        while typing_active:
-            try:
-                await _bot.send_chat_action(chat_id, "typing")
-            except Exception:
-                pass
-            await asyncio.sleep(4)
-
-    typing_task = asyncio.create_task(_keep_typing())
-    try:
-        events = await asyncio.to_thread(
-            _chat_service.handle_message,
-            message=text,
-            session_id=session_id,
-            user_id=f"telegram:{user_id}",
-            channel="telegram",
-        )
-    finally:
-        typing_active = False
-        typing_task.cancel()
-
-    response_text = _render_events(events)
-    if response_text:
-        for chunk in _split_message(response_text, 4000):
-            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
 
 
 def _get_session(telegram_user_id: int) -> str:
