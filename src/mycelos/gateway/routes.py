@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1155,24 +1155,20 @@ def setup_routes(api: FastAPI) -> None:
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(str(doc_path), filename=doc_path.name)
 
-    @api.get("/api/inbox/{filename:path}")
-    async def inbox_file_serve(filename: str) -> Any:
-        """Serve a file from the user's inbox for chat-side previews.
-
-        Inbox files are user uploads (images, ad-hoc attachments) that
-        haven't been ingested into the Knowledge Base. The chat Frontend
-        loads them via this endpoint to render thumbnails / lightbox
-        previews next to the upload bubble.
+    @api.get("/api/sessions/{session_id}/attachments/{filename:path}")
+    async def serve_session_attachment(session_id: str, filename: str) -> Any:
+        """Serve a file from the session's attachment folder.
 
         Path-traversal-safe: the resolved filename must live inside the
-        inbox directory.
+        session's attachments folder. Used by the chat preview card to
+        render images / link to PDFs.
         """
         from starlette.responses import FileResponse
         mycelos = api.state.mycelos
-        inbox_dir = (mycelos.data_dir / "inbox").resolve()
-        target = (inbox_dir / filename).resolve()
+        base = (mycelos.data_dir / "sessions" / session_id / "attachments").resolve()
+        target = (base / filename).resolve()
         try:
-            target.relative_to(inbox_dir)
+            target.relative_to(base)
         except ValueError:
             return JSONResponse({"error": "path traversal blocked"}, status_code=400)
         if not target.is_file():
@@ -1609,13 +1605,21 @@ def setup_routes(api: FastAPI) -> None:
     async def handle_upload(
         request: Request,
         file: UploadFile,
-        session_id: str = "",
+        session_id: str = Form(""),
     ) -> StreamingResponse:
-        """Accept file upload, save to inbox, extract and analyze."""
+        """Save an uploaded file to the session's attachment folder and
+        emit a file-attached SSE event so the chat UI can render its
+        preview card. The file rides along in every subsequent LLM call
+        for this session via ChatService Multi-Part build — no marker,
+        no auto-ingest.
+        """
         from mycelos.chat.events import (
-            system_response_event, error_event, done_event, session_event,
-            file_attached_event,
+            error_event, done_event, session_event, file_attached_event,
         )
+        from mycelos.files.session_attachments import (
+            SessionAttachmentStore, SIZE_CAPS_BYTES, content_kind,
+        )
+        from pathlib import Path as _Path
 
         service = api.state.chat_service
         mycelos = api.state.mycelos
@@ -1625,165 +1629,58 @@ def setup_routes(api: FastAPI) -> None:
             session_id = service.create_session(user_id=user_id)
 
         file_bytes = await file.read()
+        filename = file.filename or "unnamed"
+        kind = content_kind(_Path(filename))
 
-        # Size check
-        if len(file_bytes) > 50 * 1024 * 1024:
+        if kind == "unsupported":
+            async def err():
+                yield session_event(session_id).to_sse()
+                yield error_event(
+                    f"Unsupported file type for chat attachments: {filename}"
+                ).to_sse()
+                yield done_event().to_sse()
+            return StreamingResponse(err(), media_type="text/event-stream")
+
+        # Map content_kind to SIZE_CAPS_BYTES key ("document" → "pdf").
+        _cap_key = {"document": "pdf", "image": "image", "text": "text"}.get(kind, kind)
+        cap = SIZE_CAPS_BYTES.get(_cap_key, 0)
+        if cap and len(file_bytes) > cap:
             async def too_large():
-                yield error_event("File too large (max 50MB)").to_sse()
+                yield session_event(session_id).to_sse()
+                yield error_event(
+                    f"File too large ({len(file_bytes)} bytes > {cap} for {kind})"
+                ).to_sse()
                 yield done_event().to_sse()
             return StreamingResponse(too_large(), media_type="text/event-stream")
 
-        # Save to inbox
-        from mycelos.files.inbox import InboxManager
-        inbox = InboxManager(mycelos.data_dir / "inbox")
+        store = SessionAttachmentStore(mycelos.data_dir / "sessions")
         try:
-            inbox_path = inbox.save(file_bytes, file.filename or "unnamed")
+            saved = store.save(session_id, file_bytes, filename)
         except ValueError as e:
-            async def save_error():
+            async def save_err():
+                yield session_event(session_id).to_sse()
                 yield error_event(str(e)).to_sse()
                 yield done_event().to_sse()
-            return StreamingResponse(save_error(), media_type="text/event-stream")
+            return StreamingResponse(save_err(), media_type="text/event-stream")
 
-        # File-preview event — emitted in every branch below so the
-        # chat UI can render an inline image / PDF card right next to
-        # the upload bubble. The url stays valid as long as the file
-        # lives in the inbox.
-        suffix = inbox_path.suffix.lower()
-        if suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-            preview_kind = "image"
-        elif suffix == ".pdf":
-            preview_kind = "pdf"
-        elif suffix in (".docx", ".doc"):
-            preview_kind = "doc"
-        else:
-            preview_kind = "other"
-        preview_event = file_attached_event(
-            filename=file.filename or inbox_path.name,
-            url=f"/api/inbox/{inbox_path.name}",
-            kind=preview_kind,
+        # Map the internal kind to the frontend's preview-card discriminator.
+        ui_kind = {"document": "pdf", "image": "image", "text": "other"}.get(kind, "other")
+        preview = file_attached_event(
+            filename=saved.name,
+            url=f"/api/sessions/{session_id}/attachments/{saved.name}",
+            kind=ui_kind,
             size=len(file_bytes),
         )
 
-        # PDF/DOCX → Knowledge ingest
-        if suffix in ('.pdf', '.docx', '.doc'):
-            from mycelos.knowledge.ingest import ingest_pdf
-            result = ingest_pdf(mycelos, inbox_path)
-
-            # Persist a marker user-message so the agent KNOWS the upload
-            # happened on the next turn. Without this the SSE response is
-            # streamed once, never written to session history, and the
-            # agent has no idea the document exists when the user asks
-            # about it later.
-            note_path = result.get("note_path", "")
-            if result["vision_needed"]:
-                marker = (
-                    f"[System: The user just uploaded the file \"{file.filename}\" "
-                    f"({result['page_count']} pages, scanned — no text layer). "
-                    f"It is saved in the Knowledge Base at path `{note_path}`. "
-                    f"Vision analysis is available. "
-                    f"REQUIRED ACTION when the user asks to analyze/summarize/read this file: "
-                    f"call note_vision('{note_path}') first to OCR it, then note_read('{note_path}'). "
-                    f"Do NOT reply 'I don't see a document' — the file IS attached, "
-                    f"the path is right here in this marker."
-                    f"]"
-                )
-            else:
-                marker = (
-                    f"[System: The user just uploaded the file \"{file.filename}\" "
-                    f"({result['page_count']} pages). "
-                    f"It is saved in the Knowledge Base at path `{note_path}` "
-                    f"with an LLM-generated summary already in the note body. "
-                    f"REQUIRED ACTION when the user asks about this file: "
-                    f"call note_read('{note_path}') and use that content to answer. "
-                    f"Do NOT reply 'I don't see a document' — the file IS attached, "
-                    f"the path is right here in this marker."
-                    f"]"
-                )
-            try:
-                mycelos.session_store.append_message(
-                    session_id, role="user", content=marker,
-                )
-            except Exception:
-                logger.exception("Failed to persist upload marker for session %s", session_id)
-
-            # PDFs in the Knowledge Base are served via the kb endpoint;
-            # rewrite the preview URL accordingly so the chat card links
-            # to the canonical location instead of the inbox copy.
-            kb_preview = file_attached_event(
-                filename=preview_event.data["filename"],
-                url=f"/api/knowledge/documents/{note_path}",
-                kind=preview_kind,
-                size=preview_event.data["size"],
-            )
-
-            async def doc_stream():
-                yield session_event(session_id).to_sse()
-                yield kb_preview.to_sse()
-                if result["vision_needed"]:
-                    yield system_response_event(
-                        f"📄 Document saved to Knowledge Base: {file.filename}\n"
-                        f"({result['page_count']} pages, no text layer)\n\n"
-                        f"Shall I analyze it with Vision? (~${result['page_count'] * 0.02:.2f})"
-                    ).to_sse()
-                else:
-                    yield system_response_event(
-                        f"📄 Document saved to Knowledge Base: {file.filename}\n"
-                        "Summary note created. The organizer will classify it into a topic."
-                    ).to_sse()
-                yield done_event().to_sse()
-            return StreamingResponse(doc_stream(), media_type="text/event-stream")
-
-        # Extract text
-        from mycelos.files.extractor import extract_text
-        text, method = extract_text(inbox_path)
-
-        if method == "vision_needed":
-            # Same problem as the PDF vision branch — agent must learn
-            # about the image so it can offer to analyze it next turn.
-            marker = (
-                f"[System: User uploaded image \"{file.filename}\" "
-                f"saved to inbox at `{inbox_path.name}`. "
-                f"No text could be extracted. "
-                f"Offer the user vision analysis if they ask about it."
-                f"]"
-            )
-            try:
-                mycelos.session_store.append_message(
-                    session_id, role="user", content=marker,
-                )
-            except Exception:
-                logger.exception("Failed to persist upload marker for session %s", session_id)
-
-            async def vision_prompt():
-                yield session_event(session_id).to_sse()
-                yield preview_event.to_sse()
-                yield system_response_event(
-                    f"File saved: {inbox_path.name}\nShall I analyze the image? (~$0.01)"
-                ).to_sse()
-                yield done_event().to_sse()
-            return StreamingResponse(vision_prompt(), media_type="text/event-stream")
-
-        if text:
-            message_text = f"[File: {file.filename or inbox_path.name}] Analyze this document:\n\n{text[:2000]}"
-            try:
-                events = service.handle_message(message_text, session_id, user_id)
-            except Exception:
-                events = [error_event("Analysis failed."), done_event()]
-
-            async def stream():
-                yield session_event(session_id).to_sse()
-                yield preview_event.to_sse()
-                for event in events:
-                    yield event.to_sse()
-            return StreamingResponse(stream(), media_type="text/event-stream",
-                                     headers={"Cache-Control": "no-cache"})
-
-        # No text extracted
-        async def no_text():
+        async def stream():
             yield session_event(session_id).to_sse()
-            yield system_response_event(f"File saved to inbox: {inbox_path.name}").to_sse()
+            yield preview.to_sse()
             yield done_event().to_sse()
-        return StreamingResponse(no_text(), media_type="text/event-stream")
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     # ── Connectors ────────────────────────────────────────────
 
