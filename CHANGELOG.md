@@ -63,6 +63,9 @@ deployment on localhost.
 - Removed: the `[System: User uploaded ...]` marker write in `/api/upload`, the auto-ingest of PDFs into the Knowledge Base from `/api/upload` and Telegram, the marker-detection / promote-to-system-prompt logic in `ChatService`, the marker-era prompt section in `mycelos.md`, the `/api/inbox/<filename>` endpoint.
 - Spec / plan: `docs/superpowers/specs/2026-04-29-session-attachments-design.md`, `docs/superpowers/plans/2026-04-29-session-attachments-plan.md`.
 
+### Upload UX — confirmation bubble after file attach
+- `/api/upload` now emits a `system_response_event` after the preview event so the chat shows a bot bubble like "📎 _BH_03_2026.pdf_ ist angehängt. Frag mich, was du darüber wissen willst." instead of an empty Mycelos header. Localized via `chat.attachment_ready` (en/de). The user immediately sees that the upload landed and the agent has the file ready.
+
 ## Week 17 (2026)
 
 ### Connector registry unification (single source of truth)

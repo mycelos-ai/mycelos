@@ -161,6 +161,7 @@ chat:
   plan_created: "Plan erstellt (Task: {task_id}...)"
   step_status: "Schritt '{step_id}' {status}"
   unknown_error: "Unbekannter Fehler"
+  attachment_ready: "📎 _{filename}_ ist angehängt. Frag mich, was du darüber wissen willst."
 
 config:
   title: "Config-Generationen"

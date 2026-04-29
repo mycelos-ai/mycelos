@@ -1621,10 +1621,12 @@ def setup_routes(api: FastAPI) -> None:
         """
         from mycelos.chat.events import (
             error_event, done_event, session_event, file_attached_event,
+            system_response_event,
         )
         from mycelos.files.session_attachments import (
             SessionAttachmentStore, SIZE_CAPS_BYTES, content_kind,
         )
+        from mycelos.i18n import t
 
         service = api.state.chat_service
         mycelos = api.state.mycelos
@@ -1675,9 +1677,14 @@ def setup_routes(api: FastAPI) -> None:
             size=len(file_bytes),
         )
 
+        confirmation = system_response_event(
+            t("chat.attachment_ready", filename=saved.name)
+        )
+
         async def stream():
             yield session_event(session_id).to_sse()
             yield preview.to_sse()
+            yield confirmation.to_sse()
             yield done_event().to_sse()
         return StreamingResponse(
             stream(),

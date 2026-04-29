@@ -34,6 +34,21 @@ def test_upload_saves_to_session_folder(client) -> None:
     assert saved.read_bytes() == b"hi"
 
 
+def test_upload_emits_confirmation_event(client) -> None:
+    """Stream must include a system_response_event so the user sees a
+    bot bubble after upload (not just the file preview card + empty
+    Mycelos header)."""
+    c, _ = client
+    files = {"file": ("readme.txt", io.BytesIO(b"hi"), "text/plain")}
+    resp = c.post("/api/upload", files=files, data={"session_id": "s-conf"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "event: system-response" in body, body
+    # Either German or English depending on configured locale; both
+    # mention the filename.
+    assert "readme.txt" in body
+
+
 def test_upload_does_not_write_marker_into_session_history(client) -> None:
     c, tmp = client
     files = {"file": ("doc.pdf", io.BytesIO(b"%PDF-fake"), "application/pdf")}
