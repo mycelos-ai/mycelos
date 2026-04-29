@@ -1159,13 +1159,19 @@ def setup_routes(api: FastAPI) -> None:
     async def serve_session_attachment(session_id: str, filename: str) -> Any:
         """Serve a file from the session's attachment folder.
 
-        Path-traversal-safe: the resolved filename must live inside the
-        session's attachments folder. Used by the chat preview card to
-        render images / link to PDFs.
+        Path-traversal-safe: session_id is sanitized and the resolved
+        filename must live inside the session's attachments folder. Used
+        by the chat preview card to render images / link to PDFs.
         """
         from starlette.responses import FileResponse
+        from mycelos.files.inbox import sanitize_filename
         mycelos = api.state.mycelos
-        base = (mycelos.data_dir / "sessions" / session_id / "attachments").resolve()
+        sessions_root = (mycelos.data_dir / "sessions").resolve()
+        safe_session_id = sanitize_filename(session_id)
+        base = (sessions_root / safe_session_id / "attachments").resolve()
+        # Defense in depth: verify base is under sessions_root.
+        if not base.is_relative_to(sessions_root):
+            return JSONResponse({"error": "path traversal blocked"}, status_code=400)
         target = (base / filename).resolve()
         try:
             target.relative_to(base)
@@ -1619,7 +1625,6 @@ def setup_routes(api: FastAPI) -> None:
         from mycelos.files.session_attachments import (
             SessionAttachmentStore, SIZE_CAPS_BYTES, content_kind,
         )
-        from pathlib import Path as _Path
 
         service = api.state.chat_service
         mycelos = api.state.mycelos
@@ -1630,38 +1635,36 @@ def setup_routes(api: FastAPI) -> None:
 
         file_bytes = await file.read()
         filename = file.filename or "unnamed"
-        kind = content_kind(_Path(filename))
+        kind = content_kind(Path(filename))
 
         if kind == "unsupported":
-            async def err():
-                yield session_event(session_id).to_sse()
-                yield error_event(
-                    f"Unsupported file type for chat attachments: {filename}"
-                ).to_sse()
-                yield done_event().to_sse()
-            return StreamingResponse(err(), media_type="text/event-stream")
+            return _sse_error(session_id, f"Unsupported file type for chat attachments: {filename}")
 
         # Map content_kind to SIZE_CAPS_BYTES key ("document" → "pdf").
         _cap_key = {"document": "pdf", "image": "image", "text": "text"}.get(kind, kind)
         cap = SIZE_CAPS_BYTES.get(_cap_key, 0)
         if cap and len(file_bytes) > cap:
-            async def too_large():
-                yield session_event(session_id).to_sse()
-                yield error_event(
-                    f"File too large ({len(file_bytes)} bytes > {cap} for {kind})"
-                ).to_sse()
-                yield done_event().to_sse()
-            return StreamingResponse(too_large(), media_type="text/event-stream")
+            return _sse_error(session_id, f"File too large ({len(file_bytes)} bytes > {cap} for {kind})")
 
         store = SessionAttachmentStore(mycelos.data_dir / "sessions")
         try:
             saved = store.save(session_id, file_bytes, filename)
         except ValueError as e:
-            async def save_err():
-                yield session_event(session_id).to_sse()
-                yield error_event(str(e)).to_sse()
-                yield done_event().to_sse()
-            return StreamingResponse(save_err(), media_type="text/event-stream")
+            return _sse_error(session_id, str(e))
+
+        try:
+            mycelos.audit.log(
+                "chat.attachment_uploaded",
+                details={
+                    "session_id": session_id,
+                    "filename": saved.name,
+                    "kind": kind,
+                    "size": len(file_bytes),
+                },
+                user_id=user_id,
+            )
+        except Exception:
+            logger.exception("Failed to audit attachment upload")
 
         # Map the internal kind to the frontend's preview-card discriminator.
         ui_kind = {"document": "pdf", "image": "image", "text": "other"}.get(kind, "other")
@@ -1679,7 +1682,7 @@ def setup_routes(api: FastAPI) -> None:
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"},
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     # ── Connectors ────────────────────────────────────────────

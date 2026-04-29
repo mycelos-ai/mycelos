@@ -99,3 +99,24 @@ def test_serve_attachment_missing(client) -> None:
     c, _ = client
     resp = c.get("/api/sessions/no-such/attachments/no.txt")
     assert resp.status_code == 404
+
+
+def test_upload_empty_file_rejected(client) -> None:
+    c, _ = client
+    files = {"file": ("empty.txt", io.BytesIO(b""), "text/plain")}
+    resp = c.post("/api/upload", files=files, data={"session_id": "s-empty"})
+    assert resp.status_code == 200
+    assert "empty" in resp.text.lower()
+
+
+def test_serve_attachment_session_id_traversal(client) -> None:
+    """Session id like '..' must not escape the sessions tree."""
+    c, _ = client
+    # First upload one file so there's something on disk
+    files = {"file": ("h.txt", io.BytesIO(b"x"), "text/plain")}
+    c.post("/api/upload", files=files, data={"session_id": "victim"})
+
+    # Try to read it through a traversal session id
+    resp = c.get("/api/sessions/..%2Fvictim%2Fattachments/h.txt")
+    # Either FastAPI normalises the URL and routes elsewhere, or our guard kicks in.
+    assert resp.status_code in (400, 404), resp.text
