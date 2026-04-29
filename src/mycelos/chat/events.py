@@ -99,3 +99,22 @@ def suggested_actions_event(actions: list[dict[str, str]]) -> ChatEvent:
         command: The command/message to send when clicked
     """
     return ChatEvent(type="suggested-actions", data={"actions": actions})
+
+
+def file_attached_event(
+    *, filename: str, url: str, kind: str, size: int = 0,
+) -> ChatEvent:
+    """Tell the chat UI a file was successfully uploaded.
+
+    The frontend renders this next to the user's upload bubble: images
+    inline, PDFs as a card with a download/open link, other files with
+    a generic file icon.
+
+    kind: one of "image", "pdf", "doc", "other".
+    url:  absolute or relative URL the browser can fetch.
+    size: bytes (0 = unknown / don't display).
+    """
+    return ChatEvent(
+        type="file-attached",
+        data={"filename": filename, "url": url, "kind": kind, "size": size},
+    )

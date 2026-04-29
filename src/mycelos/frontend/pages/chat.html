@@ -416,8 +416,53 @@
             <!-- User message -->
             <div x-show="msg.role === 'user'" class="flex justify-end w-full">
               <div class="max-w-[80%] bg-secondary-container text-on-secondary-container px-6 py-4 rounded-xl rounded-tr-sm">
+                <!-- Image preview: shown inline at adaptive size, click → lightbox -->
+                <template x-if="msg.attachment && msg.attachment.kind === 'image'">
+                  <div class="mb-2">
+                    <img :src="msg.attachment.url"
+                         :alt="msg.attachment.filename"
+                         @click="openLightbox(msg.attachment.url, msg.attachment.filename)"
+                         class="rounded-lg max-h-80 max-w-full cursor-zoom-in object-contain"
+                         loading="lazy">
+                  </div>
+                </template>
+                <!-- PDF / DOC card: file icon + filename + Open link -->
+                <template x-if="msg.attachment && (msg.attachment.kind === 'pdf' || msg.attachment.kind === 'doc')">
+                  <a :href="msg.attachment.url" target="_blank" rel="noopener"
+                     class="flex items-center gap-3 mb-2 px-3 py-2 rounded-lg bg-on-secondary-container/10 hover:bg-on-secondary-container/20 transition-colors no-underline">
+                    <span class="material-symbols-outlined text-2xl"
+                          x-text="msg.attachment.kind === 'pdf' ? 'picture_as_pdf' : 'description'"></span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium truncate" x-text="msg.attachment.filename"></div>
+                      <div class="text-xs opacity-70" x-text="(msg.attachment.size / 1024 / 1024).toFixed(1) + ' MB · click to open'"></div>
+                    </div>
+                  </a>
+                </template>
+                <!-- Generic attachment card for unsupported preview kinds -->
+                <template x-if="msg.attachment && msg.attachment.kind === 'other'">
+                  <a :href="msg.attachment.url" target="_blank" rel="noopener"
+                     class="flex items-center gap-3 mb-2 px-3 py-2 rounded-lg bg-on-secondary-container/10 hover:bg-on-secondary-container/20 transition-colors no-underline">
+                    <span class="material-symbols-outlined text-2xl">attach_file</span>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-medium truncate" x-text="msg.attachment.filename"></div>
+                      <div class="text-xs opacity-70" x-text="(msg.attachment.size / 1024 / 1024).toFixed(1) + ' MB · download'"></div>
+                    </div>
+                  </a>
+                </template>
                 <p class="text-[15px] leading-relaxed" x-text="msg.content"></p>
               </div>
+            </div>
+
+            <!-- Lightbox overlay for image previews -->
+            <div x-show="lightbox.open"
+                 @click="lightbox.open = false"
+                 @keydown.escape.window="lightbox.open = false"
+                 x-transition.opacity
+                 class="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+                 style="display: none;">
+              <img :src="lightbox.url" :alt="lightbox.alt"
+                   class="max-w-full max-h-full object-contain"
+                   @click.stop>
             </div>
 
             <!-- Assistant message -->
@@ -1082,6 +1127,7 @@
         selectedAgentName: 'Mycelos',
         dragOver: false,
         uploadProgress: '',
+        lightbox: { open: false, url: '', alt: '' },
         slashSuggestions: [],
         slashSelectedIdx: 0,
         _slashCommands: [
@@ -1907,9 +1953,17 @@
             return;
           }
 
-          // Show upload indicator
+          // Show upload indicator. We push a single user-bubble that
+          // gets enriched with `attachment` once the backend confirms
+          // the file (file-attached event below) — that way we render
+          // the preview inline instead of as a separate card.
           const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-          this.messages.push({ role: 'user', content: `📎 ${file.name} (${sizeMB} MB)` });
+          const userBubbleIdx = this.messages.length;
+          this.messages.push({
+            role: 'user',
+            content: `📎 ${file.name} (${sizeMB} MB)`,
+            attachment: null,  // filled in when file-attached arrives
+          });
           this.sending = true;
           this.$store.chat.sending = true;
           this.scrollToBottom();
@@ -1949,6 +2003,19 @@
                       this.scrollToBottom();
                     } else if (eventType === 'session') {
                       this.activeSessionId = data.session_id;
+                    } else if (eventType === 'file-attached') {
+                      // Enrich the user bubble with preview metadata so the
+                      // template can render the image / pdf-card inline.
+                      this.messages[userBubbleIdx] = {
+                        ...this.messages[userBubbleIdx],
+                        attachment: {
+                          filename: data.filename,
+                          url: data.url,
+                          kind: data.kind,
+                          size: data.size,
+                        },
+                      };
+                      this.scrollToBottom();
                     } else if (eventType === 'done') {
                       this.tokenCount = data.tokens || 0;
                       this.modelUsed = data.model || '';
@@ -2024,6 +2091,11 @@
             const area = document.getElementById('chat-area');
             if (area) area.scrollTop = area.scrollHeight;
           });
+        },
+
+        /** Open the image lightbox. Reactive — Object.assign keeps Alpine bindings live. */
+        openLightbox(url, alt) {
+          Object.assign(this.lightbox, { open: true, url, alt: alt || '' });
         },
 
         /**

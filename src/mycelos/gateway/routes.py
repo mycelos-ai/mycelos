@@ -1144,6 +1144,30 @@ def setup_routes(api: FastAPI) -> None:
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(str(doc_path), filename=doc_path.name)
 
+    @api.get("/api/inbox/{filename:path}")
+    async def inbox_file_serve(filename: str) -> Any:
+        """Serve a file from the user's inbox for chat-side previews.
+
+        Inbox files are user uploads (images, ad-hoc attachments) that
+        haven't been ingested into the Knowledge Base. The chat Frontend
+        loads them via this endpoint to render thumbnails / lightbox
+        previews next to the upload bubble.
+
+        Path-traversal-safe: the resolved filename must live inside the
+        inbox directory.
+        """
+        from starlette.responses import FileResponse
+        mycelos = api.state.mycelos
+        inbox_dir = (mycelos.data_dir / "inbox").resolve()
+        target = (inbox_dir / filename).resolve()
+        try:
+            target.relative_to(inbox_dir)
+        except ValueError:
+            return JSONResponse({"error": "path traversal blocked"}, status_code=400)
+        if not target.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(str(target), filename=target.name)
+
     @api.post("/api/knowledge/notes/{path:path}/vision")
     async def knowledge_note_vision(path: str, request: Request) -> dict[str, Any]:
         """Trigger Vision analysis for a scanned document note."""
@@ -1577,7 +1601,10 @@ def setup_routes(api: FastAPI) -> None:
         session_id: str = "",
     ) -> StreamingResponse:
         """Accept file upload, save to inbox, extract and analyze."""
-        from mycelos.chat.events import system_response_event, error_event, done_event, session_event
+        from mycelos.chat.events import (
+            system_response_event, error_event, done_event, session_event,
+            file_attached_event,
+        )
 
         service = api.state.chat_service
         mycelos = api.state.mycelos
@@ -1606,8 +1633,27 @@ def setup_routes(api: FastAPI) -> None:
                 yield done_event().to_sse()
             return StreamingResponse(save_error(), media_type="text/event-stream")
 
-        # PDF/DOCX → Knowledge ingest
+        # File-preview event — emitted in every branch below so the
+        # chat UI can render an inline image / PDF card right next to
+        # the upload bubble. The url stays valid as long as the file
+        # lives in the inbox.
         suffix = inbox_path.suffix.lower()
+        if suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            preview_kind = "image"
+        elif suffix == ".pdf":
+            preview_kind = "pdf"
+        elif suffix in (".docx", ".doc"):
+            preview_kind = "doc"
+        else:
+            preview_kind = "other"
+        preview_event = file_attached_event(
+            filename=file.filename or inbox_path.name,
+            url=f"/api/inbox/{inbox_path.name}",
+            kind=preview_kind,
+            size=len(file_bytes),
+        )
+
+        # PDF/DOCX → Knowledge ingest
         if suffix in ('.pdf', '.docx', '.doc'):
             from mycelos.knowledge.ingest import ingest_pdf
             result = ingest_pdf(mycelos, inbox_path)
@@ -1642,8 +1688,19 @@ def setup_routes(api: FastAPI) -> None:
             except Exception:
                 logger.exception("Failed to persist upload marker for session %s", session_id)
 
+            # PDFs in the Knowledge Base are served via the kb endpoint;
+            # rewrite the preview URL accordingly so the chat card links
+            # to the canonical location instead of the inbox copy.
+            kb_preview = file_attached_event(
+                filename=preview_event.data["filename"],
+                url=f"/api/knowledge/documents/{note_path}",
+                kind=preview_kind,
+                size=preview_event.data["size"],
+            )
+
             async def doc_stream():
                 yield session_event(session_id).to_sse()
+                yield kb_preview.to_sse()
                 if result["vision_needed"]:
                     yield system_response_event(
                         f"📄 Document saved to Knowledge Base: {file.filename}\n"
@@ -1681,6 +1738,7 @@ def setup_routes(api: FastAPI) -> None:
 
             async def vision_prompt():
                 yield session_event(session_id).to_sse()
+                yield preview_event.to_sse()
                 yield system_response_event(
                     f"File saved: {inbox_path.name}\nShall I analyze the image? (~$0.01)"
                 ).to_sse()
@@ -1696,6 +1754,7 @@ def setup_routes(api: FastAPI) -> None:
 
             async def stream():
                 yield session_event(session_id).to_sse()
+                yield preview_event.to_sse()
                 for event in events:
                     yield event.to_sse()
             return StreamingResponse(stream(), media_type="text/event-stream",
