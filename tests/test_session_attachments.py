@@ -106,6 +106,21 @@ def test_media_type() -> None:
     assert media_type(Path("x.png")) == "image/png"
     assert media_type(Path("x.jpg")) == "image/jpeg"
     assert media_type(Path("x.txt")) == "text/plain"
+    assert media_type(Path("x.csv")) == "text/plain"
+    assert media_type(Path("x.json")) == "text/plain"
+    assert media_type(Path("x.yaml")) == "text/plain"
+    assert media_type(Path("x.yml")) == "text/plain"
+    # Unknown fallback
+    assert media_type(Path("x.bin")) == "application/octet-stream"
+
+
+def test_session_id_sanitized(tmp_path: Path) -> None:
+    """Malicious session ids cannot escape the base dir."""
+    store = SessionAttachmentStore(tmp_path)
+    saved = store.save("../escape", b"x", "f.txt")
+    # Sanitized session id keeps the file inside tmp_path
+    assert tmp_path in saved.parents
+    assert ".." not in str(saved.relative_to(tmp_path))
 
 
 def test_size_caps_present() -> None:

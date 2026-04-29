@@ -32,7 +32,8 @@ class SessionAttachmentStore:
         self._base_dir = base_dir
 
     def _session_dir(self, session_id: str) -> Path:
-        return self._base_dir / session_id / "attachments"
+        safe_id = sanitize_filename(session_id)
+        return self._base_dir / safe_id / "attachments"
 
     def save(self, session_id: str, data: bytes, filename: str) -> Path:
         if not data:
@@ -90,7 +91,7 @@ def media_type(path: Path) -> str:
         return "image/webp"
     if suffix == ".gif":
         return "image/gif"
-    if suffix in (".txt", ".md"):
+    if suffix in (".txt", ".md", ".csv", ".json", ".yaml", ".yml"):
         return "text/plain"
     return "application/octet-stream"
 
