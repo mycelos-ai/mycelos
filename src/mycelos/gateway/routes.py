@@ -1136,10 +1136,21 @@ def setup_routes(api: FastAPI) -> None:
 
     @api.get("/api/knowledge/documents/{path:path}")
     async def knowledge_document_serve(path: str) -> Any:
-        """Serve an original document file (PDF, DOCX, etc.)."""
+        """Serve an original document file (PDF, DOCX, etc.) for a Knowledge note.
+
+        `path` is the note path (e.g. `notes/2026-04-29-foo`). We look up
+        the linked source_file via `knowledge_notes.source_file` and
+        serve that.
+        """
         from starlette.responses import FileResponse
-        kb = api.state.mycelos.knowledge_base
-        doc_path = kb.get_document_path(path)
+        mycelos = api.state.mycelos
+        meta = mycelos.storage.fetchone(
+            "SELECT source_file FROM knowledge_notes WHERE path = ?", (path,),
+        )
+        source_file = (meta or {}).get("source_file") or ""
+        if not source_file:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        doc_path = mycelos.knowledge_base.get_document_path(source_file)
         if not doc_path:
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(str(doc_path), filename=doc_path.name)
