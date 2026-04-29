@@ -445,6 +445,11 @@ telegram:
   invalid_callback: "Invalid callback"
   not_your_permission: "Not your permission prompt"
   web_link_hint: "Open this page on the computer where Mycelos is running."
+  attachment_unsupported: "Unsupported file type: _{filename}_"
+  attachment_too_large: "File too large ({size_mb} MB > {cap_mb} MB for {kind})."
+  image_too_large: "Image too large ({size_mb} MB > {cap_mb} MB)."
+  save_failed: "Save failed: {error}"
+  attachment_caption_prompt: "What would you like to know?"
 
 # --- Web UI translations ---
 web:

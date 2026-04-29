@@ -49,6 +49,20 @@ deployment on localhost.
 - `cleanup(frontend)` — removed a stale Next.js "Maicel" export that
   was still reachable at `/out/` from the pre-rename era.
 
+## Week 18 (2026)
+
+### Session attachments — Multi-Part LLM content replaces marker pipeline
+- File uploads in chat (Web UI + Telegram) now save to a per-session folder at `~/.mycelos/sessions/<id>/attachments/<filename>` and are automatically attached to every subsequent LLM call as Anthropic Multi-Part content (Document for PDFs, Image for images, Text for plaintext). The agent reads them directly — no marker pipeline.
+- Two new tools the agent uses to manage attachments:
+  - `note_save_attachment(filename, summary, tags)` — promotes a session attachment to the permanent Knowledge Base (file + agent-generated summary).
+  - `attachment_load(filename)` — forces a previously-evicted attachment back into the next turn's context.
+- Token-budget eviction: when the model context is near full, oldest attachments are replaced by a text stub like `[Attachment 'old.pdf' parked — call attachment_load('old.pdf') ...]`. The agent can re-load any of them via `attachment_load`. Files marked via `attachment_load` skip eviction.
+- Session deletion via `SessionStore.purge_old(...)` now optionally drops the session attachment folder when an attachment store is supplied.
+- Per-type size caps enforced at upload time: PDFs ≤ 32 MB, images ≤ 5 MB, text ≤ 10 MB. Other binary types rejected at the boundary (`/api/upload` and Telegram).
+- Audit-logged: every successful upload (Web + Telegram) emits `chat.attachment_uploaded` with session_id, filename, kind, size.
+- Removed: the `[System: User uploaded ...]` marker write in `/api/upload`, the auto-ingest of PDFs into the Knowledge Base from `/api/upload` and Telegram, the marker-detection / promote-to-system-prompt logic in `ChatService`, the marker-era prompt section in `mycelos.md`, the `/api/inbox/<filename>` endpoint.
+- Spec / plan: `docs/superpowers/specs/2026-04-29-session-attachments-design.md`, `docs/superpowers/plans/2026-04-29-session-attachments-plan.md`.
+
 ## Week 17 (2026)
 
 ### Connector registry unification (single source of truth)

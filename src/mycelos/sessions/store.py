@@ -9,7 +9,10 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from mycelos.files.session_attachments import SessionAttachmentStore
 
 
 class SessionStore:
@@ -345,10 +348,16 @@ class SessionStore:
             })
         return results
 
-    def purge_old(self, days: int = 30) -> int:
+    def purge_old(
+        self,
+        days: int = 30,
+        attachment_store: "SessionAttachmentStore | None" = None,
+    ) -> int:
         """Delete session JSONL files older than `days` days (by file mtime).
 
-        Returns the number of files deleted.
+        If `attachment_store` is provided, also remove the corresponding
+        session attachment folders (see `SessionAttachmentStore.delete_session`).
+        Returns the number of JSONL files deleted.
         """
         import time
         cutoff = time.time() - (days * 86400)
@@ -356,8 +365,15 @@ class SessionStore:
         for path in self._conversations_dir.glob("*.jsonl"):
             try:
                 if path.stat().st_mtime < cutoff:
+                    session_id = path.stem
                     path.unlink()
                     deleted += 1
+                    if attachment_store is not None:
+                        try:
+                            attachment_store.delete_session(session_id)
+                        except Exception:
+                            # Don't let attachment cleanup break session purge
+                            pass
             except OSError:
                 continue
         return deleted

@@ -39,6 +39,15 @@ import logging as _tlog
 _perf = _tlog.getLogger("mycelos.perf")
 _log = _tlog.getLogger("mycelos.chat.service")
 
+# Hard-coded context window for the chat agent — Anthropic's standard
+# prompt budget. Used both as the LLM's context window and as the basis
+# for attachment-budget calculations.
+_CHAT_CONTEXT_WINDOW = 200_000
+
+# Fraction of the context window reserved for attachments. The remainder
+# is for system prompt, conversation history, tool schemas, and reply.
+_ATTACHMENT_BUDGET_FRACTION = 0.85
+
 # Backwards-compatible alias: tools are now defined in mycelos.tools.*
 # but many tests and modules import CHAT_AGENT_TOOLS from here.
 
@@ -115,7 +124,7 @@ def _get_chat_agent_tools(
             user_id=user_id,
             agent_id=agent_id,
             storage=storage,
-            context_window=200_000,
+            context_window=_CHAT_CONTEXT_WINDOW,
         )
     else:
         all_tools = ToolRegistry.get_tools_for("mycelos")
@@ -273,6 +282,12 @@ class ChatService:
         self._session_grants: set[str] = set()
         # Lazy Tool Discovery: extra tool categories discovered mid-session
         self._session_extra_tools: dict[str, set[str]] = {}  # session_id → set of category names
+        # Per-session set of attachment filenames the agent has explicitly
+        # asked to keep in the next turn's context, even if budget pressure
+        # would normally evict them. Populated by attachment_load tool;
+        # consumed (and cleared) by _build_attachment_blocks + handle_message
+        # on the next successful LLM call.
+        self._session_force_include: dict[str, set[str]] = {}
 
     def _get_session_tools(
         self,
@@ -385,6 +400,108 @@ class ChatService:
         ]
         return messages
 
+    def mark_force_include(self, session_id: str, filename: str) -> None:
+        """Force a specific attachment to stay in the LLM context next turn.
+
+        Called by the attachment_load tool. The flag is consumed (popped)
+        on the next handle_message call.
+        """
+        self._session_force_include.setdefault(session_id, set()).add(filename)
+
+    def _build_attachment_blocks(
+        self,
+        session_id: str,
+        budget_tokens: int,
+    ) -> tuple[list[dict], list[str]]:
+        """Build Multi-Part content blocks for the session's attachments.
+
+        Returns (blocks, evicted_filenames). Each block is an Anthropic
+        Multi-Part content dict (document / image / text). Eviction is
+        oldest-first, except attachments the agent flagged via
+        attachment_load (force_include) — those stay in even under
+        budget pressure.
+
+        Tokens are estimated cheaply: ~4 chars/token for text, and
+        ~bytes/50 for base64-encoded binary (PDF/image), tuned to the
+        actual cost of image-rendering for image-heavy PDFs at standard
+        resolution.
+        """
+        import base64
+        from pathlib import Path
+        from mycelos.files.session_attachments import (
+            SessionAttachmentStore, content_kind, media_type,
+        )
+
+        def _binary_block(kind: str, path: Path, raw: bytes) -> dict:
+            return {
+                "type": kind,
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type(path),
+                    "data": base64.b64encode(raw).decode("ascii"),
+                },
+            }
+
+        store = SessionAttachmentStore(self._app.data_dir / "sessions")
+        attachments = store.list(session_id)
+        if not attachments:
+            return [], []
+
+        # Read the flag but do NOT clear it yet — we want it to persist
+        # if the downstream LLM call fails. handle_message clears the
+        # flag once the LLM call has successfully produced output.
+        force_include = self._session_force_include.get(session_id, set()).copy()
+
+        # Build candidate blocks in upload order.
+        candidates: list[tuple[Path, dict]] = []
+        for path in attachments:
+            kind = content_kind(path)
+            if kind == "unsupported":
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if kind == "document":
+                candidates.append((path, _binary_block("document", path, raw)))
+            elif kind == "image":
+                candidates.append((path, _binary_block("image", path, raw)))
+            elif kind == "text":
+                try:
+                    text = raw.decode("utf-8", errors="replace")
+                except Exception:
+                    text = ""
+                candidates.append((path, {
+                    "type": "text",
+                    "text": f"[Attachment: {path.name}]\n{text[:50_000]}",
+                }))
+
+        def _block_tokens(block: dict) -> int:
+            if block.get("type") == "text":
+                return len(block.get("text", "")) // 4
+            data = block.get("source", {}).get("data", "")
+            # Anthropic costs ~1 token per ~50 bytes for image-rendered PDFs
+            # at standard resolution. Tighter than bytes/100 to ensure
+            # eviction triggers before context-window overflow.
+            return len(data) * 3 // 4 // 50
+
+        # Eviction loop: kick oldest non-force-included until we fit.
+        evicted: list[str] = []
+        while candidates and sum(_block_tokens(b) for _, b in candidates) > budget_tokens:
+            kicked_one = False
+            for i, (path, _) in enumerate(candidates):
+                if path.name in force_include:
+                    continue
+                evicted.append(path.name)
+                candidates.pop(i)
+                kicked_one = True
+                break
+            if not kicked_one:
+                # Everything left is force-included — can't shrink further
+                break
+
+        return [b for _, b in candidates], evicted
+
     def get_system_prompt(self, user_name: str | None = None, channel: str = "api") -> str:
         """Build the system prompt with dynamic context.
 
@@ -480,30 +597,14 @@ class ChatService:
         conversation = self._conversations[session_id]
 
         # Add system prompt if conversation has no system message yet.
-        # Plus: scan the user-role history for `[System:` upload markers
-        # and append their content to the system prompt. Anthropic only
-        # treats the FIRST system message as instructions; markers
-        # buried in user turns get read as flavor text and ignored.
-        # Lifting them to the top-level system prompt is the only place
-        # Claude reliably acts on them.
+        # The legacy `[System:` marker pipeline is gone — file uploads
+        # are now ridden along as Anthropic Multi-Part content via
+        # _build_attachment_blocks below.
         if not conversation or conversation[0].get("role") != "system":
             user_name = self._app.memory.get("default", "system", "user.name")
-            base_prompt = self.get_system_prompt(user_name, channel=channel)
-            markers = [
-                m["content"]
-                for m in conversation
-                if m.get("role") == "user"
-                and m.get("content", "").lstrip().startswith("[System:")
-            ]
-            if markers:
-                base_prompt = (
-                    base_prompt
-                    + "\n\n## Active session markers\n"
-                    + "\n".join(markers)
-                )
             conversation.insert(0, {
                 "role": "system",
-                "content": base_prompt,
+                "content": self.get_system_prompt(user_name, channel=channel),
             })
 
         # Add user message. We prepend the current local time as a short
@@ -518,7 +619,37 @@ class ChatService:
             time_prefix = f"[current time: {now.strftime('%Y-%m-%d %H:%M')}]\n"
         except Exception:
             time_prefix = ""
-        conversation.append({"role": "user", "content": time_prefix + message})
+
+        # Multi-Part: stitch session attachments into the user message
+        # so the agent can read them natively. Eviction handles token
+        # budget pressure; force_include flags (set by attachment_load)
+        # protect specific files from eviction.
+        attachment_blocks, evicted = self._build_attachment_blocks(
+            session_id=session_id,
+            budget_tokens=int(_CHAT_CONTEXT_WINDOW * _ATTACHMENT_BUDGET_FRACTION),
+        )
+        evicted_stubs = "\n".join(
+            f"[Attachment '{name}' parked — call attachment_load('{name}') "
+            f"to bring it back into context.]"
+            for name in evicted
+        )
+        text_part = (evicted_stubs + "\n\n" + time_prefix + message).strip()
+
+        if attachment_blocks:
+            user_content: list[dict] | str = attachment_blocks + [
+                {"type": "text", "text": text_part}
+            ]
+        elif evicted:
+            # Everything was evicted — keep the stubs so the agent can
+            # call attachment_load to bring files back.
+            user_content = (evicted_stubs + "\n\n" + time_prefix + message).strip()
+        else:
+            user_content = time_prefix + message
+
+        conversation.append({"role": "user", "content": user_content})
+        # Persist the pure text version — Multi-Part content can't be
+        # cleanly replayed in JSONL conversation history, and the binary
+        # data is still on disk in the session attachments folder.
         self._app.session_store.append_message(session_id, role="user", content=message)
 
         # Deterministic auto-title: if this session has no title yet, use the
@@ -1278,6 +1409,9 @@ class ChatService:
             events.append(error_event(f"LLM error: {exc}"))
             return events
 
+        # Force-include flag consumed — only clear after LLM call succeeded.
+        self._session_force_include.pop(session_id, None)
+
         # Final text response — sanitize to prevent credential leakage from LLM
         from mycelos.security.sanitizer import ResponseSanitizer
         assistant_content = ResponseSanitizer().sanitize_text(response.content or "")
@@ -1703,6 +1837,7 @@ class ChatService:
             )
             context = {
                 "app": self._app,
+                "chat_service": self,
                 "user_id": getattr(self, "_current_user_id", "default"),
                 "session_id": session_id or getattr(self, "_current_session_id", ""),
                 "agent_id": active_agent,

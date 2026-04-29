@@ -432,6 +432,11 @@ telegram:
   invalid_callback: "Ungueltige Callback-Anfrage"
   not_your_permission: "Nicht deine Berechtigungsanfrage"
   web_link_hint: "Diese Seite musst du auf dem Computer oeffnen, wo Mycelos laeuft."
+  attachment_unsupported: "Dateityp nicht unterstützt: _{filename}_"
+  attachment_too_large: "Datei zu groß ({size_mb} MB > {cap_mb} MB für {kind})."
+  image_too_large: "Bild zu groß ({size_mb} MB > {cap_mb} MB)."
+  save_failed: "Speichern fehlgeschlagen: {error}"
+  attachment_caption_prompt: "Was möchtest du wissen?"
 
 # --- Web UI Uebersetzungen ---
 web:

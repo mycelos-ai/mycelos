@@ -212,6 +212,7 @@ class ToolRegistry:
             cls._initialized = True
 
         from mycelos.tools import agent as _agent
+        from mycelos.tools import attachments as _attach_tools
         from mycelos.tools import connector as _connector
         from mycelos.tools import filesystem as _filesystem
         from mycelos.tools import knowledge as _knowledge
@@ -231,6 +232,7 @@ class ToolRegistry:
         _system.register(cls)
         _ui.register(cls)
         _agent.register(cls)
+        _attach_tools.register(cls)
         # email_* in-process tools removed — replaced by the
         # @n24q02m/better-email-mcp MCP server, registered as a recipe.
         _session.register(cls)
