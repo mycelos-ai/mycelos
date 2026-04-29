@@ -155,6 +155,42 @@ def test_allowed_origins_env_opens_specific_origin(
     assert resp.status_code == 403
 
 
+def test_same_origin_via_host_header_passes(client: TestClient):
+    """Most reliable cross-origin check: Origin's host:port matches the
+    request's Host header. Covers Docker / Pi setups where the gateway
+    cannot resolve its own LAN hostname (socket.gethostname() returns
+    a synthetic container id) but the browser still posts to itself.
+
+    Browser posting from http://pi5.local:9100 to itself sends:
+        Host: pi5.local:9100
+        Origin: http://pi5.local:9100
+    Same-origin → must pass.
+    """
+    resp = client.post(
+        "/api/credentials",
+        json=VALID_POST_BODY,
+        headers={
+            "Origin": "http://pi5.local:9100",
+            "Host": "pi5.local:9100",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_origin_host_mismatch_still_blocked(client: TestClient):
+    """Host-header same-origin trick must NOT open a hole for an
+    attacker page on evil.example.com that crafts a malicious Origin."""
+    resp = client.post(
+        "/api/credentials",
+        json=VALID_POST_BODY,
+        headers={
+            "Origin": "https://evil.example.com",
+            "Host": "pi5.local:9100",
+        },
+    )
+    assert resp.status_code == 403
+
+
 def test_lan_origin_passes_when_bound_to_0_0_0_0(monkeypatch, tmp_path):
     """Binding to 0.0.0.0 (LAN exposure) auto-trusts the host's own
     hostname/IPs so a Pi at http://raspberrypi.local:9100 isn't blocked

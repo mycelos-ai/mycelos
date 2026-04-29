@@ -113,6 +113,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         allowed = set(self._static_allowed)
         allowed.update(getattr(request.app.state, "csrf_allowed_origins", set()) or set())
 
+        # The Host header tells us the URL the browser is actually
+        # talking to. If Origin matches that host exactly, the request
+        # is same-origin by definition — no matter what we bind to or
+        # what hostname our container thinks it has. This is the only
+        # reliable check inside Docker / behind a reverse proxy where
+        # `socket.gethostname()` returns a synthetic id.
+        host_header = (request.headers.get("host") or "").strip().lower()
+
         def _origin_ok(value: str) -> bool:
             if not value:
                 return False
@@ -123,9 +131,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 if not p.scheme or not p.netloc:
                     return False
                 normalized = f"{p.scheme}://{p.netloc}"
+                netloc_lower = p.netloc.lower()
             except Exception:
                 return False
             if normalized in allowed:
+                return True
+            # Same-origin: Origin's host:port matches the request's Host
+            # header. Catches `http://pi5.local:9100` posts to itself.
+            if host_header and netloc_lower == host_header:
                 return True
             # Always-accept localhost regardless of port — single-process
             # dev setup cycles ports a lot.
