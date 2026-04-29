@@ -56,8 +56,9 @@ ATTACHMENT_LOAD_SCHEMA = {
             "Force a session attachment that was previously evicted from "
             "the LLM context (due to token-budget pressure) back into the "
             "active context for the next turn. Use when you need to re-read "
-            "a file that's no longer visible to you (you'll see a "
-            "'[Attachment ... parked]' stub instead of the file content)."
+            "a file that's no longer visible to you (you'll see a brief "
+            "placeholder stub instead of the file content when a file has "
+            "been evicted)."
         ),
         "parameters": {
             "type": "object",
@@ -80,7 +81,8 @@ def execute_note_save_attachment(args: dict, context: dict) -> Any:
     session_id = context.get("session_id", "")
     filename = (args.get("filename") or "").strip()
     summary = args.get("summary", "")
-    tags = args.get("tags") or []
+    raw_tags = args.get("tags") or []
+    tags: list[str] = raw_tags if isinstance(raw_tags, list) else [raw_tags]
 
     if not app or not session_id or not filename:
         return {"status": "error", "message": "missing context"}
@@ -94,14 +96,13 @@ def execute_note_save_attachment(args: dict, context: dict) -> Any:
             "message": f"Attachment {filename!r} not found in this session",
         }
 
-    title = filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ").title()
     try:
         note_path = app.knowledge_base.store_document(
             file_bytes=data,
             filename=filename,
-            title=title,
+            title="",
             summary=summary,
-            tags=list(tags),
+            tags=tags,
         )
     except Exception as e:
         logger.exception("note_save_attachment failed for %s", filename)

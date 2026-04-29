@@ -278,6 +278,7 @@ class ChatService:
         # would normally evict them. Populated by attachment_load tool;
         # consumed (and cleared) by the next handle_message call.
         self._session_force_include: dict[str, set[str]] = {}
+        # NOTE: Consumed by Task 3's attachment-injection block in handle_message.
 
     def _get_session_tools(
         self,

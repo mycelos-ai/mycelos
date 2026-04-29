@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
 
 def test_note_save_attachment_persists_to_kb(tmp_data_dir: Path) -> None:
     from mycelos.app import App
@@ -18,7 +16,7 @@ def test_note_save_attachment_persists_to_kb(tmp_data_dir: Path) -> None:
     app.initialize()
 
     store = SessionAttachmentStore(app.data_dir / "sessions")
-    saved = store.save("test-session", b"hello pdf", "report.pdf")
+    store.save("test-session", b"hello pdf", "report.pdf")
 
     result = execute_note_save_attachment(
         {"filename": "report.pdf", "summary": "A test report.", "tags": ["x"]},
@@ -76,3 +74,27 @@ def test_attachment_load_missing_context() -> None:
         context={},  # no chat_service / session_id
     )
     assert result["status"] == "error"
+
+
+def test_note_save_attachment_store_document_fails(tmp_data_dir: Path, monkeypatch) -> None:
+    """If store_document raises, the tool returns an error dict, not a crash."""
+    from mycelos.app import App
+    from mycelos.files.session_attachments import SessionAttachmentStore
+    from mycelos.tools.attachments import execute_note_save_attachment
+
+    os.environ["MYCELOS_MASTER_KEY"] = "attach-tools-test-3"
+    app = App(tmp_data_dir)
+    app.initialize()
+    store = SessionAttachmentStore(app.data_dir / "sessions")
+    store.save("s", b"x", "doc.pdf")
+
+    def boom(**_):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(app.knowledge_base, "store_document", boom)
+
+    result = execute_note_save_attachment(
+        {"filename": "doc.pdf", "summary": "x"},
+        context={"app": app, "session_id": "s"},
+    )
+    assert result["status"] == "error"
+    assert "disk full" in result["message"]
