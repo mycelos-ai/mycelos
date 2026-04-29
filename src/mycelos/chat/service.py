@@ -480,13 +480,30 @@ class ChatService:
         conversation = self._conversations[session_id]
 
         # Add system prompt if conversation has no system message yet.
-        # (After hydrating from disk above we already have user/assistant
-        # turns but no system prompt — prepend it.)
+        # Plus: scan the user-role history for `[System:` upload markers
+        # and append their content to the system prompt. Anthropic only
+        # treats the FIRST system message as instructions; markers
+        # buried in user turns get read as flavor text and ignored.
+        # Lifting them to the top-level system prompt is the only place
+        # Claude reliably acts on them.
         if not conversation or conversation[0].get("role") != "system":
             user_name = self._app.memory.get("default", "system", "user.name")
+            base_prompt = self.get_system_prompt(user_name, channel=channel)
+            markers = [
+                m["content"]
+                for m in conversation
+                if m.get("role") == "user"
+                and m.get("content", "").lstrip().startswith("[System:")
+            ]
+            if markers:
+                base_prompt = (
+                    base_prompt
+                    + "\n\n## Active session markers\n"
+                    + "\n".join(markers)
+                )
             conversation.insert(0, {
                 "role": "system",
-                "content": self.get_system_prompt(user_name, channel=channel),
+                "content": base_prompt,
             })
 
         # Add user message. We prepend the current local time as a short
