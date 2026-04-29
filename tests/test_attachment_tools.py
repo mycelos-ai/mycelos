@@ -98,3 +98,34 @@ def test_note_save_attachment_store_document_fails(tmp_data_dir: Path, monkeypat
     )
     assert result["status"] == "error"
     assert "disk full" in result["message"]
+
+
+def test_attachment_load_via_execute_tool_wiring(tmp_data_dir: Path) -> None:
+    """End-to-end: calling attachment_load through ChatService._execute_tool
+    must actually populate _session_force_include — i.e., context['chat_service']
+    must be wired up. Regression test for the production-only bug where the tool
+    silently returned 'missing context'.
+    """
+    import os
+    from mycelos.app import App
+
+    from mycelos.chat.service import ChatService
+
+    os.environ["MYCELOS_MASTER_KEY"] = "attach-tools-test-wiring"
+    app = App(tmp_data_dir)
+    app.initialize()
+    service = ChatService(app)
+
+    # Set up the session-id state the way handle_message would.
+    service._current_session_id = "wiring-sess"
+    service._current_user_id = "default"
+
+    result = service._execute_tool(
+        "attachment_load",
+        {"filename": "x.pdf"},
+        user_id="default",
+        session_id="wiring-sess",
+        agent_id="mycelos",
+    )
+    assert result["status"] == "loaded"
+    assert "x.pdf" in service._session_force_include.get("wiring-sess", set())

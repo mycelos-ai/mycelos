@@ -362,15 +362,17 @@ async def handle_document(message: types.Message) -> None:
     from mycelos.files.session_attachments import SIZE_CAPS_BYTES, content_kind
     pre_kind = content_kind(Path(doc.file_name or f"doc-{doc.file_unique_id}"))
     if pre_kind == "unsupported":
-        await _safe_answer(message, f"Dateityp nicht unterstützt: _{doc.file_name or 'unknown'}_")
+        await _safe_answer(message, t("telegram.attachment_unsupported", filename=doc.file_name or "unknown"))
         return
     pre_cap_key = "pdf" if pre_kind == "document" else pre_kind
     pre_cap = SIZE_CAPS_BYTES.get(pre_cap_key, 0)
     if pre_cap and doc.file_size and doc.file_size > pre_cap:
         await _safe_answer(
             message,
-            f"Datei zu groß ({doc.file_size // 1024 // 1024} MB > "
-            f"{pre_cap // 1024 // 1024} MB für {pre_kind}).",
+            t("telegram.attachment_too_large",
+              size_mb=doc.file_size // 1024 // 1024,
+              cap_mb=pre_cap // 1024 // 1024,
+              kind=pre_kind),
         )
         return
 
@@ -392,7 +394,7 @@ async def handle_document(message: types.Message) -> None:
     filename = doc.file_name or f"doc-{doc.file_unique_id}"
     kind = content_kind(Path(filename))
     if kind == "unsupported":
-        await _safe_answer(message, f"Dateityp nicht unterstützt: _{filename}_")
+        await _safe_answer(message, t("telegram.attachment_unsupported", filename=filename))
         return
 
     cap_key = "pdf" if kind == "document" else kind
@@ -400,8 +402,10 @@ async def handle_document(message: types.Message) -> None:
     if cap and len(file_bytes) > cap:
         await _safe_answer(
             message,
-            f"Datei zu groß ({len(file_bytes) // 1024 // 1024} MB > "
-            f"{cap // 1024 // 1024} MB für {kind}).",
+            t("telegram.attachment_too_large",
+              size_mb=len(file_bytes) // 1024 // 1024,
+              cap_mb=cap // 1024 // 1024,
+              kind=kind),
         )
         return
 
@@ -410,7 +414,7 @@ async def handle_document(message: types.Message) -> None:
     try:
         saved = store.save(session_id, file_bytes, filename)
     except ValueError as e:
-        await _safe_answer(message, f"Speichern fehlgeschlagen: {e}")
+        await _safe_answer(message, t("telegram.save_failed", error=str(e)))
         return
 
     try:
@@ -439,7 +443,7 @@ async def handle_document(message: types.Message) -> None:
                 _pending_attachments[session_id], saved.name, session_id[:8],
             )
         _pending_attachments[session_id] = saved.name
-        await _safe_answer(message, "Was möchtest du wissen?")
+        await _safe_answer(message, t("telegram.attachment_caption_prompt"))
 
 
 @dp.message(F.photo)
@@ -473,8 +477,9 @@ async def handle_photo(message: types.Message) -> None:
     if len(photo_bytes) > SIZE_CAPS_BYTES["image"]:
         await _safe_answer(
             message,
-            f"Bild zu groß ({len(photo_bytes) // 1024 // 1024} MB > "
-            f"{SIZE_CAPS_BYTES['image'] // 1024 // 1024} MB).",
+            t("telegram.image_too_large",
+              size_mb=len(photo_bytes) // 1024 // 1024,
+              cap_mb=SIZE_CAPS_BYTES["image"] // 1024 // 1024),
         )
         return
 
@@ -484,7 +489,7 @@ async def handle_photo(message: types.Message) -> None:
     try:
         saved = store.save(session_id, photo_bytes, filename)
     except ValueError as e:
-        await _safe_answer(message, f"Speichern fehlgeschlagen: {e}")
+        await _safe_answer(message, t("telegram.save_failed", error=str(e)))
         return
 
     try:
@@ -511,7 +516,7 @@ async def handle_photo(message: types.Message) -> None:
                 _pending_attachments[session_id], saved.name, session_id[:8],
             )
         _pending_attachments[session_id] = saved.name
-        await _safe_answer(message, "Was möchtest du wissen?")
+        await _safe_answer(message, t("telegram.attachment_caption_prompt"))
 
 
 @dp.message(F.voice)

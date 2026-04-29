@@ -639,6 +639,10 @@ class ChatService:
             user_content: list[dict] | str = attachment_blocks + [
                 {"type": "text", "text": text_part}
             ]
+        elif evicted:
+            # Everything was evicted — keep the stubs so the agent can
+            # call attachment_load to bring files back.
+            user_content = (evicted_stubs + "\n\n" + time_prefix + message).strip()
         else:
             user_content = time_prefix + message
 
@@ -1833,6 +1837,7 @@ class ChatService:
             )
             context = {
                 "app": self._app,
+                "chat_service": self,
                 "user_id": getattr(self, "_current_user_id", "default"),
                 "session_id": session_id or getattr(self, "_current_session_id", ""),
                 "agent_id": active_agent,
