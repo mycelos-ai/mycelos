@@ -273,6 +273,11 @@ class ChatService:
         self._session_grants: set[str] = set()
         # Lazy Tool Discovery: extra tool categories discovered mid-session
         self._session_extra_tools: dict[str, set[str]] = {}  # session_id → set of category names
+        # Per-session set of attachment filenames the agent has explicitly
+        # asked to keep in the next turn's context, even if budget pressure
+        # would normally evict them. Populated by attachment_load tool;
+        # consumed (and cleared) by the next handle_message call.
+        self._session_force_include: dict[str, set[str]] = {}
 
     def _get_session_tools(
         self,
@@ -384,6 +389,14 @@ class ChatService:
             {"role": m["role"], "content": m["content"]} for m in messages
         ]
         return messages
+
+    def mark_force_include(self, session_id: str, filename: str) -> None:
+        """Force a specific attachment to stay in the LLM context next turn.
+
+        Called by the attachment_load tool. The flag is consumed (popped)
+        on the next handle_message call.
+        """
+        self._session_force_include.setdefault(session_id, set()).add(filename)
 
     def get_system_prompt(self, user_name: str | None = None, channel: str = "api") -> str:
         """Build the system prompt with dynamic context.
