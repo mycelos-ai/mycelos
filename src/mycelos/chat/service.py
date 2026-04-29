@@ -399,6 +399,98 @@ class ChatService:
         """
         self._session_force_include.setdefault(session_id, set()).add(filename)
 
+    def _build_attachment_blocks(
+        self,
+        session_id: str,
+        budget_tokens: int,
+    ) -> tuple[list[dict], list[str]]:
+        """Build Multi-Part content blocks for the session's attachments.
+
+        Returns (blocks, evicted_filenames). Each block is an Anthropic
+        Multi-Part content dict (document / image / text). Eviction is
+        oldest-first, except attachments the agent flagged via
+        attachment_load (force_include) — those stay in even under
+        budget pressure.
+
+        Tokens are estimated cheaply: ~4 chars/token for text, and
+        ~bytes/100 for base64-encoded binary (PDF/image), since the
+        model also runs page-render / decoding work.
+        """
+        import base64
+        from pathlib import Path
+        from mycelos.files.session_attachments import (
+            SessionAttachmentStore, content_kind, media_type,
+        )
+
+        store = SessionAttachmentStore(self._app.data_dir / "sessions")
+        attachments = store.list(session_id)
+        if not attachments:
+            return [], []
+
+        force_include = self._session_force_include.pop(session_id, set())
+
+        # Build candidate blocks in upload order.
+        candidates: list[tuple[Path, dict]] = []
+        for path in attachments:
+            kind = content_kind(path)
+            if kind == "unsupported":
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if kind == "document":
+                candidates.append((path, {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type(path),
+                        "data": base64.b64encode(raw).decode("ascii"),
+                    },
+                }))
+            elif kind == "image":
+                candidates.append((path, {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type(path),
+                        "data": base64.b64encode(raw).decode("ascii"),
+                    },
+                }))
+            elif kind == "text":
+                try:
+                    text = raw.decode("utf-8", errors="replace")
+                except Exception:
+                    text = ""
+                candidates.append((path, {
+                    "type": "text",
+                    "text": f"[Attachment: {path.name}]\n{text[:50_000]}",
+                }))
+
+        def _block_tokens(block: dict) -> int:
+            if block.get("type") == "text":
+                return len(block.get("text", "")) // 4
+            data = block.get("source", {}).get("data", "")
+            # base64 → original bytes ≈ data * 3/4; conservative tokens ≈ bytes/100
+            return len(data) * 3 // 4 // 100
+
+        # Eviction loop: kick oldest non-force-included until we fit.
+        evicted: list[str] = []
+        while candidates and sum(_block_tokens(b) for _, b in candidates) > budget_tokens:
+            kicked_one = False
+            for i, (path, _) in enumerate(candidates):
+                if path.name in force_include:
+                    continue
+                evicted.append(path.name)
+                candidates.pop(i)
+                kicked_one = True
+                break
+            if not kicked_one:
+                # Everything left is force-included — can't shrink further
+                break
+
+        return [b for _, b in candidates], evicted
+
     def get_system_prompt(self, user_name: str | None = None, channel: str = "api") -> str:
         """Build the system prompt with dynamic context.
 
@@ -494,30 +586,14 @@ class ChatService:
         conversation = self._conversations[session_id]
 
         # Add system prompt if conversation has no system message yet.
-        # Plus: scan the user-role history for `[System:` upload markers
-        # and append their content to the system prompt. Anthropic only
-        # treats the FIRST system message as instructions; markers
-        # buried in user turns get read as flavor text and ignored.
-        # Lifting them to the top-level system prompt is the only place
-        # Claude reliably acts on them.
+        # The legacy `[System:` marker pipeline is gone — file uploads
+        # are now ridden along as Anthropic Multi-Part content via
+        # _build_attachment_blocks below.
         if not conversation or conversation[0].get("role") != "system":
             user_name = self._app.memory.get("default", "system", "user.name")
-            base_prompt = self.get_system_prompt(user_name, channel=channel)
-            markers = [
-                m["content"]
-                for m in conversation
-                if m.get("role") == "user"
-                and m.get("content", "").lstrip().startswith("[System:")
-            ]
-            if markers:
-                base_prompt = (
-                    base_prompt
-                    + "\n\n## Active session markers\n"
-                    + "\n".join(markers)
-                )
             conversation.insert(0, {
                 "role": "system",
-                "content": base_prompt,
+                "content": self.get_system_prompt(user_name, channel=channel),
             })
 
         # Add user message. We prepend the current local time as a short
@@ -532,7 +608,33 @@ class ChatService:
             time_prefix = f"[current time: {now.strftime('%Y-%m-%d %H:%M')}]\n"
         except Exception:
             time_prefix = ""
-        conversation.append({"role": "user", "content": time_prefix + message})
+
+        # Multi-Part: stitch session attachments into the user message
+        # so the agent can read them natively. Eviction handles token
+        # budget pressure; force_include flags (set by attachment_load)
+        # protect specific files from eviction.
+        attachment_blocks, evicted = self._build_attachment_blocks(
+            session_id=session_id,
+            budget_tokens=int(200_000 * 0.85),
+        )
+        evicted_stubs = "\n".join(
+            f"[Attachment '{name}' parked — call attachment_load('{name}') "
+            f"to bring it back into context.]"
+            for name in evicted
+        )
+        text_part = (evicted_stubs + "\n\n" + time_prefix + message).strip()
+
+        if attachment_blocks:
+            user_content: list[dict] | str = attachment_blocks + [
+                {"type": "text", "text": text_part}
+            ]
+        else:
+            user_content = time_prefix + message
+
+        conversation.append({"role": "user", "content": user_content})
+        # Persist the pure text version — Multi-Part content can't be
+        # cleanly replayed in JSONL conversation history, and the binary
+        # data is still on disk in the session attachments folder.
         self._app.session_store.append_message(session_id, role="user", content=message)
 
         # Deterministic auto-title: if this session has no title yet, use the
