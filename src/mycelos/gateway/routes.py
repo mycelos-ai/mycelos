@@ -1677,19 +1677,26 @@ def setup_routes(api: FastAPI) -> None:
             note_path = result.get("note_path", "")
             if result["vision_needed"]:
                 marker = (
-                    f"[System: User uploaded \"{file.filename}\" "
+                    f"[System: The user just uploaded the file \"{file.filename}\" "
                     f"({result['page_count']} pages, scanned — no text layer). "
-                    f"Saved to Knowledge Base as `{note_path}`. "
-                    f"Vision analysis available — call note_read('{note_path}') "
-                    f"for what we already have, or offer the user vision analysis."
+                    f"It is saved in the Knowledge Base at path `{note_path}`. "
+                    f"Vision analysis is available. "
+                    f"REQUIRED ACTION when the user asks to analyze/summarize/read this file: "
+                    f"call note_vision('{note_path}') first to OCR it, then note_read('{note_path}'). "
+                    f"Do NOT reply 'I don't see a document' — the file IS attached, "
+                    f"the path is right here in this marker."
                     f"]"
                 )
             else:
                 marker = (
-                    f"[System: User uploaded \"{file.filename}\" "
+                    f"[System: The user just uploaded the file \"{file.filename}\" "
                     f"({result['page_count']} pages). "
-                    f"Saved to Knowledge Base as `{note_path}` with an LLM-generated summary. "
-                    f"Use note_read('{note_path}') if you need the content."
+                    f"It is saved in the Knowledge Base at path `{note_path}` "
+                    f"with an LLM-generated summary already in the note body. "
+                    f"REQUIRED ACTION when the user asks about this file: "
+                    f"call note_read('{note_path}') and use that content to answer. "
+                    f"Do NOT reply 'I don't see a document' — the file IS attached, "
+                    f"the path is right here in this marker."
                     f"]"
                 )
             try:

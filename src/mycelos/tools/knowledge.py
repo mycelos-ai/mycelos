@@ -1014,4 +1014,8 @@ def register(registry: type) -> None:
     registry.register("topic_overview", TOPIC_OVERVIEW_SCHEMA, execute_topic_overview, ToolPermission.OPEN, concurrent_safe=True, category="knowledge_read")
     registry.register("knowledge_stats", KNOWLEDGE_STATS_SCHEMA, execute_knowledge_stats, ToolPermission.OPEN, concurrent_safe=True, category="knowledge_manage")
     registry.register("note_split", NOTE_SPLIT_SCHEMA, execute_note_split, ToolPermission.STANDARD, category="knowledge_manage")
-    registry.register("note_vision", NOTE_VISION_SCHEMA, execute_note_vision, ToolPermission.STANDARD, category="knowledge_manage")
+    # core (not knowledge_manage) so it's always loaded — the upload
+    # marker explicitly references it for scanned PDFs and the agent
+    # must be able to call it on the FIRST turn after an upload, before
+    # the adaptive basis-set has had a chance to discover it.
+    registry.register("note_vision", NOTE_VISION_SCHEMA, execute_note_vision, ToolPermission.STANDARD, category="core")
