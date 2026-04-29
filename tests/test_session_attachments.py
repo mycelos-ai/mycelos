@@ -127,3 +127,63 @@ def test_size_caps_present() -> None:
     assert SIZE_CAPS_BYTES["pdf"] == 32 * 1024 * 1024
     assert SIZE_CAPS_BYTES["image"] == 5 * 1024 * 1024
     assert SIZE_CAPS_BYTES["text"] == 10 * 1024 * 1024
+
+
+def test_purge_old_drops_attachment_folder(tmp_path: Path) -> None:
+    """When SessionStore.purge_old removes a JSONL, the matching
+    attachment folder must go too if attachment_store is passed.
+    """
+    import os
+    import time
+    from mycelos.sessions.store import SessionStore
+
+    conversations_dir = tmp_path / "conversations"
+    sessions_dir = tmp_path / "sessions"
+    conversations_dir.mkdir()
+    store = SessionStore(conversations_dir)
+    attach = SessionAttachmentStore(sessions_dir)
+
+    # Create a session JSONL + attachment folder, then make them ancient
+    session_id = "old-sess"
+    jsonl = conversations_dir / f"{session_id}.jsonl"
+    jsonl.write_text('{"role": "user"}\n')
+    attach.save(session_id, b"hello", "memo.txt")
+    assert (sessions_dir / session_id).exists()
+
+    ancient = time.time() - 100 * 86400  # 100 days ago
+    os.utime(jsonl, (ancient, ancient))
+
+    deleted = store.purge_old(days=30, attachment_store=attach)
+    assert deleted == 1
+    assert not jsonl.exists()
+    assert not (sessions_dir / session_id).exists()
+
+
+def test_purge_old_without_attachment_store_keeps_folder(tmp_path: Path) -> None:
+    """Backwards-compat: without attachment_store, only JSONL is purged
+    (folder stays — caller's responsibility to clean it up).
+    """
+    import os
+    import time
+    from mycelos.sessions.store import SessionStore
+
+    conversations_dir = tmp_path / "conversations"
+    sessions_dir = tmp_path / "sessions"
+    conversations_dir.mkdir()
+    store = SessionStore(conversations_dir)
+    attach = SessionAttachmentStore(sessions_dir)
+
+    session_id = "lonely"
+    jsonl = conversations_dir / f"{session_id}.jsonl"
+    jsonl.write_text('{"role": "user"}\n')
+    attach.save(session_id, b"hi", "f.txt")
+
+    ancient = time.time() - 100 * 86400
+    os.utime(jsonl, (ancient, ancient))
+
+    # No attachment_store passed
+    deleted = store.purge_old(days=30)
+    assert deleted == 1
+    assert not jsonl.exists()
+    # Folder still exists since cleanup wasn't requested
+    assert (sessions_dir / session_id).exists()
