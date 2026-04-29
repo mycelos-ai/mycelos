@@ -1612,6 +1612,36 @@ def setup_routes(api: FastAPI) -> None:
             from mycelos.knowledge.ingest import ingest_pdf
             result = ingest_pdf(mycelos, inbox_path)
 
+            # Persist a marker user-message so the agent KNOWS the upload
+            # happened on the next turn. Without this the SSE response is
+            # streamed once, never written to session history, and the
+            # agent has no idea the document exists when the user asks
+            # about it later.
+            note_path = result.get("note_path", "")
+            if result["vision_needed"]:
+                marker = (
+                    f"[System: User uploaded \"{file.filename}\" "
+                    f"({result['page_count']} pages, scanned — no text layer). "
+                    f"Saved to Knowledge Base as `{note_path}`. "
+                    f"Vision analysis available — call note_read('{note_path}') "
+                    f"for what we already have, or offer the user vision analysis."
+                    f"]"
+                )
+            else:
+                marker = (
+                    f"[System: User uploaded \"{file.filename}\" "
+                    f"({result['page_count']} pages). "
+                    f"Saved to Knowledge Base as `{note_path}` with an LLM-generated summary. "
+                    f"Use note_read('{note_path}') if you need the content."
+                    f"]"
+                )
+            try:
+                mycelos.session_store.append_message(
+                    session_id, role="user", content=marker,
+                )
+            except Exception:
+                logger.exception("Failed to persist upload marker for session %s", session_id)
+
             async def doc_stream():
                 yield session_event(session_id).to_sse()
                 if result["vision_needed"]:
@@ -1633,6 +1663,22 @@ def setup_routes(api: FastAPI) -> None:
         text, method = extract_text(inbox_path)
 
         if method == "vision_needed":
+            # Same problem as the PDF vision branch — agent must learn
+            # about the image so it can offer to analyze it next turn.
+            marker = (
+                f"[System: User uploaded image \"{file.filename}\" "
+                f"saved to inbox at `{inbox_path.name}`. "
+                f"No text could be extracted. "
+                f"Offer the user vision analysis if they ask about it."
+                f"]"
+            )
+            try:
+                mycelos.session_store.append_message(
+                    session_id, role="user", content=marker,
+                )
+            except Exception:
+                logger.exception("Failed to persist upload marker for session %s", session_id)
+
             async def vision_prompt():
                 yield session_event(session_id).to_sse()
                 yield system_response_event(
