@@ -68,7 +68,14 @@ def _extract_pdf(file_path: Path, timeout: int = 30) -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-        logger.debug("PDF extraction failed (rc=%d): %s", result.returncode, result.stderr[:200])
+        # Promote to warning — silent failure here means every uploaded
+        # PDF gets misclassified as "vision_needed" with 0 pages, and
+        # the agent later reports "no document". Hard to debug from logs
+        # at debug level.
+        logger.warning(
+            "PDF text extraction failed for %s (rc=%d): %s",
+            file_path.name, result.returncode, result.stderr[:300],
+        )
         return ""
     except subprocess.TimeoutExpired:
         logger.warning("PDF extraction timed out for %s", file_path.name)
@@ -155,9 +162,21 @@ def pdf_page_count(file_path: Path) -> int:
     """
     try:
         import fitz
+    except ImportError:
+        # Hard log this — without pymupdf installed, every uploaded PDF
+        # silently reports 0 pages and the agent thinks it's empty / a
+        # scanned image. The pyproject.toml declares it as a dep but a
+        # half-broken pip install can leave it missing.
+        logger.error(
+            "pymupdf not installed — PDFs will report 0 pages and trigger "
+            "vision_needed. Run `pip install pymupdf>=1.24`."
+        )
+        return 0
+    try:
         doc = fitz.open(str(file_path))
         count = len(doc)
         doc.close()
         return count
-    except Exception:
+    except Exception as e:
+        logger.warning("pdf_page_count failed for %s: %s", file_path.name, e)
         return 0
