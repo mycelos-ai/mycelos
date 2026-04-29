@@ -110,19 +110,25 @@ RECIPES: dict[str, MCPRecipe] = {
         id="fetch",
         name="HTTP Fetch",
         description="Make HTTP requests to any URL",
-        command="npx -y @modelcontextprotocol/server-fetch",
+        # The npm package @modelcontextprotocol/server-fetch was retired
+        # by upstream — fetch is now the Python `mcp-server-fetch` on
+        # PyPI, run via uvx (no pip install required at runtime).
+        command="uvx mcp-server-fetch",
         credentials=[],
         capabilities_preview=["fetch"],
         category="tools",
+        requires_node=False,
     ),
     "git": MCPRecipe(
         id="git",
         name="Git",
         description="Git operations — branches, commits, diffs",
-        command="npx -y @modelcontextprotocol/server-git",
+        # Same migration as fetch — Python package on PyPI now.
+        command="uvx mcp-server-git",
         credentials=[],
         capabilities_preview=["git.log", "git.diff", "git.branch"],
         category="code",
+        requires_node=False,
     ),
     "sqlite": MCPRecipe(
         id="sqlite",
