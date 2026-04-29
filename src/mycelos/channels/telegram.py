@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 import uuid
@@ -40,6 +41,11 @@ _webhook_secret: str | None = None
 _allowed_users: set[int] = set()  # Telegram user IDs allowed to use the bot
 _polling_thread: threading.Thread | None = None
 _pending_permissions: dict[str, dict] = {}  # permission_id → {telegram_user_id, permission}
+# Maps session_id → filename of an attachment uploaded without a caption.
+# Cleared when the next text message arrives in that session — that text
+# becomes the user's question and the attachment is already in the
+# session's attachments folder, so the Multi-Part build picks it up.
+_pending_attachments: dict[str, str] = {}
 
 
 def _mycelos_base_url() -> str:
@@ -296,7 +302,12 @@ async def handle_permission_callback(callback: types.CallbackQuery) -> None:
 
 @dp.message(F.document)
 async def handle_document(message: types.Message) -> None:
-    """Handle incoming file attachments — save to inbox and analyze."""
+    """Save the document to the session's attachment folder. If the
+    message has a caption, treat it as the user's question and run a
+    normal chat turn — the Multi-Part build picks the file up. If no
+    caption, stash a pending_attachment marker and ask "Was möchtest du
+    wissen?" so the next text turn carries the question.
+    """
     if not _chat_service or not _bot or not _app:
         return
     user_id = message.from_user.id if message.from_user else 0
@@ -304,9 +315,7 @@ async def handle_document(message: types.Message) -> None:
         return
 
     doc = message.document
-    # Size check BEFORE download
-    if doc.file_size and doc.file_size > 50 * 1024 * 1024:
-        await _safe_answer(message, t("telegram.file_too_large"))
+    if doc is None:
         return
 
     await _bot.send_chat_action(message.chat.id, "typing")
@@ -315,111 +324,128 @@ async def handle_document(message: types.Message) -> None:
         file = await _bot.get_file(doc.file_id)
         data = await _bot.download_file(file.file_path)
         file_bytes = data.read()
-
-        from mycelos.files.inbox import InboxManager
-        inbox = InboxManager(_app.data_dir / "inbox")
-        inbox_path = inbox.save(file_bytes, doc.file_name or "unnamed")
-
-        # PDF/DOCX → Knowledge ingest path
-        suffix = inbox_path.suffix.lower()
-        if suffix in ('.pdf', '.docx', '.doc'):
-            from mycelos.knowledge.ingest import ingest_pdf
-
-            chat_id = message.chat.id
-            typing_active = True
-            async def _keep_typing():
-                while typing_active:
-                    try:
-                        await _bot.send_chat_action(chat_id, "typing")
-                    except Exception:
-                        pass
-                    await asyncio.sleep(4)
-            typing_task = asyncio.create_task(_keep_typing())
-
-            result = await asyncio.to_thread(ingest_pdf, _app, inbox_path)
-            typing_active = False
-            typing_task.cancel()
-
-            if result["vision_needed"]:
-                await _safe_answer(message,
-                    f"📄 Document saved to Knowledge Base: _{doc.file_name}_\n"
-                    f"({result['page_count']} pages, no text layer)\n\n"
-                    f"Shall I analyze it with Vision? (~${result['page_count'] * 0.02:.2f})")
-            else:
-                await _safe_answer(message,
-                    f"📄 Document saved to Knowledge Base: _{doc.file_name}_\n"
-                    f"Summary note created. The organizer will classify it into a topic.")
-            return
-
-        from mycelos.files.extractor import extract_text
-        text, method = extract_text(inbox_path)
-
-        if method == "vision_needed":
-            await _safe_answer(message,
-                f"File saved: _{inbox_path.name}_\n"
-                "Shall I analyze the image? (~$0.01)")
-            return
-
-        if text:
-            # Continuous typing indicator while LLM processes
-            chat_id = message.chat.id
-            typing_active = True
-
-            async def _keep_typing():
-                while typing_active:
-                    try:
-                        await _bot.send_chat_action(chat_id, "typing")
-                    except Exception:
-                        pass
-                    await asyncio.sleep(4)
-
-            typing_task = asyncio.create_task(_keep_typing())
-
-            session_id = _get_session(user_id)
-            events = await asyncio.to_thread(
-                _chat_service.handle_message,
-                f"[File: {doc.file_name or inbox_path.name}] Analyze this document:\n\n{text[:2000]}",
-                session_id, f"telegram:{user_id}",
-            )
-            typing_active = False
-            typing_task.cancel()
-
-            response_text = _render_events(events)
-            if response_text:
-                await _safe_answer(message, response_text)
-        else:
-            await _safe_answer(message, f"File saved to inbox: _{inbox_path.name}_")
-
     except Exception as e:
-        logger.error("Document handler error: %s", e, exc_info=True)
+        logger.error("Document download failed: %s", e, exc_info=True)
         await _safe_answer(message, t("telegram.file_process_failed"))
+        return
+
+    from mycelos.files.session_attachments import (
+        SessionAttachmentStore, SIZE_CAPS_BYTES, content_kind,
+    )
+
+    filename = doc.file_name or f"doc-{doc.file_unique_id}"
+    kind = content_kind(Path(filename))
+    if kind == "unsupported":
+        await _safe_answer(message, f"Dateityp nicht unterstützt: _{filename}_")
+        return
+
+    cap_key = {"document": "pdf", "image": "image", "text": "text"}.get(kind, kind)
+    cap = SIZE_CAPS_BYTES.get(cap_key, 0)
+    if cap and len(file_bytes) > cap:
+        await _safe_answer(
+            message,
+            f"Datei zu groß ({len(file_bytes) // 1024 // 1024} MB > "
+            f"{cap // 1024 // 1024} MB für {kind}).",
+        )
+        return
+
+    session_id = _get_session(user_id)
+    store = SessionAttachmentStore(_app.data_dir / "sessions")
+    try:
+        saved = store.save(session_id, file_bytes, filename)
+    except ValueError as e:
+        await _safe_answer(message, f"Speichern fehlgeschlagen: {e}")
+        return
+
+    try:
+        _app.audit.log(
+            "chat.attachment_uploaded",
+            details={
+                "session_id": session_id,
+                "filename": saved.name,
+                "kind": kind,
+                "size": len(file_bytes),
+                "channel": "telegram",
+            },
+            user_id=f"telegram:{user_id}",
+        )
+    except Exception:
+        logger.exception("Failed to audit Telegram attachment upload")
+
+    if message.caption:
+        # Caption = question. Process a normal chat turn; the Multi-Part
+        # build will see the freshly-saved attachment.
+        await _process_telegram_chat(message, message.caption, session_id, user_id)
+    else:
+        _pending_attachments[session_id] = saved.name
+        await _safe_answer(message, "Was möchtest du wissen?")
 
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message) -> None:
-    """Handle incoming photos — save to inbox."""
+    """Save the photo to the session's attachment folder. Same caption /
+    no-caption logic as handle_document.
+    """
     if not _chat_service or not _bot or not _app:
         return
     user_id = message.from_user.id if message.from_user else 0
     if not is_user_allowed(user_id):
         return
 
+    photo = message.photo[-1] if message.photo else None
+    if photo is None:
+        return
+
     try:
-        photo = message.photo[-1]  # Largest size
         file = await _bot.get_file(photo.file_id)
         data = await _bot.download_file(file.file_path)
-
-        from mycelos.files.inbox import InboxManager
-        inbox = InboxManager(_app.data_dir / "inbox")
-        inbox_path = inbox.save(data.read(), f"photo-{photo.file_unique_id}.jpg")
-
-        await _safe_answer(message,
-            f"Photo saved: _{inbox_path.name}_\n"
-            "Shall I analyze it? (~$0.01)")
-
+        photo_bytes = data.read()
     except Exception as e:
-        logger.error("Photo handler error: %s", e, exc_info=True)
+        logger.error("Photo download failed: %s", e, exc_info=True)
         await _safe_answer(message, t("telegram.photo_save_failed"))
+        return
+
+    from mycelos.files.session_attachments import (
+        SessionAttachmentStore, SIZE_CAPS_BYTES,
+    )
+
+    if len(photo_bytes) > SIZE_CAPS_BYTES["image"]:
+        await _safe_answer(
+            message,
+            f"Bild zu groß ({len(photo_bytes) // 1024 // 1024} MB > "
+            f"{SIZE_CAPS_BYTES['image'] // 1024 // 1024} MB).",
+        )
+        return
+
+    filename = f"photo-{photo.file_unique_id}.jpg"
+    session_id = _get_session(user_id)
+    store = SessionAttachmentStore(_app.data_dir / "sessions")
+    try:
+        saved = store.save(session_id, photo_bytes, filename)
+    except ValueError as e:
+        await _safe_answer(message, f"Speichern fehlgeschlagen: {e}")
+        return
+
+    try:
+        _app.audit.log(
+            "chat.attachment_uploaded",
+            details={
+                "session_id": session_id,
+                "filename": saved.name,
+                "kind": "image",
+                "size": len(photo_bytes),
+                "channel": "telegram",
+            },
+            user_id=f"telegram:{user_id}",
+        )
+    except Exception:
+        logger.exception("Failed to audit Telegram photo upload")
+
+    if message.caption:
+        await _process_telegram_chat(message, message.caption, session_id, user_id)
+    else:
+        _pending_attachments[session_id] = saved.name
+        await _safe_answer(message, "Was möchtest du wissen?")
 
 
 @dp.message(F.voice)
@@ -557,6 +583,12 @@ async def handle_message(message: types.Message) -> None:
     # Get or create session for this Telegram user
     session_id = _get_session(user_id)
 
+    # If the user sent an attachment without a caption last turn, clear
+    # the pending marker. The attachment is already in the session's
+    # folder and the Multi-Part build sees it. We only need to clear
+    # the channel-side flag.
+    _pending_attachments.pop(session_id, None)
+
     # Store chat_id for proactive notifications (reminders etc.)
     if _app:
         try:
@@ -687,6 +719,45 @@ def _strip_markdown(text: str) -> str:
     # Remove link syntax [text](url) → text (url)
     text = re.sub(r"\[([^\]]*)\]\(([^)]*)\)", r"\1 (\2)", text)
     return text
+
+
+async def _process_telegram_chat(
+    message: types.Message,
+    text: str,
+    session_id: str,
+    user_id: int,
+) -> None:
+    """Run a chat turn for a Telegram message, with continuous typing indicator."""
+    if not _chat_service or not _bot:
+        return
+    chat_id = message.chat.id
+    typing_active = True
+
+    async def _keep_typing() -> None:
+        while typing_active:
+            try:
+                await _bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(_keep_typing())
+    try:
+        events = await asyncio.to_thread(
+            _chat_service.handle_message,
+            message=text,
+            session_id=session_id,
+            user_id=f"telegram:{user_id}",
+            channel="telegram",
+        )
+    finally:
+        typing_active = False
+        typing_task.cancel()
+
+    response_text = _render_events(events)
+    if response_text:
+        for chunk in _split_message(response_text, 4000):
+            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
 
 
 def _get_session(telegram_user_id: int) -> str:
