@@ -455,15 +455,36 @@ class ChatService:
         except Exception:
             _log.debug("Failed to check daily LLM cost", exc_info=True)
 
-        # Ensure conversation exists
+        # Ensure conversation exists. The in-memory cache is per-process
+        # — if the session was created by another code path (e.g. file
+        # upload → session_store.append_message) the cache misses but
+        # the persisted history holds messages we MUST replay so the
+        # agent sees them. Without this an upload marker just before
+        # the first chat turn gets silently dropped.
         if session_id not in self._conversations:
             self._conversations[session_id] = []
+            try:
+                persisted = self._app.session_store.load_messages(session_id)
+                for m in persisted:
+                    role = m.get("role", "")
+                    content = m.get("content", "")
+                    if role in ("user", "assistant") and content:
+                        self._conversations[session_id].append(
+                            {"role": role, "content": content}
+                        )
+            except Exception:
+                _log.debug(
+                    "Failed to hydrate conversation from session_store",
+                    exc_info=True,
+                )
         conversation = self._conversations[session_id]
 
-        # Add system prompt if conversation is empty
-        if not conversation:
+        # Add system prompt if conversation has no system message yet.
+        # (After hydrating from disk above we already have user/assistant
+        # turns but no system prompt — prepend it.)
+        if not conversation or conversation[0].get("role") != "system":
             user_name = self._app.memory.get("default", "system", "user.name")
-            conversation.append({
+            conversation.insert(0, {
                 "role": "system",
                 "content": self.get_system_prompt(user_name, channel=channel),
             })
