@@ -1594,45 +1594,6 @@ class ChatService:
             meaningful = ["custom"]
         return "-".join(meaningful) + "-agent"
 
-    def _build_tool_list(self) -> list[dict]:
-        """Build the dynamic tool list from the ToolRegistry.
-
-        Returns all tools available to the current agent (mycelos by default),
-        with dynamic filtering for connector tools based on what's actually
-        running.
-        """
-        # Get the active agent for this session
-        session_id = getattr(self, "_current_session_id", "")
-        agent_id = self._get_active_agent(session_id) if session_id else "mycelos"
-        agent_type = agent_id if agent_id in ("mycelos", "builder") else "custom"
-
-        # Get all tools for this agent type from registry
-        all_tools = ToolRegistry.get_tools_for(agent_type)
-
-        # Dynamic filtering: only include connector_tools/connector_call/github_api
-        # if the relevant connectors are actually running
-        mcp_mgr = getattr(self._app, "_mcp_manager", None)
-        has_connectors = mcp_mgr and mcp_mgr.tool_count > 0
-        has_github = False
-        try:
-            connectors = self._app.connector_registry.list_connectors(status="active")
-            has_github = any(c["id"] == "github" for c in connectors)
-        except Exception:
-            _log.debug("Failed to check active connectors for tool filtering", exc_info=True)
-
-        # Filter out dynamic connector tools if connectors aren't running
-        _dynamic_connector_tools = {"connector_tools", "connector_call"}
-        tools = []
-        for t in all_tools:
-            name = t["function"]["name"]
-            if name in _dynamic_connector_tools and not has_connectors:
-                continue
-            if name == "github_api" and not has_github:
-                continue
-            tools.append(t)
-
-        return tools
-
     def _augment_tools_with_connectors(self, tools: list[dict]) -> list[dict]:
         """Augment a tool list with MCP connector meta-tools and github_api if applicable.
 
@@ -2358,11 +2319,7 @@ class ChatService:
             active_agent_id = self._get_active_agent(session_id)
             handlers = self._app.get_agent_handlers()
             handler = handlers.get(active_agent_id, handlers.get("mycelos"))
-            tools = (
-                self._get_session_tools(handler, session_id, user_id=user_id)
-                if handler
-                else self._build_tool_list()
-            )
+            tools = self._get_session_tools(handler, session_id, user_id=user_id) if handler else []
 
             response = self._app.llm.complete(conversation, tools=tools)
 
@@ -2413,7 +2370,10 @@ class ChatService:
         # Now re-run the LLM so it can continue with the original task
         # (e.g., now that the mount is granted, list the directory)
         try:
-            tools = self._build_tool_list()
+            active_agent_id = self._get_active_agent(session_id)
+            handlers = self._app.get_agent_handlers()
+            handler = handlers.get(active_agent_id, handlers.get("mycelos"))
+            tools = self._get_session_tools(handler, session_id) if handler else []
             response = self._app.llm.complete(conversation, tools=tools)
 
             if response.tool_calls:
