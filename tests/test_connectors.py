@@ -12,9 +12,24 @@ import httpx
 import pytest
 
 from mycelos.connectors.http_tools import http_get, http_post
-from mycelos.connectors.registry import register_builtin_tools
 from mycelos.connectors.search_tools import search_news, search_web
-from mycelos.execution.tools import ToolRegistry
+from mycelos.execution.tools import ToolDefinition, ToolRegistry
+
+
+def _register_http_get(registry: ToolRegistry) -> None:
+    """Inline registration helper for the security-pipeline tests below.
+
+    Replaces the deleted connectors.registry.register_builtin_tools — the
+    pipeline tests only need http.get to be present, not the full set.
+    """
+    registry.register(
+        ToolDefinition(
+            name="http.get",
+            description="Make an HTTP GET request to a URL",
+            handler=http_get,
+            required_capability="http.get",
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -211,39 +226,6 @@ def test_search_handles_import_error() -> None:
         assert "error" in results[0]
 
 
-# ── Registry ──
-
-
-def test_register_builtin_tools() -> None:
-    """All 4 built-in tools are registered."""
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    tools = registry.list_tools()
-    names = {t["name"] for t in tools}
-    assert "http.get" in names
-    assert "http.post" in names
-    assert "search.web" in names
-    assert "search.news" in names
-
-
-def test_builtin_tools_have_capabilities() -> None:
-    """Each tool has a required_capability."""
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    for tool_info in registry.list_tools():
-        assert tool_info["capability"], f"Tool {tool_info['name']} has no capability"
-
-
-def test_registry_tools_are_callable() -> None:
-    """Each registered tool handler can be called."""
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    for tool_info in registry.list_tools():
-        tool_def = registry.get(tool_info["name"])
-        assert tool_def is not None
-        assert callable(tool_def.handler)
-
-
 # ── Through ExecutionRuntime (Security Pipeline) ──
 
 
@@ -260,7 +242,7 @@ def test_http_tool_through_security_pipeline() -> None:
 
     tokens = CapabilityTokenManager(storage)
     registry = ToolRegistry()
-    register_builtin_tools(registry)
+    _register_http_get(registry)
     sanitizer = ResponseSanitizer()
     runtime = ExecutionRuntime(tokens, registry, sanitizer)
 
@@ -309,7 +291,15 @@ def test_search_tool_blocked_without_capability() -> None:
 
     tokens = CapabilityTokenManager(storage)
     registry = ToolRegistry()
-    register_builtin_tools(registry)
+    _register_http_get(registry)
+    registry.register(
+        ToolDefinition(
+            name="search.web",
+            description="Search the web using DuckDuckGo",
+            handler=search_web,
+            required_capability="search.web",
+        )
+    )
     runtime = ExecutionRuntime(tokens, registry, ResponseSanitizer())
 
     # Issue token WITHOUT search capability

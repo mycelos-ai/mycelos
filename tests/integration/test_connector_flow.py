@@ -2,9 +2,7 @@
 
 import pytest
 
-from mycelos.connectors.registry import register_builtin_tools
 from mycelos.connectors.search_tools import search_news, search_web, search_web_brave
-from mycelos.execution.tools import ToolRegistry
 
 
 @pytest.mark.integration
@@ -31,23 +29,6 @@ def test_brave_search_with_credential(require_brave_key, integration_app):
     )
     assert len(results) > 0
     assert "error" not in results[0]
-
-
-@pytest.mark.integration
-def test_brave_tool_registered_with_closure(require_brave_key, integration_app):
-    """Brave Search tool registered via closure — agent never sees API key."""
-    app = integration_app
-    registry = ToolRegistry()
-    register_builtin_tools(registry, credential_proxy=app.credentials)
-
-    # Brave tool should be registered
-    tool = registry.get("search.web.brave")
-    assert tool is not None
-
-    # Call without api_key in args — closure provides it
-    result = tool.handler(query="test query", max_results=1)
-    assert isinstance(result, list)
-    assert len(result) > 0
 
 
 @pytest.mark.integration
