@@ -287,6 +287,27 @@ class ChatService:
         # consumed (and cleared) by _build_attachment_blocks + handle_message
         # on the next successful LLM call.
         self._session_force_include: dict[str, set[str]] = {}
+        # session_id → currently-active agent_id (handoff cache)
+        self._active_agents_cache: dict[str, str] = {}
+        # session_id → message-counter for periodic task-reminder injection
+        self._task_reminder_counter: dict[str, int] = {}
+        # session_ids that explicitly skipped onboarding flow this run
+        self._onboarding_skipped: set[str] = set()
+        # session_ids that have already seen the "user level" intro card
+        self._level_shown_sessions: set[str] = set()
+        # Pending permission prompt awaiting the user's reply ({session_id, …})
+        self._pending_permission: dict[str, Any] | None = None
+        # Events queued by long-running tools for the next flush point
+        self._pending_events: list[ChatEvent] = []
+        # session_id → list of widget payloads queued for the next response
+        self._pending_widgets: dict[str, list] = {}
+        # Bound by gateway/server.py at startup when Huey is configured;
+        # left None when running without a background-task queue.
+        self._pipeline_task: Any | None = None
+        # Set per-request by handle_message so request_action and tool
+        # context dispatch can resolve the current session/user.
+        self._current_session_id: str = ""
+        self._current_user_id: str = "default"
 
     def _get_session_tools(
         self,
@@ -342,8 +363,6 @@ class ChatService:
 
     def _get_active_agent(self, session_id: str) -> str:
         """Get the active agent for this session. Default: mycelos."""
-        if not hasattr(self, '_active_agents_cache'):
-            self._active_agents_cache = {}
         if session_id in self._active_agents_cache:
             return self._active_agents_cache[session_id]
         row = self._app.storage.fetchone(
@@ -371,8 +390,7 @@ class ChatService:
             (session_id, target_agent_id, reason),
         )
 
-        if hasattr(self, '_active_agents_cache'):
-            self._active_agents_cache[session_id] = target_agent_id
+        self._active_agents_cache[session_id] = target_agent_id
 
         self._app.audit.log("agent.handoff", details={
             "from": prev_agent, "to": target_agent_id,
@@ -698,8 +716,6 @@ class ChatService:
 
         # Task reminders (overdue + due today) — inject into conversation context
         # so the LLM mentions them naturally in its response
-        if not getattr(self, "_task_reminder_counter", None):
-            self._task_reminder_counter = {}
         msg_count = self._task_reminder_counter.get(session_id, 0) + 1
         self._task_reminder_counter[session_id] = msg_count
         if msg_count == 1 or msg_count % 10 == 0:
@@ -742,8 +758,7 @@ class ChatService:
             onboarding_done = self._app.memory.get("default", "system", "onboarding_completed")
             user_name_known = self._app.memory.get("default", "system", "user.name")
             if not onboarding_done and not user_name_known:
-                onboarding_skipped = getattr(self, '_onboarding_skipped', set())
-                if session_id not in onboarding_skipped:
+                if session_id not in self._onboarding_skipped:
                     # Inject onboarding context for the LLM
                     conversation.append({
                         "role": "system",
@@ -790,8 +805,6 @@ class ChatService:
                     # Check if user wants to skip
                     if message.strip().lower() in ("skip", "later", "überspringen", "später"):
                         self._app.memory.set("default", "system", "onboarding_completed", "true")
-                        if not hasattr(self, '_onboarding_skipped'):
-                            self._onboarding_skipped = set()
                         self._onboarding_skipped.add(session_id)
                         events.append(system_response_event(
                             "Onboarding skipped. You can set things up anytime — just ask!"
@@ -804,8 +817,6 @@ class ChatService:
         # (beginners see hints every session, advanced users less often)
         try:
             from mycelos.gamification import get_session_greeting
-            if not hasattr(self, '_level_shown_sessions'):
-                self._level_shown_sessions = set()
             if session_id not in self._level_shown_sessions:
                 self._level_shown_sessions.add(session_id)
                 greeting = get_session_greeting(self._app, user_id)
@@ -815,7 +826,7 @@ class ChatService:
             _log.debug("Failed to generate session greeting", exc_info=True)
 
         # Check for pending PERMISSION prompt FIRST (system-level, not LLM)
-        pending_perm = getattr(self, "_pending_permission", None)
+        pending_perm = self._pending_permission
         if pending_perm and pending_perm.get("session_id") == session_id:
             return self._handle_permission_response(message, pending_perm)
 
@@ -1105,7 +1116,7 @@ class ChatService:
                         pass
 
                     # Flush progress events from long-running tools (e.g. create_agent)
-                    if hasattr(self, '_pending_events') and self._pending_events:
+                    if self._pending_events:
                         events.extend(self._pending_events)
                         self._pending_events = []
 
@@ -1349,7 +1360,7 @@ class ChatService:
                         return events
 
                     # Emit any other pending widget events
-                    pending_widgets = getattr(self, "_pending_widgets", {}).pop(session_id, [])
+                    pending_widgets = self._pending_widgets.pop(session_id, [])
                     for widget in pending_widgets:
                         events.append(ChatEvent(type="widget", data={"widget": widget}))
 
@@ -1497,9 +1508,8 @@ class ChatService:
             )
 
             # Queue Huey task if available
-            huey_task = getattr(self, "_pipeline_task", None)
-            if huey_task:
-                huey_task(task_id, spec_dict)
+            if self._pipeline_task is not None:
+                self._pipeline_task(task_id, spec_dict)
 
             self._app.audit.log("agent.handoff_return", details={
                 "from": "creator", "to": "mycelos",
@@ -1783,18 +1793,18 @@ class ChatService:
             # discover_tools — Lazy Tool Discovery (not a registry tool)
             if tool_name == "discover_tools":
                 return self._handle_discover_tools(
-                    args, session_id or getattr(self, "_current_session_id", ""),
+                    args, session_id or self._current_session_id,
                 )
 
             # Build context for registry execution
             active_agent = agent_id or self._get_active_agent(
-                session_id or getattr(self, "_current_session_id", "")
+                session_id or self._current_session_id
             )
             context = {
                 "app": self._app,
                 "chat_service": self,
-                "user_id": getattr(self, "_current_user_id", "default"),
-                "session_id": session_id or getattr(self, "_current_session_id", ""),
+                "user_id": self._current_user_id,
+                "session_id": session_id or self._current_session_id,
                 "agent_id": active_agent,
             }
 
@@ -1819,10 +1829,9 @@ class ChatService:
             # Update active_agents_cache after handoff
             if tool_name == "handoff" and isinstance(result, dict) and result.get("status") == "handoff":
                 target = result.get("target_agent", args.get("target_agent"))
-                session_id = getattr(self, "_current_session_id", "")
+                session_id = self._current_session_id
                 if target and session_id:
-                    if hasattr(self, "_active_agents_cache"):
-                        self._active_agents_cache[session_id] = target
+                    self._active_agents_cache[session_id] = target
 
             return result
 
@@ -2161,7 +2170,7 @@ class ChatService:
 
         # Store as pending action (will be executed on user confirmation)
         # We need the session_id — store it via _current_session_id
-        session_id = getattr(self, "_current_session_id", None)
+        session_id = self._current_session_id
         if session_id:
             self._pending_actions[session_id] = {
                 "action": action,
@@ -2184,8 +2193,6 @@ class ChatService:
                 "editable": True,
             }
             # Store widget for the event stream to pick up
-            if not hasattr(self, "_pending_widgets"):
-                self._pending_widgets: dict[str, list] = {}
             self._pending_widgets.setdefault(session_id, []).append(widget_data)
 
         return {
