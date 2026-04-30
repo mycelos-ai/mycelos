@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from mycelos.app import App
-from mycelos.cli.chat_cmd import _build_context
+from mycelos.chat.context import build_context as _build_context
 
 
 @pytest.fixture
