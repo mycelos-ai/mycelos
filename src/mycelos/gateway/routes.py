@@ -177,6 +177,9 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.telegram_webhook import router as telegram_webhook_router
     api.include_router(telegram_webhook_router)
 
+    from mycelos.gateway.routers.schedules import router as schedules_router
+    api.include_router(schedules_router)
+
     @api.get("/api/audit/activity")
     async def audit_activity(
         level: str = "noteworthy",
@@ -3119,16 +3122,6 @@ def setup_routes(api: FastAPI) -> None:
         return mycelos.workflow_run_manager.list_runs(
             status=status, limit=min(limit, 100)
         )
-
-    @api.get("/api/schedules")
-    async def list_schedules() -> list[dict[str, Any]]:
-        """List all scheduled tasks."""
-        mycelos = api.state.mycelos
-        rows = mycelos.storage.fetchall(
-            "SELECT id, workflow_id, schedule, status, last_run, next_run, run_count, budget_per_run, created_at "
-            "FROM scheduled_tasks ORDER BY status, next_run"
-        )
-        return [dict(r) for r in rows]
 
     # ── End of API endpoints ───────────────────────────────────
 
