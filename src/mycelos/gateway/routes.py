@@ -21,7 +21,6 @@ from mycelos.gateway.routers._helpers import (
     ConfirmRequest,
     ConnectorAddRequest,
     CredentialAddRequest,
-    RollbackRequest,
     SessionUpdateRequest,
     get_doc as _get_doc,
     list_docs as _list_docs,
@@ -166,6 +165,9 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.chat import router as chat_router
     api.include_router(chat_router)
 
+    from mycelos.gateway.routers.config import router as config_router
+    api.include_router(config_router)
+
     @api.get("/api/audit/activity")
     async def audit_activity(
         level: str = "noteworthy",
@@ -296,21 +298,6 @@ def setup_routes(api: FastAPI) -> None:
                     pass
             result.append(entry)
         return result
-
-    @api.get("/api/config")
-    async def config() -> dict[str, Any]:
-        """Return current config state snapshot."""
-        mycelos = api.state.mycelos
-        return mycelos.state_manager.snapshot()
-
-    @api.get("/api/i18n")
-    async def i18n() -> dict[str, Any]:
-        """Return web UI translations for the active language."""
-        from mycelos.i18n import get_language, get_web_translations
-
-        lang = get_language()
-        translations = get_web_translations(lang)
-        return {"lang": lang, "translations": translations}
 
     @api.get("/api/sessions")
     async def sessions() -> list[dict[str, Any]]:
@@ -3085,25 +3072,6 @@ def setup_routes(api: FastAPI) -> None:
         mycelos.audit.log("memory.set", details={"scope": scope, "key": key}, user_id=user_id)
         return {"status": "stored", "scope": scope, "key": key}
 
-    # ── Config rollback ────────────────────────────────────────
-
-    @api.post("/api/config/rollback")
-    async def config_rollback(request: Request, body: RollbackRequest) -> dict[str, Any]:
-        """Rollback to a specific config generation."""
-        mycelos = api.state.mycelos
-        try:
-            new_gen = mycelos.config.rollback(
-                to_generation=body.generation_id,
-                state_manager=mycelos.state_manager,
-            )
-            mycelos.audit.log("config.rollback", details={
-                "target_generation": body.generation_id,
-                "active_generation": new_gen,
-            }, user_id=_resolve_user_id(request))
-            return {"status": "rolled_back", "active_generation": new_gen}
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-
     # ── Workflows ──────────────────────────────────────────────
 
     @api.get("/api/workflows")
@@ -3173,25 +3141,6 @@ def setup_routes(api: FastAPI) -> None:
         return mycelos.workflow_run_manager.list_runs(
             status=status, limit=min(limit, 100)
         )
-
-    @api.get("/api/config/generations")
-    async def config_generations() -> dict[str, Any]:
-        """List config generations with active marker."""
-        mycelos = api.state.mycelos
-        generations = mycelos.storage.fetchall(
-            "SELECT id, description, trigger, created_at FROM config_generations ORDER BY id DESC LIMIT 50"
-        )
-        active_id = None
-        active_row = mycelos.storage.fetchone("SELECT generation_id FROM active_generation")
-        if active_row:
-            active_id = active_row["generation_id"]
-        return {
-            "active_id": active_id,
-            "generations": [
-                {**dict(g), "is_active": g["id"] == active_id}
-                for g in generations
-            ],
-        }
 
     @api.get("/api/schedules")
     async def list_schedules() -> list[dict[str, Any]]:
