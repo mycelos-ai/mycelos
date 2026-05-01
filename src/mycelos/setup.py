@@ -34,6 +34,7 @@ logger = logging.getLogger("mycelos.setup")
 SYSTEM_AGENTS: list[dict[str, Any]] = [
     {"id": "mycelos", "name": "Mycelos", "agent_type": "full_model", "capabilities": []},
     {"id": "builder", "name": "Builder", "agent_type": "full_model", "capabilities": []},
+    {"id": "doctor", "name": "Doctor", "agent_type": "full_model", "capabilities": []},
     {"id": "workflow-agent", "name": "Workflow Agent", "agent_type": "light_model", "capabilities": []},
     {"id": "evaluator-agent", "name": "Evaluator Agent", "agent_type": "light_model", "capabilities": []},
     {"id": "auditor-agent", "name": "Auditor Agent", "agent_type": "full_model", "capabilities": []},

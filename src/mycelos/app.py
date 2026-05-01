@@ -378,11 +378,13 @@ class App:
         """Get all registered agent handlers, including persona agents from DB."""
         from mycelos.agents.handlers.mycelos_handler import MycelosHandler
         from mycelos.agents.handlers.builder_handler import BuilderHandler
+        from mycelos.agents.handlers.doctor_handler import DoctorHandler
         from mycelos.agents.handlers.persona_handler import load_persona_handlers
 
         handlers = {
             "mycelos": MycelosHandler(self),
             "builder": BuilderHandler(self),
+            "doctor": DoctorHandler(self),
         }
         # Load user-created persona agents from DB
         handlers.update(load_persona_handlers(self))

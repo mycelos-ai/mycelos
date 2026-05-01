@@ -20,6 +20,8 @@ logger = logging.getLogger("mycelos.agents.persona")
 class PersonaHandler(AgentHandler):
     """Agent handler that loads identity from the database."""
 
+    _is_persona = True
+
     def __init__(self, app: Any, agent_id: str, agent_data: dict):
         self._app = app
         self._agent_id = agent_id

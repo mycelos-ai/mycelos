@@ -377,7 +377,7 @@ class ChatService:
                          reason: str, context: str = "") -> dict:
         """Execute agent handoff — update DB, return result."""
         # Validate: system agents are always valid
-        system_agents = {"mycelos", "builder", "creator", "planner"}
+        system_agents = {"mycelos", "builder", "doctor"}
         if target_agent_id not in system_agents:
             agent = self._app.agent_registry.get(target_agent_id)
             if not agent or agent.get("status") != "active" or not agent.get("user_facing"):
@@ -1176,16 +1176,13 @@ class ChatService:
                         new_handlers = self._app.get_agent_handlers()
                         new_handler = new_handlers.get(new_agent_id)
 
-                        # Fallback: if no registered handler, check agent registry
-                        # for custom/persona agents with a system_prompt
                         if not new_handler:
                             try:
                                 agent_info = self._app.agent_registry.get(new_agent_id)
                                 if agent_info and agent_info.get("system_prompt"):
-                                    # Create a lightweight dynamic handler
-                                    from mycelos.agents.handlers.base import DynamicAgentHandler
-                                    new_handler = DynamicAgentHandler(
-                                        self._app, agent_info,
+                                    from mycelos.agents.handlers.persona_handler import PersonaHandler
+                                    new_handler = PersonaHandler(
+                                        self._app, agent_info["id"], agent_info,
                                     )
                             except Exception:
                                 _log.debug("No handler or registry entry for %s", new_agent_id)

@@ -138,69 +138,95 @@ def _run_check(app, category: str, fix: bool) -> None:
     console.print()
 
 
-def _detect_coding_tools() -> list[dict[str, str]]:
-    """Detect installed AI coding tools."""
-    import shutil
-    tools = []
-    if shutil.which("claude"):
-        tools.append({"name": "Claude Code", "cmd": "claude"})
-    if shutil.which("codex"):
-        tools.append({"name": "Codex", "cmd": "codex"})
-    return tools
-
-
-def _run_via_coding_tool(tool_cmd: str, question: str, data_dir: Path) -> None:
-    """Delegate diagnosis to an external AI coding tool."""
-    import subprocess
-
-    prompt = (
-        f"Read AGENT.md for full system documentation. Then diagnose this problem:\n\n"
-        f"{question}\n\n"
-        f"Check the SQLite database at {data_dir}/mycelos.db — use the queries from "
-        f"AGENT.md 'Debugging & Diagnostics' section. Look at audit_events, "
-        f"knowledge_notes, config_generations, and scheduled_tasks tables.\n\n"
-        f"Explain the root cause and how to fix it."
-    )
-
-    cmd = [tool_cmd, "-p", prompt, "--allowedTools", "Read,Grep,Glob,Bash"]
-    console.print(f"\n[bold]Running {tool_cmd}[/bold] — this may take a few minutes.")
-    console.print(f"[dim]The analysis runs in {tool_cmd}'s own interface below.[/dim]\n")
-    try:
-        subprocess.run(cmd, check=False)
-    except FileNotFoundError:
-        console.print(f"[red]{tool_cmd} not found. Falling back to Mycelos LLM.[/red]")
-        return
-    except KeyboardInterrupt:
-        console.print(f"\n[dim]Cancelled.[/dim]")
-
-
 def _run_why(app, question: str) -> None:
-    """LLM-powered diagnosis — offers external tools if available."""
-    coding_tools = _detect_coding_tools()
+    """Multi-turn diagnostic dialogue via the Doctor agent on the gateway.
 
-    if coding_tools:
-        tool_names = ", ".join(t["name"] for t in coding_tools)
-        console.print(f"\n[bold]Mycelos Doctor[/bold] — Analyzing: \"{question}\"\n")
-        console.print(f"  [dim]AI coding tool detected: {tool_names}[/dim]")
-        console.print(f"  [1] Use {coding_tools[0]['name']} [dim](uses your existing subscription)[/dim]")
-        console.print(f"  [2] Use Mycelos LLM [dim](uses your configured API key)[/dim]")
+    Opens an interactive REPL and pins the session to target_agent_id=doctor
+    so every turn is handled by DoctorHandler (with diagnostic tools), not
+    by Mycelos. The user keeps replying with new info until the symptom is
+    resolved or they exit.
+    """
+    from mycelos.cli.serve_cmd import DEFAULT_PORT, is_gateway_running
 
-        choice = click.prompt("  Choose", type=click.IntRange(1, 2), default=1)
-        if choice == 1:
-            _run_via_coding_tool(coding_tools[0]["cmd"], question, app.data_dir)
+    if not is_gateway_running():
+        console.print(
+            "\n[yellow]Gateway not running.[/yellow] "
+            "Start it with [bold]mycelos serve[/bold] in another terminal, "
+            "then retry [bold]mycelos doctor --why[/bold].\n"
+        )
+        return
+
+    base_url = f"http://localhost:{DEFAULT_PORT}"
+    console.print(f"\n[bold]Mycelos Doctor[/bold] — Diagnosing: \"{question}\"")
+    console.print("[dim](type 'exit' or Ctrl-D to leave the diagnostic session)[/dim]\n")
+
+    session_id = _doctor_chat_turn(base_url, question, session_id=None)
+    if session_id is None:
+        return
+
+    while True:
+        try:
+            follow_up = click.prompt("  You", default="", show_default=False).strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Doctor session ended.[/dim]\n")
             return
+        if not follow_up:
+            continue
+        if follow_up.lower() in {"exit", "quit", "q"}:
+            console.print("[dim]Doctor session ended.[/dim]\n")
+            return
+        _doctor_chat_turn(base_url, follow_up, session_id=session_id)
 
-    # Mycelos LLM diagnosis
-    from mycelos.doctor.agent import DoctorAgent
 
-    console.print(f"\n[bold]Mycelos Doctor[/bold] — Analyzing: \"{question}\"\n")
+def _doctor_chat_turn(base_url: str, message: str, session_id: str | None) -> str | None:
+    """Send one turn to the gateway pinned to the doctor agent.
 
-    with console.status("[dim]Thinking...[/dim]"):
-        agent = DoctorAgent(app)
-        diagnosis = agent.diagnose(question)
+    Returns the session_id (new on first turn, unchanged on follow-ups) or
+    None if the request failed.
+    """
+    import httpx
+    from rich.markdown import Markdown
 
-    console.print(diagnosis)
-    console.print()
+    payload = {
+        "message": message,
+        "session_id": session_id,
+        "channel": "terminal",
+        "target_agent_id": "doctor",
+    }
+
+    try:
+        with httpx.stream(
+            "POST", f"{base_url}/api/chat", json=payload, timeout=120,
+        ) as resp:
+            current_event_type: str | None = None
+            for line in resp.iter_lines():
+                if line.startswith("event: "):
+                    current_event_type = line[7:].strip()
+                elif line.startswith("data: ") and current_event_type:
+                    import json as _json
+                    try:
+                        data = _json.loads(line[6:])
+                    except Exception:
+                        continue
+                    if current_event_type == "session":
+                        session_id = data.get("session_id", session_id)
+                    elif current_event_type == "agent":
+                        console.print(f"\n[bold magenta]{data.get('agent', 'Doctor')}>[/bold magenta]")
+                    elif current_event_type in ("text", "system-response"):
+                        console.print(Markdown(data.get("content", "")))
+                    elif current_event_type == "error":
+                        console.print(f"[red]{data.get('message', 'unknown error')}[/red]")
+                    elif current_event_type == "done":
+                        console.print()
+                    current_event_type = None
+    except httpx.ConnectError:
+        console.print("[red]Gateway not reachable — start it with `mycelos serve`.[/red]")
+        return None
+    except Exception as exc:
+        console.print(f"[red]Gateway error: {exc}[/red]")
+        return session_id
+
+    return session_id
 
 
 def _auto_fix(app, results: list[dict]) -> None:
