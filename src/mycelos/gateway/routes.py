@@ -21,11 +21,9 @@ from mycelos.gateway.routers._helpers import (
     ConfirmRequest,
     ConnectorAddRequest,
     CredentialAddRequest,
-    SessionUpdateRequest,
     get_doc as _get_doc,
     list_docs as _list_docs,
     parse_frontmatter as _parse_frontmatter,
-    render_session_markdown as _render_session_markdown,
     resolve_user_id as _resolve_user_id,
     sse_error as _sse_error,
 )
@@ -192,81 +190,8 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.audit import router as audit_router
     api.include_router(audit_router)
 
-    @api.get("/api/sessions")
-    async def sessions() -> list[dict[str, Any]]:
-        """List recent sessions."""
-        mycelos = api.state.mycelos
-        return mycelos.session_store.list_sessions()
-
-    @api.post("/api/sessions")
-    async def create_session(http_request: Request) -> dict[str, Any]:
-        """Create a new chat session."""
-        mycelos = api.state.mycelos
-        user_id = _resolve_user_id(http_request)
-        session_id = mycelos.session_store.create_session(user_id=user_id)
-        return {"session_id": session_id}
-
-    @api.get("/api/sessions/{session_id}/messages")
-    async def session_messages(session_id: str) -> dict[str, Any]:
-        """Load messages for a specific session."""
-        mycelos = api.state.mycelos
-        if not mycelos.session_store.session_exists(session_id):
-            return JSONResponse({"error": "Session not found"}, status_code=404)
-        messages = mycelos.session_store.load_messages(session_id)
-        return {"session_id": session_id, "messages": messages}
-
-    @api.patch("/api/sessions/{session_id}")
-    async def update_session(session_id: str, body: SessionUpdateRequest) -> dict[str, Any]:
-        """Update session title/topic."""
-        mycelos = api.state.mycelos
-        ok = mycelos.session_store.update_session(
-            session_id, title=body.title, topic=body.topic,
-        )
-        if not ok:
-            return JSONResponse({"error": "Session not found"}, status_code=404)
-        result: dict[str, Any] = {"session_id": session_id}
-        if body.title is not None:
-            result["title"] = body.title
-        if body.topic is not None:
-            result["topic"] = body.topic
-        return result
-
-    @api.get("/api/sessions/{session_id}/download")
-    async def download_session(
-        session_id: str, format: str = "markdown"
-    ) -> Any:
-        """Download a session in jsonl, json, or markdown format."""
-        from starlette.responses import Response as StarletteResponse
-        mycelos = api.state.mycelos
-        events = mycelos.session_store.load_all_events(session_id)
-
-        if format == "jsonl":
-            body = "\n".join(json.dumps(e, default=str) for e in events)
-            return StarletteResponse(
-                content=body,
-                media_type="application/x-ndjson",
-                headers={"Content-Disposition": f'attachment; filename="{session_id}.jsonl"'},
-            )
-        elif format == "json":
-            body = json.dumps(events, indent=2, default=str)
-            return StarletteResponse(
-                content=body,
-                media_type="application/json",
-                headers={"Content-Disposition": f'attachment; filename="{session_id}.json"'},
-            )
-        elif format == "markdown":
-            body = _render_session_markdown(session_id, events, mycelos.session_store)
-            return StarletteResponse(
-                content=body,
-                media_type="text/markdown",
-                headers={"Content-Disposition": f'attachment; filename="{session_id}.md"'},
-            )
-        else:
-            return StarletteResponse(
-                content=json.dumps({"error": "invalid format"}),
-                status_code=400,
-                media_type="application/json",
-            )
+    from mycelos.gateway.routers.sessions import router as sessions_router
+    api.include_router(sessions_router)
 
     @api.get("/api/knowledge/notes")
     async def knowledge_notes(
@@ -568,32 +493,6 @@ def setup_routes(api: FastAPI) -> None:
         if not doc_path:
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(str(doc_path), filename=doc_path.name)
-
-    @api.get("/api/sessions/{session_id}/attachments/{filename:path}")
-    async def serve_session_attachment(session_id: str, filename: str) -> Any:
-        """Serve a file from the session's attachment folder.
-
-        Path-traversal-safe: session_id is sanitized and the resolved
-        filename must live inside the session's attachments folder. Used
-        by the chat preview card to render images / link to PDFs.
-        """
-        from starlette.responses import FileResponse
-        from mycelos.files.inbox import sanitize_filename
-        mycelos = api.state.mycelos
-        sessions_root = (mycelos.data_dir / "sessions").resolve()
-        safe_session_id = sanitize_filename(session_id)
-        base = (sessions_root / safe_session_id / "attachments").resolve()
-        # Defense in depth: verify base is under sessions_root.
-        if not base.is_relative_to(sessions_root):
-            return JSONResponse({"error": "path traversal blocked"}, status_code=400)
-        target = (base / filename).resolve()
-        try:
-            target.relative_to(base)
-        except ValueError:
-            return JSONResponse({"error": "path traversal blocked"}, status_code=400)
-        if not target.is_file():
-            return JSONResponse({"error": "not found"}, status_code=404)
-        return FileResponse(str(target), filename=target.name)
 
     @api.post("/api/knowledge/notes/{path:path}/vision")
     async def knowledge_note_vision(path: str, request: Request) -> dict[str, Any]:
