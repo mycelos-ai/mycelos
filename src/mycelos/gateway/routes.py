@@ -168,6 +168,9 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.config import router as config_router
     api.include_router(config_router)
 
+    from mycelos.gateway.routers.docs import router as docs_router
+    api.include_router(docs_router)
+
     @api.get("/api/audit/activity")
     async def audit_activity(
         level: str = "noteworthy",
@@ -3179,17 +3182,3 @@ def setup_routes(api: FastAPI) -> None:
             logger.error("Telegram webhook error: %s", e)
             return {"ok": False}  # Don't leak error details (H-04)
 
-    @api.get("/api/docs")
-    async def list_docs():
-        docs_dir = Path(__file__).parent.parent.parent.parent / "docs" / "website"
-        docs_dir = docs_dir.resolve()
-        return _list_docs(docs_dir)
-
-    @api.get("/api/docs/{slug}")
-    async def get_doc(slug: str):
-        docs_dir = Path(__file__).parent.parent.parent.parent / "docs" / "website"
-        docs_dir = docs_dir.resolve()
-        result = _get_doc(docs_dir, slug)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "Not found"})
-        return result
