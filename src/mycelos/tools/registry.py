@@ -214,6 +214,7 @@ class ToolRegistry:
         from mycelos.tools import agent as _agent
         from mycelos.tools import attachments as _attach_tools
         from mycelos.tools import connector as _connector
+        from mycelos.tools import doctor as _doctor
         from mycelos.tools import filesystem as _filesystem
         from mycelos.tools import knowledge as _knowledge
         from mycelos.tools import memory as _memory
@@ -233,6 +234,7 @@ class ToolRegistry:
         _ui.register(cls)
         _agent.register(cls)
         _attach_tools.register(cls)
+        _doctor.register(cls)
         # email_* in-process tools removed — replaced by the
         # @n24q02m/better-email-mcp MCP server, registered as a recipe.
         _session.register(cls)
@@ -315,7 +317,7 @@ class ToolRegistry:
 
 
 _SYSTEM_AGENT_IDS = frozenset({
-    "mycelos", "workflow-runner", "builder", "auditor", "evaluator",
+    "mycelos", "workflow-runner", "builder", "auditor", "evaluator", "doctor",
 })
 
 # Prefixes that also count as system agents (e.g. "workflow-agent:run-123")

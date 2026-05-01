@@ -31,12 +31,12 @@ class TestSessionAgentTracking:
     def test_set_active_agent(self, app):
         app.storage.execute(
             "INSERT INTO session_agents (session_id, active_agent_id, handoff_reason) VALUES (?, ?, ?)",
-            ("sess-1", "creator", "User wants to build an agent"),
+            ("sess-1", "builder", "User wants to build an agent"),
         )
         row = app.storage.fetchone(
             "SELECT active_agent_id, handoff_reason FROM session_agents WHERE session_id = 'sess-1'"
         )
-        assert row["active_agent_id"] == "creator"
+        assert row["active_agent_id"] == "builder"
 
     def test_update_active_agent(self, app):
         app.storage.execute(
@@ -45,12 +45,12 @@ class TestSessionAgentTracking:
         )
         app.storage.execute(
             "UPDATE session_agents SET active_agent_id = ? WHERE session_id = ?",
-            ("planner", "sess-2"),
+            ("doctor", "sess-2"),
         )
         row = app.storage.fetchone(
             "SELECT active_agent_id FROM session_agents WHERE session_id = 'sess-2'"
         )
-        assert row["active_agent_id"] == "planner"
+        assert row["active_agent_id"] == "doctor"
 
     def test_user_facing_column_exists(self, app):
         app.storage.execute("SELECT user_facing FROM agents LIMIT 0")
@@ -91,8 +91,8 @@ class TestMycelosHandler:
         handler = MycelosHandler(app)
         prompt = handler.get_system_prompt()
         assert "handoff" in prompt.lower()
-        assert "creator" in prompt.lower()
-        assert "planner" in prompt.lower()
+        assert "builder" in prompt.lower()
+        assert "doctor" in prompt.lower()
 
 
 class TestBuilderHandler:
@@ -127,12 +127,12 @@ class TestHandoffExecution:
         from mycelos.chat.service import ChatService
         service = ChatService(app)
         session_id = service.create_session()
-        service._execute_handoff(session_id, "creator", "build an agent")
+        service._execute_handoff(session_id, "builder", "build an agent")
         row = app.storage.fetchone(
             "SELECT active_agent_id FROM session_agents WHERE session_id = ?",
             (session_id,),
         )
-        assert row["active_agent_id"] == "creator"
+        assert row["active_agent_id"] == "builder"
 
     def test_handoff_rejects_non_user_facing(self, app):
         from mycelos.chat.service import ChatService
@@ -151,17 +151,17 @@ class TestHandoffExecution:
         from mycelos.chat.service import ChatService
         service = ChatService(app)
         session_id = service.create_session()
-        service._execute_handoff(session_id, "planner", "complex task")
-        assert service._get_active_agent(session_id) == "planner"
+        service._execute_handoff(session_id, "doctor", "complex task")
+        assert service._get_active_agent(session_id) == "doctor"
 
     def test_handoff_persists_in_db(self, app):
         from mycelos.chat.service import ChatService
         service1 = ChatService(app)
         session_id = service1.create_session()
-        service1._execute_handoff(session_id, "creator", "build")
+        service1._execute_handoff(session_id, "builder", "build")
         # New service instance should see the same agent (DB-backed)
         service2 = ChatService(app)
-        assert service2._get_active_agent(session_id) == "creator"
+        assert service2._get_active_agent(session_id) == "builder"
 
     def test_app_get_agent_handlers(self, app):
         handlers = app.get_agent_handlers()
@@ -177,13 +177,13 @@ class TestHandoffIntegration:
         from mycelos.chat.service import ChatService
         service = ChatService(app)
         session_id = service.create_session()
-        service._execute_handoff(session_id, "creator", "build agent")
+        service._execute_handoff(session_id, "builder", "build agent")
 
-        assert service._get_active_agent(session_id) == "creator"
+        assert service._get_active_agent(session_id) == "builder"
 
         # New ChatService instance should also see it (DB-backed)
         service2 = ChatService(app)
-        assert service2._get_active_agent(session_id) == "creator"
+        assert service2._get_active_agent(session_id) == "builder"
 
     def test_old_routing_branches_removed(self, app):
         """CREATE_AGENT and TASK_REQUEST are no longer handled via direct routing."""

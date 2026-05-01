@@ -538,12 +538,12 @@ class TestChatServiceIntegration:
         assert len(parts) >= 1
         assert all(len(p) > 2 for p in parts)
 
-    def test_handoff_to_creator_switches_session(self, app):
-        """Handoff to creator updates the active agent for the session."""
+    def test_handoff_to_builder_switches_session(self, app):
+        """Handoff to builder updates the active agent for the session."""
         svc = ChatService(app)
         session_id = svc.create_session()
-        svc._execute_handoff(session_id, "creator", "User wants to build an agent")
-        assert svc._get_active_agent(session_id) == "creator"
+        svc._execute_handoff(session_id, "builder", "User wants to build an agent")
+        assert svc._get_active_agent(session_id) == "builder"
 
     def test_builder_handler_has_tools(self, app):
         """Builder handler provides tools including handoff and create_agent."""

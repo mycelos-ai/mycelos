@@ -377,7 +377,7 @@ class ChatService:
                          reason: str, context: str = "") -> dict:
         """Execute agent handoff — update DB, return result."""
         # Validate: system agents are always valid
-        system_agents = {"mycelos", "builder", "creator", "planner"}
+        system_agents = {"mycelos", "builder", "doctor"}
         if target_agent_id not in system_agents:
             agent = self._app.agent_registry.get(target_agent_id)
             if not agent or agent.get("status") != "active" or not agent.get("user_facing"):

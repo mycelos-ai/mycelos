@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from mycelos.app import App
 
 # Fallback list of user-facing agent IDs if the registry cannot be queried
-_FALLBACK_USER_FACING_AGENTS = ["builder"]
+_FALLBACK_USER_FACING_AGENTS = ["builder", "doctor"]
 
 _HANDOFF_RULES_BASE = """
 ## Handoff Rules (Agent Routing)
@@ -27,6 +27,14 @@ You are the primary interface. You can route to specialist agents:
 ### Build Requests
 - User wants to **build something** (agent, workflow, automation, scraper,
   recurring task, integration) → handoff to "builder"
+
+### Diagnostic Requests
+- User reports something is **broken, not working, or behaving unexpectedly**
+  (Telegram bot silent, reminders missed, scheduled workflow didn't run,
+  credentials seem wrong, something used to work and stopped) → handoff to
+  "doctor". The Doctor agent runs diagnostic tools and stays in dialogue
+  until the root cause is found — do NOT try to diagnose it yourself in
+  one shot.
 
 ### Custom Agent / Persona Routing
 {custom_agent_routing}
@@ -84,15 +92,25 @@ def _build_handoff_tool(target_agents: list[str]) -> dict:
 
 
 def _get_user_facing_agents(app: Any) -> list[str]:
-    """Return IDs of user-facing agents from the registry, falling back to defaults."""
+    """Return IDs of user-facing agents.
+
+    System agents in `_FALLBACK_USER_FACING_AGENTS` (builder, doctor) are
+    always included so the handoff enum doesn't lose them when the user
+    has any DB persona configured. DB rows with user_facing=1 are merged
+    on top, deduplicated.
+    """
+    ids = list(_FALLBACK_USER_FACING_AGENTS)
     try:
         rows = app.storage.fetchall(
             "SELECT id FROM agents WHERE user_facing = 1 AND status = 'active' AND id != 'mycelos'"
         )
-        ids = [r["id"] for r in rows if r["id"]]
-        return ids if ids else _FALLBACK_USER_FACING_AGENTS
+        for r in rows:
+            agent_id = r["id"]
+            if agent_id and agent_id not in ids:
+                ids.append(agent_id)
     except Exception:
-        return _FALLBACK_USER_FACING_AGENTS
+        pass
+    return ids
 
 
 def _build_custom_agents_context(app: Any) -> tuple[str, list[dict]]:
@@ -107,7 +125,7 @@ def _build_custom_agents_context(app: Any) -> tuple[str, list[dict]]:
         return ("No custom agents available.", [])
 
     # System agents are not routable custom agents
-    system_ids = {"mycelos", "builder", "workflow-agent", "evaluator-agent", "auditor-agent"}
+    system_ids = {"mycelos", "builder", "doctor", "workflow-agent", "evaluator-agent", "auditor-agent"}
     custom = [a for a in all_agents if a["id"] not in system_ids]
 
     if not custom:
