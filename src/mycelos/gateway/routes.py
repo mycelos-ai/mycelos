@@ -1,4 +1,10 @@
-"""Gateway HTTP routes — chat, health, config."""
+"""Gateway HTTP routes orchestrator + middleware.
+
+Per-domain handlers live under ``mycelos.gateway.routers.*``. ``setup_routes``
+mounts each domain router on the FastAPI app. Middleware classes
+(``LocalhostMiddleware``, ``CSRFMiddleware``) and the test-facing helper
+re-exports stay here for back-compat.
+"""
 
 from __future__ import annotations
 
