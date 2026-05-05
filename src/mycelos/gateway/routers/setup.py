@@ -268,7 +268,12 @@ async def telegram_verify(request: Request) -> dict[str, Any]:
     if not data.get("ok"):
         desc = data.get("description", "Unknown error")
         if "chat not found" in desc.lower() or "CHAT_NOT_FOUND" in desc:
-            return {"error": "Chat ID not found. Make sure you sent /start to the bot first."}
+            return {
+                "error": (
+                    "Chat ID not found. Open your new bot in Telegram and send "
+                    "it any message (e.g. /start), then try again."
+                )
+            }
         mycelos.audit.log(
             "telegram.setup.verify_failed", user_id="default", details={},
         )

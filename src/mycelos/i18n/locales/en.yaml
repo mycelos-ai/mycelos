@@ -429,7 +429,11 @@ gamification:
 
 # --- Telegram ---
 telegram:
-  not_authorized: "Not authorized. Contact the bot owner."
+  not_authorized: |-
+    Not authorized.
+
+    Your Telegram chat ID is `{user_id}`.
+    Open Mycelos → *Connectors* → Telegram and add this ID to the allowed chats, or re-run the setup wizard.
   start_greeting: "Hello! I'm *Mycelos* — your personal agent operating system.\n\nJust write what you need!"
   file_too_large: "File too large (max 50MB)."
   file_process_failed: "Failed to process file. Please try again."

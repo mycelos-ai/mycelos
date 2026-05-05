@@ -240,8 +240,25 @@ def _start_telegram_channel(mycelos: App, api: FastAPI, debug: bool = False) -> 
     Reads channel config from the channels table. Mode is either
     'polling' (default, no webhook needed) or 'webhook'.
     Allowlist is enforced from the channels table.
+
+    Re-entrant: if a polling thread is already running (e.g. from an
+    earlier setup or a re-configuration via the wizard), it is stopped
+    first so the new token/allowlist takes effect cleanly.
     """
-    from mycelos.channels.telegram import load_channel_config, setup_telegram, start_polling
+    from mycelos.channels.telegram import (
+        load_channel_config,
+        setup_telegram,
+        start_polling,
+        stop_polling,
+    )
+
+    # If a polling thread is already running, stop it before re-starting.
+    # This makes the wizard's "save & start" flow safe to call repeatedly.
+    if getattr(api.state, "telegram_bot", None) is not None:
+        try:
+            stop_polling()
+        except Exception as e:
+            logger.warning("Failed to stop existing Telegram polling: %s", e)
 
     api.state.telegram_bot = None
     api.state.telegram_mode = None
@@ -330,6 +347,12 @@ def _start_telegram_channel(mycelos: App, api: FastAPI, debug: bool = False) -> 
             "Telegram channel: mode=%s, allowed_users=%s",
             mode, allowed_users,
         )
+
+
+# Public alias so other modules (e.g. routers/channels.py) can hot-start
+# the Telegram channel from the setup wizard without duplicating the boot
+# code path.
+start_telegram_channel = _start_telegram_channel
 
 
 def create_app(
