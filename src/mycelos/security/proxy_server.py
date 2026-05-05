@@ -797,7 +797,16 @@ def create_proxy_app() -> FastAPI:
     # POST /credential/bootstrap
     # ---------------------------------------------------------------------------
 
-    _BOOTSTRAP_WINDOW_SECONDS = 10
+    # The proxy only honors /credential/bootstrap and
+    # /credential/materialize during a window after startup, so a
+    # gateway compromised later in the session cannot pull credentials
+    # in clear. 60s is a conservative budget that fits Pi-class boot
+    # sequences (LLM healthcheck + MCP server discovery via npx/uvx),
+    # while keeping the steady-state denial in place. We also log a
+    # WARNING for every materialize that lands later than this soft
+    # threshold so a creeping boot time stays visible.
+    _BOOTSTRAP_WINDOW_SECONDS = 60
+    _MATERIALIZE_LATE_WARN_SECONDS = 30
 
     @app.post("/credential/bootstrap")
     async def credential_bootstrap(request: Request) -> JSONResponse:
@@ -894,6 +903,19 @@ def create_proxy_app() -> FastAPI:
             return JSONResponse(
                 {"error": "Materialize window closed", "elapsed": round(elapsed, 1)},
                 status_code=403,
+            )
+
+        # Soft threshold: warn loudly when boot is creeping toward the
+        # hard limit. Lets us catch slow regressions before they trip
+        # users in production.
+        if elapsed > _MATERIALIZE_LATE_WARN_SECONDS:
+            logger.warning(
+                "Late credential materialize: service=%s elapsed=%.1fs "
+                "(soft threshold %ds, hard limit %ds). If this keeps "
+                "growing, the boot sequence is at risk of crossing the "
+                "bootstrap window.",
+                req.service, elapsed,
+                _MATERIALIZE_LATE_WARN_SECONDS, _BOOTSTRAP_WINDOW_SECONDS,
             )
 
         credential_proxy = _get_credential_proxy()
