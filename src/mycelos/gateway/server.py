@@ -650,11 +650,19 @@ def create_app(
         if debug:
             logger.debug("Scheduler disabled (--no-scheduler)")
 
+    # Start the Telegram channel BEFORE MCP connectors. In the
+    # two-container deployment the channel needs the SecurityProxy to
+    # materialize its bot token, and the proxy only honors that
+    # request inside a short bootstrap window measured from proxy
+    # startup. MCP server discovery (npx/uvx downloads, especially on
+    # slower hardware like a Pi) can easily eat 10-30s on its own,
+    # which used to push the materialize call past the window and
+    # leave the channel offline. Telegram needs no MCP plumbing, so
+    # there is no ordering constraint forcing this to come second.
+    _start_telegram_channel(mycelos, api, debug=debug)
+
     # Start MCP connector servers for active connectors
     _start_mcp_connectors(mycelos, debug=debug)
-
-    # Start Telegram channel from NixOS-style config
-    _start_telegram_channel(mycelos, api, debug=debug)
 
     # Mount web frontend if available
     frontend_dir = Path(__file__).parent.parent / "frontend"
