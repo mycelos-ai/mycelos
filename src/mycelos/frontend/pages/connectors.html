@@ -152,6 +152,65 @@
             <span class="material-symbols-outlined text-primary">extension</span>
             <h2 class="font-headline font-bold text-sm tracking-widest uppercase text-primary">New Connector</h2>
             <div class="h-[1px] flex-1 mycelium-line"></div>
+            <button @click="pasteJson.open = !pasteJson.open; pasteJson.error = ''"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label
+                           text-tertiary hover:bg-tertiary/10 transition-colors">
+              <span class="material-symbols-outlined text-sm" x-text="pasteJson.open ? 'close' : 'content_paste'"></span>
+              <span x-text="pasteJson.open ? 'Hide paste' : 'Paste config'"></span>
+            </button>
+          </div>
+
+          <!-- Paste-config block: accepts standard MCP JSON snippets
+               (Claude Desktop / Cursor / VS Code style) and fills the
+               form fields automatically. -->
+          <div x-show="pasteJson.open"
+               x-transition:enter="transition ease-out duration-150"
+               x-transition:enter-start="opacity-0 -translate-y-1"
+               x-transition:enter-end="opacity-1 translate-y-0"
+               class="mb-5 p-4 rounded-xl bg-tertiary/5 border border-tertiary/20">
+            <p class="text-xs text-on-surface-variant mb-2">
+              Paste a config snippet from the provider's docs (e.g. <code class="font-mono">{ "mcpServers": { ... } }</code>).
+              Name, command, and environment variables will be extracted.
+            </p>
+            <textarea x-model="pasteJson.input"
+                      class="input-field font-mono text-xs resize-y mb-2"
+                      rows="5"
+                      placeholder='{ "mcpServers": { "yt-dlp": { "command": "npx", "args": ["-y", "@kevinwatt/yt-dlp-mcp@latest"] } } }'></textarea>
+
+            <!-- Multi-server picker: shows when the pasted JSON contains
+                 more than one server under mcpServers. -->
+            <div x-show="pasteJson.servers.length > 1" class="mb-2">
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">
+                Multiple servers found — pick one
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="srv in pasteJson.servers" :key="srv.name">
+                  <button @click="applyPastedServer(srv)" type="button"
+                          class="px-3 py-1.5 rounded-lg text-xs font-mono bg-surface-container
+                                 hover:bg-tertiary/20 transition-colors"
+                          x-text="srv.name"></button>
+                </template>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-3">
+              <p x-show="pasteJson.error" class="text-xs text-error flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm">error</span>
+                <span x-text="pasteJson.error"></span>
+              </p>
+              <p x-show="!pasteJson.error && pasteJson.applied" class="text-xs text-[#48c78e] flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm">check_circle</span>
+                Applied — review the fields below
+              </p>
+              <div class="flex-1"></div>
+              <button @click="parsePastedJson()"
+                      :disabled="!pasteJson.input.trim()"
+                      class="px-3 py-1.5 rounded-lg text-xs font-medium bg-tertiary text-on-tertiary
+                             hover:bg-tertiary/80 transition-colors disabled:opacity-30
+                             disabled:cursor-not-allowed">
+                Parse
+              </button>
+            </div>
           </div>
 
           <!-- Name -->
@@ -1014,6 +1073,18 @@
           envVars: [{ key: '', value: '', isSecret: true }],
           lookupHit: 0,  // 0 = no lookup yet, N = registry suggested N vars
         },
+        // State for the "Paste config" block. `servers` holds parsed
+        // entries when the JSON contains multiple servers under
+        // mcpServers — the user picks one. `applied=true` shows the
+        // "Applied — review the fields below" hint after a successful
+        // parse so the user knows the form was just rewritten.
+        pasteJson: {
+          open: false,
+          input: '',
+          servers: [],
+          error: '',
+          applied: false,
+        },
         searchQuery: '',
         searchResults: [],
         searching: false,
@@ -1229,6 +1300,148 @@
           } catch (_) {
             /* network error → leave the form alone */
           }
+        },
+
+        /**
+         * Parse a pasted MCP config JSON snippet and fill the form.
+         *
+         * Accepts the shapes documented by Anthropic, Cursor, VS Code,
+         * etc.:
+         *   { "mcpServers": { "name": { "command": ..., "args": [...], "env": {...} } } }
+         *   { "name": { "command": ..., ... } }              // wrapper-less
+         *   { "command": ..., "args": [...], "env": {...} }  // single block
+         *
+         * Multi-server inputs surface a picker — the user clicks the
+         * server they want and `applyPastedServer` finishes the job.
+         *
+         * Remote (url-based SSE/HTTP) transports are rejected for now;
+         * Mycelos's connector path is subprocess-only.
+         */
+        parsePastedJson() {
+          const raw = (this.pasteJson.input || '').trim();
+          this.pasteJson.error = '';
+          this.pasteJson.applied = false;
+          this.pasteJson.servers = [];
+          if (!raw) return;
+
+          let obj;
+          try {
+            obj = JSON.parse(raw);
+          } catch (e) {
+            this.pasteJson.error = 'Not valid JSON: ' + (e.message || e);
+            return;
+          }
+
+          // Locate the server map. Three shapes, narrowing:
+          let serverMap = null;
+          let inferredName = '';
+
+          if (obj && typeof obj === 'object' && obj.mcpServers
+              && typeof obj.mcpServers === 'object') {
+            serverMap = obj.mcpServers;
+          } else if (obj && typeof obj === 'object'
+                     && typeof obj.command === 'string') {
+            // Single-block form, no name in the JSON.
+            serverMap = { '': obj };
+          } else if (obj && typeof obj === 'object') {
+            // Wrapper-less: the keys themselves are server names.
+            // Heuristic: every value must be an object with `command`
+            // or `url`. Otherwise treat as garbage.
+            const entries = Object.entries(obj);
+            const allLookValid = entries.length > 0 && entries.every(
+              ([, v]) => v && typeof v === 'object'
+                && (typeof v.command === 'string' || typeof v.url === 'string')
+            );
+            if (allLookValid) serverMap = obj;
+          }
+
+          if (!serverMap) {
+            this.pasteJson.error =
+              'Could not find an MCP server config. Expected a "mcpServers" object or a "command" field.';
+            return;
+          }
+
+          const servers = Object.entries(serverMap).map(([name, def]) => ({
+            name: name || inferredName || 'mcp-server',
+            def: def || {},
+          }));
+
+          // Single server: apply directly. Multi: store and let the
+          // user pick via the chip row.
+          if (servers.length === 1) {
+            this.applyPastedServer(servers[0]);
+          } else {
+            this.pasteJson.servers = servers;
+          }
+        },
+
+        /**
+         * Apply one parsed server entry to the form fields.
+         *
+         * Splits args back into a single command string (the form's
+         * native shape), copies env vars, and flags placeholder
+         * values like `${API_KEY}` or `<your-token>` so the user
+         * notices them as empty secret fields rather than
+         * accidentally storing the literal placeholder.
+         */
+        applyPastedServer(srv) {
+          const def = srv.def || {};
+
+          // Reject remote transports — connector path is subprocess.
+          if (typeof def.url === 'string' && !def.command) {
+            this.pasteJson.error =
+              'Remote (URL-based) MCP transport is not supported yet — please paste a stdio config (command + args).';
+            this.pasteJson.applied = false;
+            return;
+          }
+
+          if (typeof def.command !== 'string' || !def.command.trim()) {
+            this.pasteJson.error = 'Server config has no "command" field.';
+            this.pasteJson.applied = false;
+            return;
+          }
+
+          // Reassemble command. Args that contain whitespace get
+          // quoted so the round-trip survives our space-split parser.
+          const args = Array.isArray(def.args) ? def.args : [];
+          const quoted = args.map(a => {
+            const s = String(a);
+            return /\s/.test(s) ? JSON.stringify(s) : s;
+          });
+          const fullCommand = [def.command, ...quoted]
+            .filter(p => p && String(p).length)
+            .join(' ');
+
+          // Placeholder regex: matches ${FOO}, $FOO, <FOO>, <YOUR_KEY>, etc.
+          const isPlaceholder = (v) => {
+            if (typeof v !== 'string') return false;
+            const t = v.trim();
+            if (!t) return true;
+            return /^(\$\{[^}]+\}|\$[A-Z_][A-Z0-9_]*|<[^>]+>)$/i.test(t);
+          };
+
+          const env = (def.env && typeof def.env === 'object') ? def.env : {};
+          const envVars = Object.entries(env).map(([k, v]) => ({
+            key: k,
+            value: isPlaceholder(v) ? '' : String(v),
+            isSecret: true,
+          }));
+          if (!envVars.length) {
+            envVars.push({ key: '', value: '', isSecret: true });
+          }
+
+          this.newConnector.name = srv.name || this.newConnector.name || '';
+          this.newConnector.command = fullCommand;
+          this.newConnector.envVars = envVars;
+          this.newConnector.lookupHit = 0;
+
+          this.pasteJson.applied = true;
+          this.pasteJson.error = '';
+          this.pasteJson.servers = [];
+
+          // Trigger the existing registry env-var lookup so any vars
+          // the snippet didn't list still get suggested.
+          this.onCommandBlur();
         },
 
         /**
@@ -1635,6 +1848,9 @@
           this.searchQuery = '';
           this.searchResults = [];
           this.showSearch = false;
+          this.pasteJson = {
+            open: false, input: '', servers: [], error: '', applied: false,
+          };
         },
 
         /**
