@@ -26,11 +26,24 @@ async def setup_channel(request: Request) -> dict[str, Any]:
     channel_type = body.get("type", channel_id)
     mode = body.get("mode", "polling")
     status = body.get("status", "active")
-    allowed_users = body.get("allowed_users", [])
+    raw_allowed = body.get("allowed_users", [])
     config = body.get("config", {})
 
     if not channel_id:
         return JSONResponse({"error": "Channel ID required"}, status_code=400)
+
+    # Telegram allowlist must be int IDs — input from the web wizard
+    # arrives as strings. Coerce here so the channels table is always
+    # consistent and is_user_allowed's int-membership check works.
+    allowed_users: list[int] = []
+    for u in raw_allowed or []:
+        try:
+            allowed_users.append(int(u))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": f"Invalid user ID in allowed_users: {u!r}"},
+                status_code=400,
+            )
 
     # Write to channels table (NixOS State)
     mycelos.storage.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
@@ -64,4 +77,20 @@ async def setup_channel(request: Request) -> dict[str, Any]:
         trigger="channel_setup",
     )
 
-    return {"status": "configured", "channel": channel_id}
+    # Hot-start the channel in the running gateway so the user sees a
+    # response from their bot immediately — no `docker compose restart`.
+    # We reuse the same code path the boot sequence uses.
+    started = False
+    if channel_id == "telegram":
+        try:
+            from mycelos.gateway.server import start_telegram_channel
+            start_telegram_channel(mycelos, request.app, debug=False)
+            started = getattr(request.app.state, "telegram_bot", None) is not None
+        except Exception as e:
+            mycelos.audit.log(
+                "channel.hot_start_failed",
+                details={"channel": channel_id, "error": str(e)},
+                user_id=resolve_user_id(request),
+            )
+
+    return {"status": "configured", "channel": channel_id, "started": started}

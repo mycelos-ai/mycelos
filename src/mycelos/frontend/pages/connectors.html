@@ -312,13 +312,18 @@
               <!-- Step 1: Bot Token -->
               <div x-show="wizard.step === 1">
                 <p class="text-sm text-on-surface-variant mb-4">
-                  Create a Telegram bot and paste the token here.
+                  Create a Telegram bot, then send it a message before continuing.
                 </p>
-                <ol class="text-sm text-on-surface-variant space-y-2 mb-5 list-decimal list-inside">
+                <ol class="text-sm text-on-surface-variant space-y-2 mb-4 list-decimal list-inside">
                   <li>Open <a href="https://t.me/BotFather" target="_blank" class="text-primary hover:underline">@BotFather</a> in Telegram</li>
                   <li>Send <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/newbot</code> and follow the prompts</li>
-                  <li>Copy the <strong>API token</strong> you receive</li>
+                  <li>Copy the <strong>API token</strong> you receive and paste it below</li>
+                  <li><strong>Open your new bot in Telegram and send it any message</strong> (e.g. <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/start</code>)</li>
                 </ol>
+                <div class="bg-[#2AABEE]/10 border border-[#2AABEE]/30 rounded-xl p-3 mb-5 text-xs text-on-surface-variant">
+                  <strong class="text-on-surface">Why step 4?</strong> Telegram only reveals your chat ID to a bot once you've messaged it.
+                  Without that first message, Mycelos can't connect to your conversation.
+                </div>
                 <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Bot Token</label>
                 <p class="text-xs text-on-surface-variant/60 mb-2">
                   Paste the BotFather message or just the token — it will be extracted automatically.
@@ -336,13 +341,17 @@
                   <span class="material-symbols-outlined text-sm">warning</span>
                   No bot token found in text. Token format: <code class="font-mono">123456789:ABCdef...</code>
                 </div>
-                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50 mb-5">
+                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50 mb-3">
                   <span class="material-symbols-outlined text-sm">shield_lock</span>
                   <span>Encrypted locally — never sent to the AI</span>
                 </div>
+                <p x-show="wizard.error" class="text-sm text-error mt-2 flex items-start gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
               </div>
 
-              <!-- Step 2: Enter Chat ID + Verify -->
+              <!-- Step 2: Confirm Chat ID + Verify -->
               <div x-show="wizard.step === 2">
                 <!-- Bot validated indicator -->
                 <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[#48c78e] mb-4">
@@ -351,20 +360,60 @@
                   <span x-show="wizard.data.botUsername" class="text-on-surface-variant/50">@<span x-text="wizard.data.botUsername"></span></span>
                 </div>
 
-                <p class="text-sm text-on-surface-variant mb-3">
-                  Enter your Telegram Chat ID. The bot will send you a test message to verify.
-                </p>
+                <!-- Case A: chat ID was auto-detected -->
+                <template x-if="wizard.data.chatId && !wizard.data.noUpdates">
+                  <div>
+                    <p class="text-sm text-on-surface-variant mb-3">
+                      Found your chat with <strong x-text="wizard.data.botName || 'the bot'"></strong>.
+                      Click below — the bot will send a test message to confirm.
+                    </p>
+                    <div class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
+                      <span class="text-on-surface-variant/60">Chat ID:</span>
+                      <code class="font-mono text-on-surface ml-1" x-text="wizard.data.chatId"></code>
+                    </div>
+                  </div>
+                </template>
 
-                <div class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
-                  <strong>How to find your Chat ID:</strong> Send <code class="font-mono bg-surface-container px-1 rounded">/start</code> to
-                  <a href="https://t.me/userinfobot" target="_blank" class="text-primary hover:underline">@userinfobot</a>
-                  in Telegram — it replies with your ID.
-                </div>
+                <!-- Case B: no message detected — prompt the user -->
+                <template x-if="wizard.data.noUpdates && !wizard.data.chatId">
+                  <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-4">
+                    <div class="flex items-start gap-2">
+                      <span class="material-symbols-outlined text-warning">chat_bubble</span>
+                      <div class="flex-1">
+                        <p class="text-sm text-on-surface font-medium mb-2">
+                          No message from you to your bot yet.
+                        </p>
+                        <p class="text-xs text-on-surface-variant mb-3">
+                          Open <a x-show="wizard.data.botUsername"
+                                  :href="'https://t.me/' + wizard.data.botUsername"
+                                  target="_blank"
+                                  class="text-primary hover:underline font-mono">@<span x-text="wizard.data.botUsername"></span></a><span x-show="!wizard.data.botUsername">your new bot</span>
+                          in Telegram and send any message (e.g. <code class="font-mono bg-surface-container px-1 rounded">/start</code>).
+                          Then click below.
+                        </p>
+                        <button @click="wizardCheckTelegram()"
+                                :disabled="wizard.checking"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium bg-warning text-on-warning
+                                       hover:bg-warning/80 transition-colors flex items-center gap-1.5
+                                       disabled:opacity-50 disabled:cursor-wait">
+                          <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">refresh</span>
+                          <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                          <span x-text="wizard.checking ? 'Checking...' : 'I sent a message — check again'"></span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
 
-                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Chat ID</label>
-                <input type="text" x-model="wizard.data.chatId"
-                       class="input-field w-full text-sm font-mono mb-3"
-                       placeholder="e.g. 123456789">
+                <!-- Manual fallback (collapsed) -->
+                <details class="mb-4 text-xs text-on-surface-variant">
+                  <summary class="cursor-pointer hover:text-on-surface select-none">Enter Chat ID manually</summary>
+                  <div class="mt-3">
+                    <input type="text" x-model="wizard.data.chatId"
+                           class="input-field w-full text-sm font-mono"
+                           placeholder="e.g. 123456789">
+                  </div>
+                </details>
 
                 <button @click="wizardVerifyTelegram()"
                         :disabled="wizard.checking || !wizard.data.chatId.trim()"
@@ -381,7 +430,7 @@
                   Test message sent! Check your Telegram.
                 </p>
 
-                <p x-show="wizard.error" class="text-sm text-error mt-3 flex items-center gap-1.5">
+                <p x-show="wizard.error" class="text-sm text-error mt-3 flex items-start gap-1.5">
                   <span class="material-symbols-outlined text-sm">error</span>
                   <span x-text="wizard.error"></span>
                 </p>
@@ -397,11 +446,13 @@
                     <strong x-text="wizard.data.chatId"></strong>.
                   </p>
                   <div class="bg-surface-container-low rounded-xl p-4 text-sm text-on-surface-variant text-left">
-                    <strong class="text-on-surface">Next steps:</strong>
+                    <strong class="text-on-surface">Try it now:</strong>
                     <ol class="list-decimal list-inside space-y-1.5 mt-2">
-                      <li>Restart the gateway: <code class="font-mono bg-surface-container px-1.5 py-0.5 rounded text-xs">mycelos serve</code></li>
-                      <li>Open Telegram and send a message to your bot</li>
-                      <li>Mycelos will reply — you're connected!</li>
+                      <li>Open <a x-show="wizard.data.botUsername"
+                                  :href="'https://t.me/' + wizard.data.botUsername"
+                                  target="_blank"
+                                  class="text-primary hover:underline font-mono">@<span x-text="wizard.data.botUsername"></span></a><span x-show="!wizard.data.botUsername">your bot</span> in Telegram</li>
+                      <li>Send any message — Mycelos will reply right away.</li>
                     </ol>
                   </div>
                 </div>
@@ -1415,9 +1466,16 @@
           return true;
         },
 
-        wizardNext() {
+        async wizardNext() {
           if (!this.wizardCanProceed()) return;
           this.wizard.error = '';
+          // Telegram Step 1 → 2: validate token via getMe and try to
+          // auto-detect the chat ID from getUpdates. If the token is
+          // bad we stay on Step 1 and show the error.
+          if (this.wizard.type === 'telegram' && this.wizard.step === 1) {
+            await this.wizardCheckTelegram();
+            if (this.wizard.error) return;
+          }
           this.wizard.step++;
         },
 
@@ -1555,7 +1613,7 @@
                 mode: 'polling',
                 allowed_users: [w.data.chatId],
               });
-              this.showToast('Telegram connected! Restart the stack (docker compose restart) to activate the channel.', 'success');
+              this.showToast('Telegram connected — try sending a message to your bot now!', 'success');
             }
           } catch (e) {
             this.showToast('Failed to save: ' + e.message, 'error');

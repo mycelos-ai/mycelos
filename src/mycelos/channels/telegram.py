@@ -120,10 +120,18 @@ def setup_telegram(
     _webhook_secret = webhook_secret
     _app = app
 
-    # Set allowlist
+    # Set allowlist — coerce to int. Values may arrive as strings when
+    # they come from the channels table (JSON-encoded) or from the web
+    # wizard, where input fields hand back strings. The check at
+    # is_user_allowed compares against message.from_user.id (int), so
+    # an un-coerced string would always miss.
     _allowed_users.clear()
     if allowed_users:
-        _allowed_users.update(allowed_users)
+        for u in allowed_users:
+            try:
+                _allowed_users.add(int(u))
+            except (TypeError, ValueError):
+                logger.warning("Telegram allowlist: skipping non-numeric user %r", u)
 
     logger.info(
         "Telegram bot initialized (allowed_users: %s, webhook_secret: %s)",
@@ -351,6 +359,11 @@ async def handle_document(message: types.Message) -> None:
         return
     user_id = message.from_user.id if message.from_user else 0
     if not is_user_allowed(user_id):
+        await message.answer(
+            t("telegram.not_authorized", user_id=user_id),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        logger.warning("Unauthorized Telegram document from: %s", user_id)
         return
 
     doc = message.document
@@ -455,6 +468,11 @@ async def handle_photo(message: types.Message) -> None:
         return
     user_id = message.from_user.id if message.from_user else 0
     if not is_user_allowed(user_id):
+        await message.answer(
+            t("telegram.not_authorized", user_id=user_id),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        logger.warning("Unauthorized Telegram photo from: %s", user_id)
         return
 
     photo = message.photo[-1] if message.photo else None
@@ -529,6 +547,10 @@ async def handle_voice_message(message: types.Message) -> None:
 
     # Check allowlist
     if not is_user_allowed(user_id):
+        await message.answer(
+            t("telegram.not_authorized", user_id=user_id),
+            parse_mode=ParseMode.MARKDOWN,
+        )
         logger.warning("Unauthorized Telegram voice from: %s", user_id)
         return
 
@@ -622,7 +644,10 @@ async def handle_message(message: types.Message) -> None:
 
     # Security: check user authorization (H-01)
     if not is_user_allowed(user_id):
-        await message.answer(t("telegram.not_authorized"))
+        await message.answer(
+            t("telegram.not_authorized", user_id=user_id),
+            parse_mode=ParseMode.MARKDOWN,
+        )
         logger.warning("Unauthorized Telegram user: %s", user_id)
         return
 
@@ -1182,6 +1207,10 @@ def load_channel_config(storage: Any) -> dict[str, Any] | None:
 
     Returns dict with keys: mode, allowed_users, config, status
     or None if not configured.
+
+    allowed_users is normalized to a list[int] — older rows stored
+    string IDs (from the web wizard's input field), which broke the
+    int-vs-str membership check in is_user_allowed.
     """
     try:
         row = storage.fetchone(
@@ -1197,10 +1226,18 @@ def load_channel_config(storage: Any) -> dict[str, Any] | None:
         if isinstance(allowed, str):
             allowed = json.loads(allowed)
 
+        # Normalize to ints — see docstring.
+        normalized: list[int] = []
+        for u in allowed or []:
+            try:
+                normalized.append(int(u))
+            except (TypeError, ValueError):
+                logger.warning("load_channel_config: dropping non-numeric allowed user %r", u)
+
         return {
             "mode": row["mode"],
             "config": config,
-            "allowed_users": allowed,
+            "allowed_users": normalized,
             "status": row["status"],
         }
     except Exception:
