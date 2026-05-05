@@ -356,3 +356,95 @@ def test_start_polling_without_bot():
         assert result is None
     finally:
         tg._bot = old_bot
+
+
+def test_polling_auto_restart_backoff(monkeypatch):
+    """Polling worker reconnects on crash, backs off, then stops cleanly.
+
+    Tests the inner restart loop in isolation: feed it failing runs and
+    a stop event that triggers after N attempts; assert it retried the
+    expected number of times and consulted the backoff schedule.
+    """
+    import threading as _threading
+
+    import mycelos.channels.telegram as tg
+
+    call_count = {"n": 0}
+    waited_with: list[float] = []
+
+    async def fake_start_polling(*args, **kwargs):
+        call_count["n"] += 1
+        raise RuntimeError("simulated network blip")
+
+    # Replace the heartbeat_stop event with a fresh one so the test is
+    # isolated from any running heartbeat thread from earlier tests.
+    fake_stop = _threading.Event()
+
+    def fake_wait(timeout=None):
+        waited_with.append(timeout)
+        if call_count["n"] >= 3:
+            fake_stop.set()
+            return True
+        return False
+
+    fake_stop.wait = fake_wait  # type: ignore[method-assign]
+
+    monkeypatch.setattr(tg.dp, "start_polling", fake_start_polling)
+    monkeypatch.setattr(tg, "_heartbeat_stop", fake_stop)
+    # Skip heartbeat thread spawn — orthogonal to this test.
+    monkeypatch.setattr(tg, "_start_heartbeat", lambda *a, **k: None)
+
+    old_bot = tg._bot
+    tg._bot = object()
+    tg._polling_thread = None
+    try:
+        thread = tg.start_polling()
+        assert thread is not None
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "polling worker did not exit on stop"
+        assert call_count["n"] == 3, (
+            f"expected exactly 3 attempts before stop, got {call_count['n']}"
+        )
+        # First two retries should consult the schedule.
+        assert waited_with[:2] == [
+            tg._POLLING_BACKOFF_SCHEDULE[0],
+            tg._POLLING_BACKOFF_SCHEDULE[1],
+        ], f"unexpected backoff progression: {waited_with}"
+    finally:
+        tg._bot = old_bot
+        tg._polling_thread = None
+
+
+def test_polling_does_not_restart_on_conflict(monkeypatch):
+    """A 409 Conflict aborts the loop instead of fighting another poller."""
+    import threading as _threading
+
+    import mycelos.channels.telegram as tg
+
+    call_count = {"n": 0}
+
+    async def fake_start_polling(*args, **kwargs):
+        call_count["n"] += 1
+        raise RuntimeError(
+            "Telegram server says - Conflict: terminated by other getUpdates"
+        )
+
+    fake_stop = _threading.Event()
+    monkeypatch.setattr(tg.dp, "start_polling", fake_start_polling)
+    monkeypatch.setattr(tg, "_heartbeat_stop", fake_stop)
+    monkeypatch.setattr(tg, "_start_heartbeat", lambda *a, **k: None)
+
+    old_bot = tg._bot
+    tg._bot = object()
+    tg._polling_thread = None
+    try:
+        thread = tg.start_polling()
+        assert thread is not None
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
+        assert call_count["n"] == 1, (
+            f"expected exactly 1 attempt on Conflict, got {call_count['n']}"
+        )
+    finally:
+        tg._bot = old_bot
+        tg._polling_thread = None

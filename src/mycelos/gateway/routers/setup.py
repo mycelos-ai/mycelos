@@ -283,6 +283,82 @@ async def telegram_verify(request: Request) -> dict[str, Any]:
     return {"ok": True, "message_id": data.get("result", {}).get("message_id")}
 
 
+@router.get("/api/telegram/diagnose")
+async def telegram_diagnose(request: Request) -> dict[str, Any]:
+    """Live diagnostics for the Telegram channel.
+
+    Pulls the stored bot token (proxy-materialized in two-container
+    mode, local in single-container) and runs three Telegram API calls
+    against it: getMe (token validity), getWebhookInfo (any conflicting
+    webhook?), and a one-shot getUpdates probe (offset=-1, timeout=2)
+    to see if Telegram has any pending updates queued for the bot.
+
+    Also reports the local polling-thread state so we can tell whether
+    aiogram is alive and whether updates are stuck server-side or
+    client-side.
+    """
+    from mycelos.channels.telegram import (
+        call_telegram_api_with_token,
+        _polling_thread,
+    )
+    mycelos = request.app.state.mycelos
+
+    # Resolve token
+    token: str | None = None
+    try:
+        from mycelos.connectors import http_tools as _http_tools
+        pc = getattr(_http_tools, "_proxy_client", None)
+        if pc is not None:
+            mat = pc.credential_materialize("telegram")
+            token = (mat or {}).get("api_key")
+        else:
+            cred = mycelos.credentials.get_credential("telegram")
+            token = (cred or {}).get("api_key")
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"could not load telegram token: {e}"},
+            status_code=500,
+        )
+    if not token:
+        return JSONResponse({"error": "no telegram token stored"}, status_code=404)
+
+    me = call_telegram_api_with_token(
+        mycelos, token, "getMe", http_method="GET", timeout=10,
+    )
+    wh = call_telegram_api_with_token(
+        mycelos, token, "getWebhookInfo", http_method="GET", timeout=10,
+    )
+    # offset=-1 returns at most the latest update without confirming it
+    upd = call_telegram_api_with_token(
+        mycelos, token, "getUpdates",
+        payload={"offset": -1, "limit": 1, "timeout": 2},
+        http_method="GET", timeout=10,
+    )
+
+    polling_alive = bool(_polling_thread and _polling_thread.is_alive())
+
+    return {
+        "polling_thread_alive": polling_alive,
+        "telegram_mode": getattr(request.app.state, "telegram_mode", None),
+        "getMe": {
+            "ok": me.get("ok"),
+            "username": (me.get("result") or {}).get("username"),
+            "id": (me.get("result") or {}).get("id"),
+            "description": me.get("description"),
+        },
+        "getWebhookInfo": wh.get("result") or {"description": wh.get("description")},
+        "getUpdates": {
+            "ok": upd.get("ok"),
+            "result_count": len(upd.get("result") or []),
+            "latest_update_id": (
+                (upd.get("result") or [{}])[-1].get("update_id")
+                if upd.get("result") else None
+            ),
+            "description": upd.get("description"),
+        },
+    }
+
+
 # ── Memory (key-value) ──────────────────────────────────────
 
 

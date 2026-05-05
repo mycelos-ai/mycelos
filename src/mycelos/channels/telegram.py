@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -141,12 +142,122 @@ def setup_telegram(
     return _bot
 
 
-def start_polling() -> threading.Thread | None:
-    """Start long polling in a daemon thread.
+_last_update_seen: float = 0.0  # monotonic ts of the last incoming update
+_polling_started_at: float = 0.0  # monotonic ts of when polling last started
+_heartbeat_thread: threading.Thread | None = None
+_heartbeat_stop = threading.Event()
 
-    Returns the thread, or None if bot is not configured.
+
+@dp.update.outer_middleware()
+async def _trace_updates_middleware(handler, event, data):
+    """Log every incoming Telegram update at INFO.
+
+    Long-polling is opaque from the outside — when nothing arrives we
+    can't tell if Telegram has nothing for us or if our HTTP roundtrip
+    is broken. Logging each update at INFO makes traffic visible in
+    the regular gateway log (no --debug needed) while staying terse
+    (one short line per update, no content).
     """
-    global _polling_thread
+    global _last_update_seen
+    _last_update_seen = time.monotonic()
+    try:
+        update_id = getattr(event, "update_id", "?")
+        # Best-effort summary of what's inside (avoids dumping content).
+        kind = "?"
+        if getattr(event, "message", None):
+            kind = "message"
+        elif getattr(event, "edited_message", None):
+            kind = "edited_message"
+        elif getattr(event, "callback_query", None):
+            kind = "callback_query"
+        elif getattr(event, "channel_post", None):
+            kind = "channel_post"
+        logger.info("Telegram update received: id=%s kind=%s", update_id, kind)
+    except Exception:
+        pass
+    return await handler(event, data)
+
+
+def _start_heartbeat(interval: float = 60.0) -> None:
+    """Periodically log polling-thread health so silent hangs are visible.
+
+    aiogram's long-poll tick is invisible by default — a stuck HTTP
+    roundtrip looks identical to "no updates queued". This thread logs
+    every `interval` seconds at INFO: thread alive, seconds since the
+    last update was received, and seconds since polling started. If
+    the thread dies, it logs a WARNING (separate signal from a healthy
+    quiet idle).
+    """
+    global _heartbeat_thread
+    if _heartbeat_thread and _heartbeat_thread.is_alive():
+        return
+
+    _heartbeat_stop.clear()
+
+    def _run() -> None:
+        while not _heartbeat_stop.wait(interval):
+            try:
+                alive = bool(_polling_thread and _polling_thread.is_alive())
+                now = time.monotonic()
+                since_update = (
+                    f"{now - _last_update_seen:.0f}s"
+                    if _last_update_seen else "never"
+                )
+                uptime = (
+                    f"{now - _polling_started_at:.0f}s"
+                    if _polling_started_at else "?"
+                )
+                if not alive and _polling_started_at:
+                    logger.warning(
+                        "Telegram polling thread is NOT alive (uptime=%s, "
+                        "last_update=%s)",
+                        uptime, since_update,
+                    )
+                else:
+                    logger.info(
+                        "Telegram polling heartbeat: alive=%s last_update=%s "
+                        "uptime=%s",
+                        alive, since_update, uptime,
+                    )
+            except Exception:
+                logger.debug("heartbeat tick failed", exc_info=True)
+
+    _heartbeat_thread = threading.Thread(
+        target=_run, daemon=True, name="telegram-heartbeat",
+    )
+    _heartbeat_thread.start()
+
+
+# Backoff schedule for polling auto-restart. Each entry is the number
+# of seconds to wait before the next reconnect attempt. The last entry
+# is reused for any subsequent failures (steady-state cap).
+_POLLING_BACKOFF_SCHEDULE: tuple[float, ...] = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0, 120.0)
+
+# A polling run that lasted at least this long counts as "healthy" and
+# resets the backoff counter — without this guard a single multi-minute
+# hang would still be treated as an early failure when it eventually
+# breaks, and we'd never escape the slow side of the backoff schedule.
+_POLLING_HEALTHY_AFTER_SEC: float = 30.0
+
+
+def start_polling() -> threading.Thread | None:
+    """Start long polling in a daemon thread with auto-restart.
+
+    The wrapper thread runs ``dp.start_polling`` in a loop: on any
+    exception (network blip, Telegram 5xx, asyncio cancel) it logs the
+    error and reconnects with exponential backoff, so a single hiccup
+    no longer takes the bot offline until the next gateway restart.
+
+    Two intentional exceptions to the restart loop:
+
+    - HTTP 409 ``Conflict`` — another process is polling the same
+      bot. Restarting would just fight it; we log a WARNING and stop.
+    - ``_heartbeat_stop`` is set (via ``stop_polling``) — a clean
+      shutdown should not respawn.
+
+    Returns the thread, or None if bot is not initialized.
+    """
+    global _polling_thread, _polling_started_at
 
     if not _bot:
         logger.warning("Cannot start polling: bot not initialized")
@@ -156,17 +267,60 @@ def start_polling() -> threading.Thread | None:
         logger.warning("Polling already running")
         return _polling_thread
 
-    def _run_polling():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            # handle_signals=False — required when running in a daemon thread
-            # (signal handlers only work in the main thread)
-            loop.run_until_complete(dp.start_polling(_bot, handle_signals=False))
-        except Exception as e:
-            logger.error("Telegram polling stopped: %s", e)
-        finally:
-            loop.close()
+    def _run_polling() -> None:
+        global _polling_started_at
+        attempt = 0
+        while not _heartbeat_stop.is_set():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            run_started = time.monotonic()
+            _polling_started_at = run_started
+            try:
+                # handle_signals=False — signal handlers only work in
+                # the main thread; we're in a daemon worker.
+                loop.run_until_complete(
+                    dp.start_polling(_bot, handle_signals=False)
+                )
+                # Clean exit (e.g. dp.shutdown via stop_polling). Do
+                # not respawn — the user asked us to stop.
+                logger.info("Telegram polling exited cleanly")
+                return
+            except Exception as e:
+                run_secs = time.monotonic() - run_started
+                msg = str(e)
+
+                # Conflict means another instance is polling this bot.
+                # Auto-restarting would just thrash; bail loud instead.
+                if "Conflict" in msg or "terminated by other getUpdates" in msg:
+                    logger.warning(
+                        "Telegram polling conflict — another process is "
+                        "polling this bot. Not auto-restarting. (%s)",
+                        msg,
+                    )
+                    return
+
+                # Healthy run that died — treat as fresh failure.
+                if run_secs >= _POLLING_HEALTHY_AFTER_SEC:
+                    attempt = 0
+
+                delay = _POLLING_BACKOFF_SCHEDULE[
+                    min(attempt, len(_POLLING_BACKOFF_SCHEDULE) - 1)
+                ]
+                attempt += 1
+                logger.warning(
+                    "Telegram polling crashed after %.1fs (attempt #%d): %s "
+                    "— retrying in %.0fs",
+                    run_secs, attempt, msg, delay,
+                )
+                # Use the heartbeat stop event so a concurrent
+                # stop_polling() interrupts the wait immediately.
+                if _heartbeat_stop.wait(delay):
+                    return
+            finally:
+                try:
+                    loop.close()
+                except Exception:
+                    pass
 
     _polling_thread = threading.Thread(
         target=_run_polling,
@@ -174,13 +328,16 @@ def start_polling() -> threading.Thread | None:
         name="telegram-polling",
     )
     _polling_thread.start()
-    logger.info("Telegram polling started")
+    _polling_started_at = time.monotonic()
+    _start_heartbeat()
+    logger.info("Telegram polling started (auto-restart enabled)")
     return _polling_thread
 
 
 def stop_polling() -> None:
     """Stop polling gracefully."""
     global _polling_thread
+    _heartbeat_stop.set()
     if _polling_thread and _polling_thread.is_alive():
         dp.shutdown()
         logger.info("Telegram polling stopped")
