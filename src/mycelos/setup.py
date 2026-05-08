@@ -164,17 +164,56 @@ def register_builtin_connectors(app: App) -> None:
             pass
 
 
+def _validate_multi_field_credentials(
+    provider: ProviderConfig, credentials: dict[str, Any]
+) -> dict[str, Any]:
+    """Check that all required fields for a multi-field provider were supplied.
+
+    Strips whitespace, raises SetupError naming the first missing field.
+    Returns a clean dict that is safe to encrypt-and-store.
+    """
+    if not provider.credential_fields:
+        return credentials
+    cleaned: dict[str, Any] = {}
+    for field in provider.credential_fields:
+        value = credentials.get(field.key)
+        if isinstance(value, str):
+            value = value.strip()
+        if field.required and not value:
+            raise SetupError(
+                f"Missing required field '{field.label}' for {provider.name}."
+            )
+        if value is not None and value != "":
+            cleaned[field.key] = value
+    # Vertex-specific sanity check: the JSON should at least parse.
+    if provider.id == "vertex_ai" and "vertex_credentials" in cleaned:
+        import json as _json
+        raw = cleaned["vertex_credentials"]
+        if isinstance(raw, str):
+            try:
+                _json.loads(raw)
+            except _json.JSONDecodeError as e:
+                raise SetupError(
+                    "Service Account JSON is not valid JSON: "
+                    f"{e.msg} at line {e.lineno}."
+                )
+    return cleaned
+
+
 def web_init(
     app: App,
     *,
     api_key: str | None = None,
     provider_id: str | None = None,
     ollama_url: str | None = None,
+    credentials: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the full onboarding sequence in a non-interactive, idempotent way.
 
-    Exactly one of `api_key` (with optional `provider_id` override) or
-    `ollama_url` must be supplied.
+    Exactly one of these credential paths must be supplied:
+      * ``api_key`` (with optional ``provider_id`` override) — single-key providers
+      * ``ollama_url`` — local Ollama
+      * ``credentials`` + ``provider_id`` — multi-field providers (Vertex AI)
 
     Returns a small status dict with the resolved provider, registered models,
     and a flag indicating whether Mycelos is now ready to chat.
@@ -191,6 +230,24 @@ def web_init(
         if provider is None:
             raise SetupError("Ollama provider not supported in this build.")
         app.memory.set("default", "system", "ollama_url", ollama_url)
+    elif credentials:
+        # Multi-field flow: provider_id is required (no auto-detection from a
+        # single string), and the payload must satisfy the provider's schema.
+        if not provider_id:
+            raise SetupError(
+                "provider_id is required when supplying multi-field credentials."
+            )
+        provider = PROVIDERS.get(provider_id)
+        if provider is None:
+            raise SetupError(f"Unknown provider: {provider_id}")
+        if not provider.credential_fields:
+            raise SetupError(
+                f"Provider {provider.name} does not accept multi-field credentials. "
+                "Use api_key instead."
+            )
+        cleaned = _validate_multi_field_credentials(provider, credentials)
+        app.credentials.store_credential(provider.id, cleaned)
+        app.audit.log("credential.stored", details={"service": provider.id})
     elif api_key:
         api_key = api_key.strip()
         if not api_key:
@@ -207,6 +264,11 @@ def web_init(
                 "Could not detect provider from the API key. "
                 "Please pick a provider explicitly."
             )
+        if provider.credential_fields:
+            raise SetupError(
+                f"{provider.name} requires multi-field credentials. "
+                "Use the 'credentials' payload instead of 'api_key'."
+            )
         if provider.requires_key:
             app.credentials.store_credential(
                 provider.id,
@@ -216,7 +278,9 @@ def web_init(
                 os.environ[provider.env_var] = api_key
             app.audit.log("credential.stored", details={"service": provider.id})
     else:
-        raise SetupError("Either api_key or ollama_url must be provided.")
+        raise SetupError(
+            "One of api_key, ollama_url, or credentials must be provided."
+        )
 
     # Order matters: agents must exist before apply_defaults writes
     # agent_llm_models rows (FK → agents.id).

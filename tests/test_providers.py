@@ -6,10 +6,12 @@ import pytest
 
 from mycelos.llm.providers import (
     PROVIDERS,
+    CredentialField,
     ModelInfo,
     ProviderConfig,
     classify_tier,
     get_provider_models,
+    list_eu_providers,
     _base_model_name,
     _model_id_to_display_name,
 )
@@ -274,3 +276,76 @@ def test_provider_config_defaults() -> None:
     p = ProviderConfig(id="test", name="Test", env_var="TEST_KEY")
     assert p.requires_key is True
     assert p.default_url is None
+    assert p.eu_residency is False
+    assert p.credential_fields is None
+
+
+# ---------------------------------------------------------------------------
+# EU mode: vertex_ai / mistral providers and EU-residency filtering
+# ---------------------------------------------------------------------------
+
+
+def test_vertex_ai_provider_registered() -> None:
+    p = PROVIDERS["vertex_ai"]
+    assert p.eu_residency is True
+    assert p.requires_key is True
+    assert p.credential_fields is not None
+    keys = [f.key for f in p.credential_fields]
+    assert keys == ["vertex_credentials", "vertex_project", "vertex_location"]
+
+
+def test_vertex_ai_default_region_is_european() -> None:
+    p = PROVIDERS["vertex_ai"]
+    region_field = next(f for f in p.credential_fields if f.key == "vertex_location")
+    assert region_field.default == "europe-west4"
+    # Other europe-* options must be present so the user can pick a different
+    # EU region without leaving the dropdown.
+    assert "europe-west1" in region_field.options
+    assert "europe-west9" in region_field.options
+
+
+def test_mistral_provider_registered() -> None:
+    p = PROVIDERS["mistral"]
+    assert p.eu_residency is True
+    assert p.env_var == "MISTRAL_API_KEY"
+    assert p.requires_key is True
+    # Mistral is single-key — no extended schema.
+    assert p.credential_fields is None
+
+
+def test_list_eu_providers_includes_expected() -> None:
+    eu = set(list_eu_providers())
+    # Local Ollama also counts (data never leaves the host).
+    assert {"vertex_ai", "mistral", "ollama"}.issubset(eu)
+    # And does NOT include the non-EU cloud providers.
+    assert "anthropic" not in eu
+    assert "openai" not in eu
+
+
+def test_credential_field_dataclass_defaults() -> None:
+    f = CredentialField(key="api_key", label="API Key")
+    assert f.type == "password"
+    assert f.required is True
+    assert f.options is None
+
+
+def test_get_vertex_ai_models_returns_gemini_in_vertex_namespace() -> None:
+    """vertex_ai must be a *first-class* provider — its own gateway prefix
+    must come through, since we removed the 'foreign-only' gate for the
+    requested provider."""
+    models = get_provider_models("vertex_ai")
+    if not models:
+        pytest.skip("litellm.model_cost has no vertex_ai entries in this build")
+    # Every returned model id must start with vertex_ai/ — otherwise the
+    # filter is letting other providers' models leak in.
+    for m in models:
+        assert m.id.startswith("vertex_ai/"), m.id
+        assert m.provider == "vertex_ai"
+
+
+def test_get_mistral_models_pass_through_own_prefix() -> None:
+    models = get_provider_models("mistral")
+    if not models:
+        pytest.skip("litellm.model_cost has no mistral entries in this build")
+    for m in models:
+        assert m.provider == "mistral"
