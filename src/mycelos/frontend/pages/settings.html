@@ -63,11 +63,25 @@
         providerPill: 'all',  // active filter pill
         showFullTable: false, // show full table (opposite of winners-only view)
 
+        // ── EU mode (data-residency) ──
+        // When on, the provider grid is filtered to providers flagged
+        // eu_residency=true on the backend (Vertex AI, Mistral, Ollama).
+        // Persisted in localStorage; backend providers don't change behavior
+        // based on this flag — actual residency is determined by which
+        // provider+region the user picks.
+        euMode: false,
+        // Provider catalog from /api/setup/providers (id, name, eu_residency,
+        // credential_fields). Drives the tile grid and the extended modal.
+        providerCatalog: [],
+        // Multi-field credential entry state (Vertex AI: JSON + project + region).
+        extendedFields: null,    // [{key, label, type, options, default, ...}] or null
+        extendedValues: {},      // { vertex_credentials: '...', vertex_project: '...', ... }
+
         async init() {
           // Load each section independently so one failure doesn't block all
           const safe = async (fn) => { try { return await fn(); } catch { return null; } };
 
-          const [modelsData, creds, configData, genData, updateData, upgData, winData] = await Promise.all([
+          const [modelsData, creds, configData, genData, updateData, upgData, winData, provData] = await Promise.all([
             safe(() => MycelosAPI.get('/api/models')),
             safe(() => MycelosAPI.get('/api/credentials')),
             safe(() => MycelosAPI.get('/api/config')),
@@ -75,8 +89,15 @@
             safe(() => MycelosAPI.get('/api/system/update-status')),
             safe(() => MycelosAPI.get('/api/models/upgrades')),
             safe(() => MycelosAPI.get('/api/models/winners')),
+            safe(() => MycelosAPI.get('/api/setup/providers')),
           ]);
           if (updateData) this.updateStatus = updateData;
+          if (provData) this.providerCatalog = provData.providers || [];
+          // Restore EU-mode preference. localStorage survives reloads but is
+          // per-browser; that's acceptable for a UI filter.
+          try {
+            this.euMode = localStorage.getItem('mycelos.euMode') === '1';
+          } catch (_) { /* private mode / disabled storage */ }
 
           if (modelsData) {
             this.models = modelsData.models || [];
@@ -405,11 +426,70 @@
         connectError: null,
         connectResult: null,
 
+        // Tiles that should appear in the "Connect a provider" grid. When
+        // EU mode is on we show only providers flagged eu_residency=true
+        // by the backend; otherwise everything in the catalog is shown.
+        eligibleProviders() {
+          const cat = this.providerCatalog || [];
+          if (cat.length === 0) {
+            // Catalog still loading — fall back to legacy hardcoded list so the
+            // UI doesn't go blank during the first paint.
+            return [
+              { id: 'anthropic', name: 'Anthropic', eu_residency: false, credential_fields: null },
+              { id: 'openai',    name: 'OpenAI',    eu_residency: false, credential_fields: null },
+              { id: 'gemini',    name: 'Gemini',    eu_residency: false, credential_fields: null },
+              { id: 'openrouter',name: 'OpenRouter',eu_residency: false, credential_fields: null },
+              { id: 'ollama',    name: 'Ollama',    eu_residency: true,  credential_fields: null },
+            ].filter(p => !this.euMode || p.eu_residency);
+          }
+          return cat.filter(p => !this.euMode || p.eu_residency);
+        },
+
+        // Static icon/hint mapping. Kept client-side because it's a UI
+        // concern; backend doesn't need to ship Material Symbol names.
+        providerTileMeta(id) {
+          const meta = {
+            anthropic:  { icon: 'psychology',    hint: 'API key' },
+            openai:     { icon: 'smart_toy',     hint: 'API key' },
+            gemini:     { icon: 'auto_awesome',  hint: 'API key' },
+            openrouter: { icon: 'alt_route',     hint: 'API key' },
+            ollama:     { icon: 'hub',           hint: 'Local URL' },
+            vertex_ai:  { icon: 'cloud',         hint: 'GCP service account · EU' },
+            mistral:    { icon: 'flag',          hint: 'API key · EU' },
+          };
+          return meta[id] || { icon: 'extension', hint: 'API key' };
+        },
+
+        toggleEuMode() {
+          this.euMode = !this.euMode;
+          try { localStorage.setItem('mycelos.euMode', this.euMode ? '1' : '0'); } catch (_) {}
+          // If the currently-open connect form belongs to a non-EU provider
+          // and we just turned EU mode on, drop it.
+          if (this.euMode && this.connectProvider) {
+            const cur = (this.providerCatalog || []).find(p => p.id === this.connectProvider);
+            if (cur && !cur.eu_residency) this.cancelConnect();
+          }
+        },
+
         openConnect(provider) {
           this.connectProvider = provider;
           this.connectInput = provider === 'ollama' ? 'http://localhost:11434' : '';
           this.connectError = null;
           this.connectResult = null;
+          // If this provider needs more than an API key, populate the
+          // multi-field form with sensible defaults from the catalog.
+          const cfg = (this.providerCatalog || []).find(p => p.id === provider);
+          if (cfg && cfg.credential_fields && cfg.credential_fields.length > 0) {
+            this.extendedFields = cfg.credential_fields;
+            const vals = {};
+            for (const f of cfg.credential_fields) {
+              vals[f.key] = f.default || '';
+            }
+            this.extendedValues = vals;
+          } else {
+            this.extendedFields = null;
+            this.extendedValues = {};
+          }
         },
 
         async removeProviderCredential(provider) {
@@ -442,15 +522,45 @@
           this.connectInput = '';
           this.connectError = null;
           this.connectBusy = false;
+          this.extendedFields = null;
+          this.extendedValues = {};
+        },
+        // True iff every required field in extendedFields has a non-empty value.
+        extendedFormReady() {
+          if (!this.extendedFields) return false;
+          for (const f of this.extendedFields) {
+            if (f.required !== false && !(this.extendedValues[f.key] || '').trim()) {
+              return false;
+            }
+          }
+          return true;
         },
         async submitConnect() {
-          if (!this.connectProvider || !this.connectInput) return;
+          if (!this.connectProvider) return;
+          // Pick the right shape for /api/setup based on the provider's
+          // credential schema. Three shapes:
+          //   1. Ollama       → { ollama_url }
+          //   2. Multi-field  → { credentials: {...}, provider_id }
+          //   3. Single key   → { api_key, provider_id }
+          let body;
+          if (this.extendedFields) {
+            if (!this.extendedFormReady()) return;
+            const cleaned = {};
+            for (const f of this.extendedFields) {
+              const v = (this.extendedValues[f.key] || '').trim();
+              if (v) cleaned[f.key] = v;
+            }
+            body = { credentials: cleaned, provider_id: this.connectProvider };
+          } else if (this.connectProvider === 'ollama') {
+            if (!this.connectInput) return;
+            body = { ollama_url: this.connectInput.trim() };
+          } else {
+            if (!this.connectInput) return;
+            body = { api_key: this.connectInput.trim(), provider_id: this.connectProvider };
+          }
           this.connectBusy = true;
           this.connectError = null;
           try {
-            const body = this.connectProvider === 'ollama'
-              ? { ollama_url: this.connectInput.trim() }
-              : { api_key: this.connectInput.trim(), provider_id: this.connectProvider };
             const res = await MycelosAPI.post('/api/setup', body);
             this.connectResult = res;
             // Refresh everything the Models section depends on.
@@ -479,6 +589,8 @@
             // Close the form.
             this.connectProvider = null;
             this.connectInput = '';
+            this.extendedFields = null;
+            this.extendedValues = {};
           } catch (e) {
             // FastAPI wraps SetupError in HTTPException(400) — prefer body.detail.
             this.connectError = (e && e.message) || 'Connection failed';
@@ -490,7 +602,7 @@
         providersWithWinners() {
           // Only show providers that (a) have winner models AND (b) are credentialed.
           // Without a key the user can't actually use the model, so showing it is noise.
-          const order = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama', 'custom'];
+          const order = ['anthropic', 'openai', 'gemini', 'openrouter', 'vertex_ai', 'mistral', 'ollama', 'custom'];
           return order.filter(p =>
             (this.winners[p] || []).length > 0 && this.hasCredentialFor(p)
           );
@@ -501,6 +613,8 @@
             openai: 'OpenAI',
             gemini: 'Gemini',
             openrouter: 'OpenRouter',
+            vertex_ai: 'Vertex AI',
+            mistral: 'Mistral',
             ollama: 'Ollama',
             custom: 'Custom',
           };
@@ -656,40 +770,65 @@
           <!-- Connect a provider (bootstrap + add more)    -->
           <!-- ============================================= -->
           <div
-            x-data="{
-              supported: [
-                { id: 'anthropic', label: 'Anthropic', hint: 'API key', icon: 'psychology' },
-                { id: 'openai',    label: 'OpenAI',    hint: 'API key', icon: 'smart_toy' },
-                { id: 'gemini',    label: 'Gemini',    hint: 'API key', icon: 'auto_awesome' },
-                { id: 'openrouter',label: 'OpenRouter',hint: 'API key', icon: 'alt_route' },
-                { id: 'ollama',    label: 'Ollama',    hint: 'Local URL', icon: 'hub' },
-              ],
-            }"
             class="mb-4"
-            x-show="supported.some(p => !hasCredentialFor(p.id)) || providersWithWinners().length === 0"
+            x-show="eligibleProviders().some(p => !hasCredentialFor(p.id)) || providersWithWinners().length === 0"
           >
-            <div class="flex items-center justify-between mb-3">
-              <div>
+            <div class="flex items-start justify-between mb-3 gap-3">
+              <div class="min-w-0">
                 <p class="font-headline text-sm font-semibold">Connect a provider</p>
                 <p class="text-[11px] text-[var(--on-surface-variant)]">
                   Add a key to see that provider's models below.
                 </p>
               </div>
+              <!-- EU-mode toggle. When on, the tile grid filters to providers
+                   that keep prompts/responses inside the EU when configured
+                   (Vertex AI in europe-*, Mistral La Plateforme, local Ollama). -->
+              <label class="flex items-center gap-2 text-[11px] text-[var(--on-surface-variant)] shrink-0 cursor-pointer select-none"
+                     :title="euMode
+                             ? 'Showing only providers with EU data residency'
+                             : 'Click to filter the list to EU-only providers'">
+                <span class="material-symbols-outlined text-[14px]"
+                      :class="euMode ? 'text-[var(--primary)]' : ''">public</span>
+                <span class="font-headline" x-text="'EU mode' + (euMode ? ' · on' : '')"></span>
+                <span
+                  class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors"
+                  :class="euMode ? 'bg-[var(--primary)]' : 'bg-[var(--surface-container-high)]'"
+                  @click.prevent="toggleEuMode()"
+                  role="switch" :aria-checked="euMode">
+                  <span class="inline-block h-3 w-3 rounded-full bg-white transition-transform"
+                        :class="euMode ? 'translate-x-3.5' : 'translate-x-0.5'"></span>
+                </span>
+              </label>
+            </div>
+
+            <div x-show="euMode" class="card mb-3 py-2 px-3 text-[11px] text-[var(--on-surface-variant)] border-l-2 border-l-[var(--primary)]">
+              <span class="material-symbols-outlined text-[14px] align-middle text-[var(--primary)]">shield</span>
+              <span class="align-middle ml-1">
+                EU mode is on — only providers with EU data residency are listed.
+                Vertex AI defaults to <span class="font-mono">europe-west4</span>;
+                Mistral La Plateforme is hosted in France; Ollama runs locally.
+              </span>
             </div>
 
             <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
-              <template x-for="p in supported" :key="p.id">
+              <template x-for="p in eligibleProviders()" :key="p.id">
                 <div class="card p-3 relative hover:bg-[var(--surface-container-high)] transition-colors">
                   <button
                     class="flex flex-col items-start gap-1 w-full text-left"
                     @click="openConnect(p.id)"
                     :title="hasCredentialFor(p.id)
-                            ? 'Replace ' + p.label + ' ' + (p.id === 'ollama' ? 'URL' : 'API key')
-                            : 'Connect ' + p.label">
-                    <span class="material-symbols-outlined text-sm text-[var(--primary)]" x-text="p.icon"></span>
-                    <div class="font-headline text-xs font-semibold" x-text="p.label"></div>
+                            ? 'Replace ' + p.name + ' credential'
+                            : 'Connect ' + p.name">
+                    <div class="flex items-center gap-1 w-full">
+                      <span class="material-symbols-outlined text-sm text-[var(--primary)]"
+                            x-text="providerTileMeta(p.id).icon"></span>
+                      <span x-show="p.eu_residency"
+                            class="ml-auto text-[9px] uppercase tracking-wide font-semibold text-[var(--primary)] px-1.5 py-0.5 rounded bg-[var(--primary)]/10"
+                            title="Data stays inside the EU when configured with an EU region">EU</span>
+                    </div>
+                    <div class="font-headline text-xs font-semibold" x-text="p.name"></div>
                     <div class="text-[10px] text-[var(--on-surface-variant)]">
-                      <span x-show="!hasCredentialFor(p.id)" x-text="p.hint"></span>
+                      <span x-show="!hasCredentialFor(p.id)" x-text="providerTileMeta(p.id).hint"></span>
                       <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1 text-[#48c78e]">
                         <span class="material-symbols-outlined text-[11px]">check_circle</span>
                         <span>Connected · click to replace</span>
@@ -702,7 +841,7 @@
                     x-show="hasCredentialFor(p.id) && p.id !== 'ollama'"
                     class="absolute top-1.5 right-1.5 text-[var(--on-surface-variant)] hover:text-[var(--error)] p-1 rounded"
                     @click.stop="removeProviderCredential(p.id)"
-                    :title="'Remove ' + p.label + ' credential'">
+                    :title="'Remove ' + p.name + ' credential'">
                     <span class="material-symbols-outlined text-[14px]">delete</span>
                   </button>
                 </div>
@@ -715,33 +854,66 @@
                 <div>
                   <p class="font-headline text-sm font-semibold">
                     <span x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
-                    <span x-text="connectProvider === 'ollama' ? 'Ollama' :
-                                  connectProvider === 'anthropic' ? 'Anthropic' :
-                                  connectProvider === 'openai' ? 'OpenAI' :
-                                  connectProvider === 'gemini' ? 'Gemini' :
-                                  connectProvider === 'openrouter' ? 'OpenRouter' : connectProvider"></span>
+                    <span x-text="(providerCatalog.find(p => p.id === connectProvider) || {}).name || connectProvider"></span>
                   </p>
                   <p class="text-[11px] text-[var(--on-surface-variant)]"
                      x-text="connectProvider === 'ollama'
                              ? 'Enter the URL where your Ollama server is running.'
-                             : (hasCredentialFor(connectProvider)
-                                ? 'Paste the new API key. The old one is overwritten.'
-                                : 'Paste your API key. It is encrypted at rest and never sent to the LLM.')"></p>
+                             : (extendedFields
+                                ? 'Fill in every field. Encrypted at rest, never sent to the LLM.'
+                                : (hasCredentialFor(connectProvider)
+                                   ? 'Paste the new API key. The old one is overwritten.'
+                                   : 'Paste your API key. It is encrypted at rest and never sent to the LLM.'))"></p>
                 </div>
                 <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="cancelConnect()" title="Cancel">
                   <span class="material-symbols-outlined text-sm">close</span>
                 </button>
               </div>
+
+              <!-- Multi-field form (Vertex AI etc.) -->
+              <template x-if="extendedFields">
+                <div class="space-y-3">
+                  <template x-for="f in extendedFields" :key="f.key">
+                    <div>
+                      <label class="block text-[11px] font-headline font-semibold mb-1" x-text="f.label"></label>
+                      <template x-if="f.type === 'textarea'">
+                        <textarea class="input-field font-mono text-[11px]" rows="6"
+                                  :placeholder="f.placeholder"
+                                  x-model="extendedValues[f.key]"></textarea>
+                      </template>
+                      <template x-if="f.type === 'select'">
+                        <select class="input-field" x-model="extendedValues[f.key]">
+                          <template x-for="opt in (f.options || [])" :key="opt">
+                            <option :value="opt" x-text="opt"></option>
+                          </template>
+                        </select>
+                      </template>
+                      <template x-if="f.type !== 'textarea' && f.type !== 'select'">
+                        <input :type="f.type === 'password' ? 'password' : 'text'"
+                               class="input-field"
+                               :placeholder="f.placeholder"
+                               x-model="extendedValues[f.key]"
+                               @keydown.enter="submitConnect()">
+                      </template>
+                      <p x-show="f.help" class="text-[10px] text-[var(--on-surface-variant)] mt-1" x-text="f.help"></p>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Single-field form (api_key / ollama_url) -->
               <input
+                x-show="!extendedFields"
                 :type="connectProvider === 'ollama' ? 'url' : 'password'"
                 class="input-field"
                 :placeholder="connectProvider === 'ollama' ? 'http://localhost:11434' : 'sk-...'"
                 x-model="connectInput"
                 @keydown.enter="submitConnect()">
+
               <div x-show="connectError" class="text-xs text-[var(--error)]" x-text="connectError"></div>
               <div class="flex items-center gap-2">
                 <button class="btn-primary text-xs"
-                        :disabled="connectBusy || !connectInput"
+                        :disabled="connectBusy || (extendedFields ? !extendedFormReady() : !connectInput)"
                         @click="submitConnect()">
                   <span x-show="!connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
                   <span x-show="connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replacing…' : 'Connecting…'"></span>

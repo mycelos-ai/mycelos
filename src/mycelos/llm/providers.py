@@ -22,6 +22,25 @@ class ModelInfo:
 
 
 @dataclass
+class CredentialField:
+    """Spec for a single credential input field rendered in the setup UI.
+
+    Used by providers that need more than a single API key (e.g. Vertex AI
+    needs a service-account JSON, GCP project, and region). Passed to the
+    frontend via /api/setup/providers so the form can be rendered dynamically.
+    """
+
+    key: str           # storage key in the credential dict ("vertex_credentials")
+    label: str         # display label ("Service Account JSON")
+    type: str = "password"  # "password" | "text" | "textarea" | "select"
+    placeholder: str = ""
+    options: list[str] | None = None  # for "select"
+    default: str | None = None
+    required: bool = True
+    help: str = ""     # short help text under the field
+
+
+@dataclass
 class ProviderConfig:
     """Configuration for an LLM provider."""
 
@@ -30,6 +49,31 @@ class ProviderConfig:
     env_var: str | None  # "ANTHROPIC_API_KEY" or None for Ollama
     requires_key: bool = True
     default_url: str | None = None  # "http://localhost:11434" for Ollama
+    # EU data-residency: True if a default-configured connection keeps user
+    # prompts/responses inside the EU. Used by the settings UI to filter
+    # providers when the user has enabled "EU mode".
+    eu_residency: bool = False
+    # Multi-field credential schema for providers that need more than one
+    # secret (Vertex AI: JSON + project + region). When None the legacy
+    # single api_key flow is used.
+    credential_fields: list[CredentialField] | None = None
+
+
+# Vertex AI is the EU way to use Gemini: pick a europe-* region and the
+# data stays inside the EU. europe-west4 (Netherlands) hosts the full
+# Gemini 2.5 family, so it's the recommended default.
+_VERTEX_REGIONS = [
+    "europe-west4",   # Netherlands — Gemini 2.5 Pro / Flash / Flash-Lite
+    "europe-west1",   # Belgium
+    "europe-west9",   # Paris
+    "europe-west3",   # Frankfurt
+    "europe-north1",  # Finland
+    "europe-southwest1",  # Madrid
+    # Non-EU options kept for users who toggle EU mode off.
+    "us-central1",
+    "us-east4",
+    "asia-southeast1",
+]
 
 
 PROVIDERS: dict[str, ProviderConfig] = {
@@ -59,6 +103,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         env_var=None,
         requires_key=False,
         default_url="http://localhost:11434",
+        eu_residency=True,  # Local install — data never leaves the host.
     ),
     "custom": ProviderConfig(
         id="custom",
@@ -66,9 +111,55 @@ PROVIDERS: dict[str, ProviderConfig] = {
         env_var=None,
         requires_key=False,
     ),
+    "vertex_ai": ProviderConfig(
+        id="vertex_ai",
+        name="Google Vertex AI (EU)",
+        env_var=None,
+        requires_key=True,
+        eu_residency=True,
+        credential_fields=[
+            CredentialField(
+                key="vertex_credentials",
+                label="Service Account JSON",
+                type="textarea",
+                placeholder='{"type": "service_account", "project_id": "...", ...}',
+                help=(
+                    "Paste the full JSON of a GCP service account that has the "
+                    "'Vertex AI User' role. Encrypted at rest, never sent to the LLM."
+                ),
+            ),
+            CredentialField(
+                key="vertex_project",
+                label="GCP Project ID",
+                type="text",
+                placeholder="my-gcp-project-1234",
+                help="The project that hosts your Vertex AI quota.",
+            ),
+            CredentialField(
+                key="vertex_location",
+                label="Region",
+                type="select",
+                options=_VERTEX_REGIONS,
+                default="europe-west4",
+                help=(
+                    "Pick a europe-* region for EU data residency. "
+                    "europe-west4 has the full Gemini 2.5 lineup."
+                ),
+            ),
+        ],
+    ),
+    "mistral": ProviderConfig(
+        id="mistral",
+        name="Mistral La Plateforme (EU)",
+        env_var="MISTRAL_API_KEY",
+        eu_residency=True,
+    ),
 }
 
 # Prefixes that indicate a gateway/region variant (not a direct provider model).
+# When a provider in PROVIDERS owns one of these prefixes (e.g. "vertex_ai" /
+# "mistral"), models with that prefix are still listed for that provider — only
+# foreign prefixes are skipped. See _is_foreign_gateway() below.
 _GATEWAY_PREFIXES = (
     "vertex_ai/",
     "bedrock/",
@@ -99,6 +190,21 @@ _GATEWAY_PREFIXES = (
     "text-completion-openai/",
     "ft:",  # fine-tuned variants
 )
+
+
+def _is_foreign_gateway(model_id: str, own_provider: str) -> bool:
+    """Return True if the model id has a gateway prefix from a *different* provider.
+
+    When listing models for vertex_ai we want vertex_ai/gemini-* to come through,
+    so we only skip prefixes that aren't ours.
+    """
+    own_prefix = f"{own_provider}/"
+    for pfx in _GATEWAY_PREFIXES:
+        if pfx == own_prefix:
+            continue
+        if model_id.startswith(pfx):
+            return True
+    return False
 
 _REGION_PREFIXES = re.compile(r"^(eu|us|au|jp|apac|global|ca|cn)\.")
 
@@ -184,8 +290,9 @@ def _get_litellm_models(provider: str) -> list[ModelInfo]:
     candidates: list[ModelInfo] = []
 
     for model_id, info in cost_map.items():
-        # Skip gateway/region variants.
-        if any(model_id.startswith(pfx) for pfx in _GATEWAY_PREFIXES):
+        # Skip gateway/region variants from OTHER providers — but keep models
+        # whose prefix matches the requested provider (vertex_ai/, mistral/).
+        if _is_foreign_gateway(model_id, provider):
             continue
         if _REGION_PREFIXES.match(model_id):
             continue
@@ -297,7 +404,25 @@ LEGACY_PATTERNS: dict[str, re.Pattern] = {
     "gemini": re.compile(
         r"gemini-(1|2\.0|pro$|ultra)"
     ),
+    # Vertex AI hosts the same Gemini family — same legacy rule applies.
+    "vertex_ai": re.compile(
+        r"gemini-(1|2\.0|pro$|ultra)"
+    ),
+    "mistral": re.compile(
+        # Pre-2024 Mistral lines: original tiny/small/medium and the open-mistral-7b
+        # series. Keep mistral-large, mistral-small (current), pixtral, codestral.
+        r"(mistral-tiny|mistral-medium-latest|open-mistral-7b|open-mixtral)"
+    ),
 }
+
+
+def list_eu_providers() -> list[str]:
+    """Return the ids of providers that keep data inside the EU when configured.
+
+    Used by the settings UI to render only EU-eligible tiles when the user
+    has toggled "EU mode" on.
+    """
+    return [pid for pid, cfg in PROVIDERS.items() if cfg.eu_residency]
 
 
 def is_legacy_model(model_id: str, provider: str) -> bool:

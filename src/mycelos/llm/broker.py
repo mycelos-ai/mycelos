@@ -34,35 +34,70 @@ _PROVIDER_ENV_VARS: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
 }
+
+
+def _resolve_litellm_kwargs(
+    model: str, credential_proxy: Any | None
+) -> dict[str, Any]:
+    """Resolve credential kwargs for a model from the credential proxy.
+
+    Returns a dict of kwargs to merge into ``litellm.completion(**kwargs)``.
+    Most providers just need ``api_key``; Vertex AI needs three fields
+    (``vertex_credentials`` JSON, ``vertex_project``, ``vertex_location``).
+
+    Returns an empty dict if no credential is found or already in env.
+    Never touches os.environ — thread-safe, no global mutation.
+    """
+    if credential_proxy is None:
+        return {}
+
+    provider = model.split("/")[0] if "/" in model else _guess_provider(model)
+
+    # Vertex AI: three-field credential, no single api_key.
+    if provider == "vertex_ai":
+        try:
+            cred = credential_proxy.get_credential("vertex_ai")
+        except Exception as exc:
+            logger.debug("credential lookup failed for vertex_ai: %s", exc)
+            return {}
+        if not cred:
+            return {}
+        kw: dict[str, Any] = {}
+        if cred.get("vertex_credentials"):
+            kw["vertex_credentials"] = cred["vertex_credentials"]
+        if cred.get("vertex_project"):
+            kw["vertex_project"] = cred["vertex_project"]
+        if cred.get("vertex_location"):
+            kw["vertex_location"] = cred["vertex_location"]
+        return kw
+
+    # Single-key providers — skip if user already set the env var.
+    env_var = _PROVIDER_ENV_VARS.get(provider)
+    if env_var and os.environ.get(env_var):
+        return {}
+
+    try:
+        cred = credential_proxy.get_credential(provider)
+        if cred and "api_key" in cred:
+            return {"api_key": cred["api_key"]}
+    except Exception as exc:
+        logger.debug("credential lookup failed for provider=%s: %s", provider, exc)
+
+    return {}
 
 
 def _resolve_api_key(
     model: str, credential_proxy: Any | None
 ) -> str | None:
-    """Resolve the API key for a model from the credential proxy.
+    """Backward-compatible wrapper around :func:`_resolve_litellm_kwargs`.
 
-    Returns the key directly — never touches os.environ.
-    Thread-safe: no global state mutation.
+    Kept so existing callers (and tests that monkey-patch this name) keep
+    working — new code should call :func:`_resolve_litellm_kwargs` directly.
     """
-    if credential_proxy is None:
-        return None
-
-    provider = model.split("/")[0] if "/" in model else _guess_provider(model)
-
-    # Check if already in env (user set manually)
-    env_var = _PROVIDER_ENV_VARS.get(provider)
-    if env_var and os.environ.get(env_var):
-        return None  # Already available, LiteLLM will find it
-
-    try:
-        cred = credential_proxy.get_credential(provider)
-        if cred and "api_key" in cred:
-            return cred["api_key"]
-    except Exception as exc:
-        logger.debug("credential lookup failed for provider=%s: %s", provider, exc)
-
-    return None
+    kw = _resolve_litellm_kwargs(model, credential_proxy)
+    return kw.get("api_key")
 
 
 def _guess_provider(model: str) -> str:
@@ -247,10 +282,11 @@ class LiteLLMBroker:
         if stream:
             kwargs["stream"] = True
 
-        # Pass API key directly — thread-safe, no os.environ mutation
-        api_key = _resolve_api_key(chosen_model, self._credential_proxy)
-        if api_key:
-            kwargs["api_key"] = api_key
+        # Pass credentials directly — thread-safe, no os.environ mutation.
+        # Vertex AI returns vertex_credentials/vertex_project/vertex_location;
+        # other providers return {"api_key": ...}.
+        cred_kwargs = _resolve_litellm_kwargs(chosen_model, self._credential_proxy)
+        kwargs.update(cred_kwargs)
 
         response = litellm.completion(**kwargs)
 
@@ -370,10 +406,9 @@ class LiteLLMBroker:
         self._last_stream_tool_calls: list[dict] | None = None
 
         full_content = ""
-        # Pass API key directly — thread-safe, no os.environ mutation
-        api_key = _resolve_api_key(chosen_model, self._credential_proxy)
-        if api_key:
-            kwargs["api_key"] = api_key
+        # Pass credentials directly — thread-safe, no os.environ mutation.
+        cred_kwargs = _resolve_litellm_kwargs(chosen_model, self._credential_proxy)
+        kwargs.update(cred_kwargs)
 
         response = litellm.completion(**kwargs)
         for chunk in response:

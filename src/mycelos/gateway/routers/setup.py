@@ -29,6 +29,36 @@ async def setup_status(request: Request) -> dict[str, Any]:
     return {"initialized": is_initialized(mycelos)}
 
 
+@router.get("/api/setup/providers")
+async def list_providers() -> dict[str, Any]:
+    """Expose the provider catalog (id, name, EU-residency flag, credential schema).
+
+    The settings UI uses this to render provider tiles dynamically and to
+    decide which tiles to show when EU mode is on.
+    """
+    from dataclasses import asdict
+    from mycelos.llm.providers import PROVIDERS
+
+    providers = []
+    for cfg in PROVIDERS.values():
+        # 'custom' is a stub catch-all and isn't user-bootable from the tile
+        # grid — keep it out of the public catalog.
+        if cfg.id == "custom":
+            continue
+        providers.append({
+            "id": cfg.id,
+            "name": cfg.name,
+            "eu_residency": cfg.eu_residency,
+            "requires_key": cfg.requires_key,
+            "default_url": cfg.default_url,
+            "credential_fields": (
+                [asdict(f) for f in cfg.credential_fields]
+                if cfg.credential_fields else None
+            ),
+        })
+    return {"providers": providers}
+
+
 @router.post("/api/setup")
 async def run_setup(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """Run the web onboarding flow: credential + provider + models + agents."""
@@ -40,6 +70,7 @@ async def run_setup(request: Request, body: dict[str, Any]) -> dict[str, Any]:
             api_key=body.get("api_key"),
             provider_id=body.get("provider_id"),
             ollama_url=body.get("ollama_url"),
+            credentials=body.get("credentials"),
         )
     except SetupError as e:
         raise HTTPException(status_code=400, detail=str(e))
