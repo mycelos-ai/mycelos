@@ -32,6 +32,14 @@ services:
       - ${MYCELOS_DATA_DIR:-./data}:/data
     networks:
       - mycelos-internal
+    # Allow MCP subprocesses (spawned by the proxy) to reach services
+    # running on the Docker host via `host.docker.internal`. Needed
+    # when an MCP server is another container on the same host that
+    # only exposes a host port — DNS round-trips through the LAN's
+    # reverse proxy hairpin and fail from inside this container.
+    # See README → "Local MCP servers on the same host".
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9110/healthz"]

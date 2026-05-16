@@ -147,6 +147,21 @@ Your data stays untouched — only the container images are replaced.
 
 Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
 
+### Local MCP servers on the same host
+
+If you run another MCP server (e.g. [yt-summary](https://github.com/mycelos-ai/yt-summary), a self-hosted Pinecone proxy, …) as **another container on the same machine** and reach it through a reverse proxy (Caddy/Nginx/Traefik) on a public-ish hostname, you'll hit a NAT hairpinning wall: DNS resolves to your LAN IP, but the TCP connect from inside the Mycelos proxy container to that IP times out.
+
+The compose file ships with `extra_hosts: ["host.docker.internal:host-gateway"]` on the `proxy` service for this exact case. In the Mycelos UI, add the MCP server with a `host.docker.internal` URL pointing at the **host port** the other container exposes — *not* the public hostname:
+
+```
+# yt-summary exposes container port 8000 as host port 8200:
+http://host.docker.internal:8200/mcp/sse
+```
+
+This bypasses your reverse proxy entirely, so no TLS handshake, no hairpin, no need for the two containers to share a Docker network. The traffic stays on the host bridge.
+
+If you'd rather keep MCP traffic off the host network — e.g. you want the MCP server reachable by container name only — create a shared Docker network (`docker network create mycelos-mcp`), attach both stacks to it, and use the container name as the hostname.
+
 ### With pip (single-process mode — development only)
 
 > ⚠️ **This mode does not give you the v0.3 isolation model.** The master key lives on disk under `~/.mycelos/` and is loaded into the same process that serves the web UI. Use it for contributing to Mycelos or local experiments; use the Docker install for anything else.
