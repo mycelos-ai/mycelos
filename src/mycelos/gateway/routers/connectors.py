@@ -837,9 +837,48 @@ async def test_connector(request: Request, connector_id: str) -> dict[str, Any]:
                     session_id=resp.get("session_id", ""),
                     tools=new_tools,
                 )
+            elif proxy_client is not None and recipe is None:
+                # Custom MCP in two-container mode: rebuild command +
+                # env_vars from the registry row (same shape as the
+                # boot path in gateway/server.py) and spawn in proxy.
+                existing_row = mycelos.connector_registry.get(connector_id) or {}
+                desc = existing_row.get("description", "")
+                if not desc.startswith("MCP: "):
+                    raise RuntimeError(
+                        f"Custom MCP connector '{connector_id}' has no command "
+                        "in registry description"
+                    )
+                command_str = desc[len("MCP: "):]
+                env_vars = {}
+                try:
+                    cred = mycelos.credentials.get_credential(connector_id)
+                    if cred and cred.get("api_key"):
+                        env_var_name = cred.get(
+                            "env_var",
+                            f"{connector_id.upper().replace('-', '_')}_API_KEY",
+                        )
+                        env_vars[env_var_name] = f"credential:{connector_id}"
+                except Exception:
+                    pass
+                argv = _shlex.split(command_str)
+                resp = proxy_client.mcp_start(
+                    connector_id=connector_id,
+                    command=argv,
+                    env_vars=env_vars,
+                    transport="stdio",
+                )
+                if resp.get("error"):
+                    raise RuntimeError(resp["error"])
+                new_tools = resp.get("tools", [])
+                mycelos.mcp_manager.register_remote_session(
+                    connector_id=connector_id,
+                    session_id=resp.get("session_id", ""),
+                    tools=new_tools,
+                )
             else:
                 # Single-process mode OR oauth_http (no subprocess):
-                # let the local manager handle it.
+                # let the local manager handle it. reconnect() falls
+                # back to registry lookup for custom (recipe-less) MCPs.
                 mcp_mgr.reconnect(connector_id)
 
             tools = [t for t in mcp_mgr.list_tools() if t["name"].startswith(prefix)]

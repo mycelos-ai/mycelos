@@ -151,3 +151,66 @@ def test_post_no_creds_at_all_still_registers(tmp_data_dir: Path) -> None:
     app = App(tmp_data_dir)
     assert app.connector_registry.get("envless") is not None
     assert app.credentials.get_credential("envless") is None
+
+
+def test_reconnect_custom_mcp_uses_registry_not_recipe(
+    tmp_data_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: reconnect() of a custom (recipe-less) MCP must
+    reconstruct command + env_vars from the registry row instead of
+    blowing up with 'Unknown recipe'.
+
+    Before the fix, MCPConnectorManager.reconnect() hardcoded
+    connect_recipe(), so any /connectors/<id>/test on a custom MCP
+    (e.g. one wrapping a remote SSE server via `npx mcp-remote`)
+    surfaced 'reconnect failed: Unknown recipe: <id>'.
+    """
+    from mycelos.app import App
+    from mycelos.gateway.server import create_app
+
+    os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-reconnect-test"
+    App(tmp_data_dir).initialize()
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    c = TestClient(fastapi_app)
+
+    resp = c.post("/api/connectors", json={
+        "name": "yt-summary",
+        "command": 'npx -y mcp-remote https://example.test/mcp/sse --header "Authorization:Bearer tok_x"',
+    })
+    assert resp.status_code == 200, resp.text
+
+    app = App(tmp_data_dir)
+    mgr = app.mcp_manager
+
+    captured: dict[str, object] = {}
+
+    def fake_connect(connector_id, command, env_vars=None, transport="stdio"):
+        captured["connector_id"] = connector_id
+        captured["command"] = command
+        captured["env_vars"] = env_vars
+        captured["transport"] = transport
+        return []
+
+    monkeypatch.setattr(mgr, "connect", fake_connect)
+
+    mgr.reconnect("yt-summary")
+
+    assert captured["connector_id"] == "yt-summary"
+    assert isinstance(captured["command"], str)
+    assert captured["command"].startswith("npx -y mcp-remote")
+    assert captured["transport"] == "stdio"
+
+
+def test_reconnect_unknown_connector_raises_clean_error(
+    tmp_data_dir: Path,
+) -> None:
+    """If neither a recipe nor a registry row exists, reconnect should
+    raise a descriptive error rather than the misleading 'Unknown recipe'."""
+    from mycelos.app import App
+
+    os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-unknown-test"
+    App(tmp_data_dir).initialize()
+    app = App(tmp_data_dir)
+
+    with pytest.raises(ValueError, match="Unknown connector"):
+        app.mcp_manager.reconnect("not-a-real-thing")

@@ -165,12 +165,13 @@ class MCPConnectorManager:
 
     def reconnect(self, connector_id: str) -> list[dict]:
         """Tear down the existing client for this connector (if any) and
-        re-spawn it using the recipe's command + credentials. Returns
-        the freshly-discovered tool list.
+        re-spawn it. Returns the freshly-discovered tool list.
 
-        Raises if the connector has no recipe (custom MCP connectors
-        store their command in the registry row rather than a recipe
-        — those use reconnect_from_registry() below).
+        Two paths:
+          - Recipe-backed connector → use connect_recipe()
+          - Custom MCP connector (no recipe) → reconstruct command +
+            env_vars from the registry row (description holds
+            "MCP: <command>"; credentials live under the bare id)
         """
         # Drop stale client first so tool-lookup doesn't hit zombies.
         old = self._clients.pop(connector_id, None)
@@ -184,7 +185,55 @@ class MCPConnectorManager:
                      if t.get("client") is old]:
             self._all_tools.pop(name, None)
 
-        return self.connect_recipe(connector_id)
+        if get_recipe(connector_id) is not None:
+            return self.connect_recipe(connector_id)
+
+        return self._reconnect_custom(connector_id)
+
+    def _reconnect_custom(self, connector_id: str) -> list[dict]:
+        """Reconnect a custom (recipe-less) MCP connector.
+
+        Mirrors the boot-time spawn in gateway/server.py: command is
+        stored as 'MCP: <command>' in the registry description, and
+        credentials live under the bare connector id (env_var name on
+        the stored row).
+        """
+        if self._connector_registry is None:
+            raise ValueError(
+                f"Unknown recipe: {connector_id} "
+                "(no registry available to reconstruct custom MCP)"
+            )
+        row = self._connector_registry.get(connector_id)
+        if row is None:
+            raise ValueError(f"Unknown connector: {connector_id}")
+        desc = row.get("description") or ""
+        if not desc.startswith("MCP: "):
+            raise ValueError(
+                f"Connector '{connector_id}' has no MCP command "
+                "(description must start with 'MCP: ')"
+            )
+        command = desc[len("MCP: "):]
+
+        env_vars: dict[str, str] = {}
+        cred_proxy = self._credential_proxy
+        if cred_proxy is not None:
+            try:
+                cred = cred_proxy.get_credential(connector_id)
+            except Exception:
+                cred = None
+            if cred and cred.get("api_key"):
+                env_var_name = cred.get(
+                    "env_var",
+                    f"{connector_id.upper().replace('-', '_')}_API_KEY",
+                )
+                env_vars[env_var_name] = f"credential:{connector_id}"
+
+        return self.connect(
+            connector_id=connector_id,
+            command=command,
+            env_vars=env_vars,
+            transport="stdio",
+        )
 
     def call_tool(self, tool_name: str, arguments: dict) -> Any:
         """Call an MCP tool by name. Thread-safe.
