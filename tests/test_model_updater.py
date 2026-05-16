@@ -292,3 +292,82 @@ def test_check_app_update_uses_direct_httpx_when_no_proxy(update_handler, monkey
 
     assert result["update_available"] is True
     assert result["latest_version"] == "0.2.0"
+
+
+def test_update_check_main_sha_detects_newer_image(update_handler, monkeypatch) -> None:
+    """When MYCELOS_BUILD_SHA is set (Docker CI builds), the update
+    check compares it against the main-branch HEAD SHA instead of
+    the latest release tag — so users on the rolling :main image
+    see new builds as updates between releases."""
+    h, app, mod = update_handler
+    monkeypatch.setenv("MYCELOS_BUILD_SHA", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+    import httpx
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kw: _fake_response(200, {
+            "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "html_url": "https://github.com/mycelos-ai/mycelos/commit/bbbb",
+            "commit": {"author": {"date": "2026-05-15T12:00:00Z"}},
+        }),
+    )
+
+    result = h.run("default")
+    assert result["update_available"] is True
+    assert result["channel"] == "main"
+    assert result["current_sha"] == "aaaaaaa"
+    assert result["latest_version"] == "bbbbbbb"
+
+
+def test_update_check_main_sha_same_no_alert(update_handler, monkeypatch) -> None:
+    """Same SHA on local build and remote main → no update."""
+    h, app, mod = update_handler
+    sha = "cccccccccccccccccccccccccccccccccccccccc"
+    monkeypatch.setenv("MYCELOS_BUILD_SHA", sha)
+
+    import httpx
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kw: _fake_response(200, {
+            "sha": sha,
+            "html_url": f"https://github.com/mycelos-ai/mycelos/commit/{sha[:7]}",
+            "commit": {"author": {"date": "2026-05-15T12:00:00Z"}},
+        }),
+    )
+
+    result = h.run("default")
+    assert result["update_available"] is False
+    assert result["channel"] == "main"
+
+
+def test_update_check_falls_back_to_release_when_no_build_sha(
+    update_handler, monkeypatch,
+) -> None:
+    """Without MYCELOS_BUILD_SHA (pip install, untagged local build),
+    the check uses the GitHub release tag — same as before this
+    change. Guards the fallback path."""
+    h, app, mod = update_handler
+    monkeypatch.delenv("MYCELOS_BUILD_SHA", raising=False)
+
+    from mycelos.agents.handlers.model_updater_handler import ModelUpdaterHandler
+    monkeypatch.setattr(
+        ModelUpdaterHandler, "_current_version", staticmethod(lambda: "0.1.0"),
+    )
+
+    import httpx
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda url, **kw: _fake_response(200, {
+            "tag_name": "v0.2.0",
+            "html_url": "https://example/release",
+            "published_at": "2026-04-20T10:00:00Z",
+        }),
+    )
+
+    result = h.run("default")
+    assert result["update_available"] is True
+    assert result["latest_version"] == "0.2.0"
+    assert result.get("channel") == "release"

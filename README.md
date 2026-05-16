@@ -145,7 +145,9 @@ docker compose pull && docker compose up -d
 
 Your data stays untouched — only the container images are replaced.
 
-Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+Mycelos automatically checks GitHub once per day for new updates. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+
+On the rolling `:main` Docker image (default), the check compares the build-time commit SHA against the current `main` branch HEAD — so every fresh build CI pushes shows up as an update, matching what `docker compose pull` actually fetches. On pip installs (or images built without the `MYCELOS_BUILD_SHA` build-arg), the check falls back to comparing the local package version against the latest GitHub release tag — coarser, but doesn't require container-build metadata.
 
 ### Local MCP servers on the same host
 

@@ -23,9 +23,41 @@ logger = logging.getLogger("mycelos.model_updater")
 # sees the IP and User-Agent of the request.
 _RELEASE_API = "https://api.github.com/repos/mycelos-ai/mycelos/releases/latest"
 
+# main-branch HEAD commit SHA — what the rolling ghcr.io/...:main image
+# is built from. Compared against the build-time MYCELOS_BUILD_SHA env
+# var (set by Docker CI). When they differ, a newer image is on GHCR
+# and `docker compose pull` will get it.
+_MAIN_COMMIT_API = "https://api.github.com/repos/mycelos-ai/mycelos/commits/main"
+
 # Memory keys for update-check state and opt-out toggle.
 _UPDATE_OPTOUT_KEY = "system.check_for_updates"
 _UPDATE_STATE_KEY = "system.update.latest"
+
+# Fields from _check_app_update() that the run() result surfaces to the
+# UI. Keeping this in one place avoids losing fields when new ones
+# (e.g. current_sha, channel) get added to the check path.
+_UPDATE_INFO_FIELDS = (
+    "update_available",
+    "latest_version",
+    "current_version",
+    "current_sha",
+    "latest_sha_full",
+    "release_url",
+    "published_at",
+    "channel",
+)
+
+
+def _update_info_view(info: dict[str, Any]) -> dict[str, Any]:
+    """Pick the user-facing subset of fields out of the raw update-check
+    result. Missing fields default to None (or False for the bool flag)."""
+    out: dict[str, Any] = {}
+    for k in _UPDATE_INFO_FIELDS:
+        if k == "update_available":
+            out[k] = bool(info.get(k, False))
+        else:
+            out[k] = info.get(k)
+    return out
 
 
 class ModelUpdaterHandler:
@@ -62,9 +94,7 @@ class ModelUpdaterHandler:
             # update-check result so the UI can render it.
             return {
                 "added": [], "updated_count": 0, "total": 0,
-                "update_available": update_info.get("update_available", False),
-                "latest_version": update_info.get("latest_version"),
-                "current_version": update_info.get("current_version"),
+                **_update_info_view(update_info),
             }
 
         try:
@@ -98,58 +128,113 @@ class ModelUpdaterHandler:
             "skipped_legacy": result.get("skipped_legacy", []),
             "total": result.get("total", 0),
             "providers_checked": providers,
-            "update_available": update_info.get("update_available", False),
-            "latest_version": update_info.get("latest_version"),
-            "current_version": update_info.get("current_version"),
+            **_update_info_view(update_info),
         }
 
     # ── App update check ───────────────────────────────────────────
 
     def _check_app_update(self) -> dict[str, Any]:
-        """Query GitHub for the latest Mycelos release tag.
+        """Check for a newer Mycelos image.
 
-        Opt-out: users can disable via the ``system.check_for_updates``
-        memory entry (Settings UI writes it). Default is enabled so
-        first-time users get the signal without extra configuration.
+        Two-stage check, tuned to the rolling-deployment model where
+        users run ``ghcr.io/mycelos-ai/mycelos:main`` and pull whenever
+        something new lands:
 
-        Returns dict with ``update_available``, ``latest_version``,
-        ``current_version``, ``release_url``, ``published_at``. Best-effort:
-        any error logs a warning and returns the last-known state from memory
-        (or an empty dict). Never raises.
+        1. If we know the build-time commit SHA (``MYCELOS_BUILD_SHA``
+           env var set by Docker CI), compare it against the current
+           main-branch HEAD SHA on GitHub. Different → a fresher image
+           is on GHCR. This is the path most users hit.
+        2. Otherwise (pip install, local dev image, build without the
+           ARG) fall back to comparing the local package version
+           against the latest GitHub release tag. Coarser, but works
+           without container-build metadata.
+
+        Opt-out: ``system.check_for_updates`` memory entry. Default on.
+        Never raises; on network error returns the cached state.
         """
         if self._is_update_check_disabled():
             return {}
 
+        build_sha = self._build_sha()
+        if build_sha:
+            return self._check_via_main_sha(build_sha)
+        return self._check_via_release_tag()
+
+    @staticmethod
+    def _build_sha() -> str:
+        import os
+        sha = (os.environ.get("MYCELOS_BUILD_SHA") or "").strip()
+        if not sha or sha == "unknown":
+            return ""
+        return sha
+
+    def _check_via_main_sha(self, build_sha: str) -> dict[str, Any]:
+        try:
+            data = self._github_json(_MAIN_COMMIT_API)
+        except Exception as e:
+            logger.debug("Update check (main SHA) failed: %s", e)
+            return self._load_cached_update_state()
+        if data is None:
+            return {}
+
+        latest_sha = (data.get("sha") or "").strip()
+        if not latest_sha:
+            return {}
+
+        commit_info = (data.get("commit") or {})
+        author_info = (commit_info.get("author") or {})
+        published_at = author_info.get("date") or ""
+        commit_url = data.get("html_url") or ""
+
+        update_available = build_sha != latest_sha
+        current = self._current_version() or ""
+        state = {
+            "update_available": update_available,
+            # Short SHAs read better in the UI; the full SHA stays in
+            # `latest_sha_full` for debugging.
+            "latest_version": latest_sha[:7],
+            "current_version": current,
+            "current_sha": build_sha[:7],
+            "latest_sha_full": latest_sha,
+            "release_url": commit_url,
+            "published_at": published_at,
+            "channel": "main",
+        }
+
+        should_audit = update_available and self._should_audit_update(latest_sha)
+        self._save_update_state(state)
+
+        if update_available:
+            if should_audit:
+                self._app.audit.log(
+                    "mycelos.update_available",
+                    details={
+                        "current_sha": build_sha[:7],
+                        "latest_sha": latest_sha[:7],
+                        "url": commit_url,
+                        "channel": "main",
+                    },
+                )
+            logger.info(
+                "Mycelos update available: %s → %s (main)",
+                build_sha[:7], latest_sha[:7],
+            )
+
+        return state
+
+    def _check_via_release_tag(self) -> dict[str, Any]:
         current = self._current_version()
         if not current:
             logger.debug("Update check: could not determine local version; skipping")
             return {}
 
         try:
-            import httpx
-            import json as _json
-            from mycelos.connectors import http_tools as _http_tools
-
-            _headers = {"Accept": "application/vnd.github+json", "User-Agent": "mycelos-updater"}
-            if _http_tools._proxy_client is not None:
-                raw = _http_tools._proxy_client.http_get(_RELEASE_API, headers=_headers, timeout=5)
-                status = raw.get("status", 0)
-                if status == 404:
-                    # No release published yet on this repo — not an error.
-                    return {}
-                if status == 0 or status >= 400:
-                    raise RuntimeError(raw.get("error", f"HTTP {status}"))
-                data = _json.loads(raw.get("body", "{}")) if raw.get("body") else {}
-            else:
-                resp = httpx.get(_RELEASE_API, timeout=5, headers=_headers)
-                if resp.status_code == 404:
-                    # No release published yet on this repo — not an error.
-                    return {}
-                resp.raise_for_status()
-                data = resp.json()
+            data = self._github_json(_RELEASE_API)
         except Exception as e:
-            logger.debug("Update check failed: %s", e)
+            logger.debug("Update check (release tag) failed: %s", e)
             return self._load_cached_update_state()
+        if data is None:
+            return {}
 
         latest = (data.get("tag_name") or "").lstrip("v")
         release_url = data.get("html_url") or ""
@@ -165,6 +250,7 @@ class ModelUpdaterHandler:
             "current_version": current,
             "release_url": release_url,
             "published_at": published_at,
+            "channel": "release",
         }
 
         # Decide whether to audit BEFORE persisting — _should_audit_update
@@ -188,6 +274,37 @@ class ModelUpdaterHandler:
             logger.info("Mycelos update available: %s → %s", current, latest)
 
         return state
+
+    @staticmethod
+    def _github_json(url: str) -> dict[str, Any] | None:
+        """GET a GitHub JSON API endpoint. Returns parsed body, None on
+        404 (treated as "nothing to report", not an error), or raises
+        on transport/protocol failure. Routes through the SecurityProxy
+        when configured so the gateway container can stay off the
+        internet-facing network.
+        """
+        import json as _json
+        import httpx
+        from mycelos.connectors import http_tools as _http_tools
+
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "mycelos-updater",
+        }
+        if _http_tools._proxy_client is not None:
+            raw = _http_tools._proxy_client.http_get(url, headers=headers, timeout=5)
+            status = raw.get("status", 0)
+            if status == 404:
+                return None
+            if status == 0 or status >= 400:
+                raise RuntimeError(raw.get("error", f"HTTP {status}"))
+            body = raw.get("body") or "{}"
+            return _json.loads(body)
+        resp = httpx.get(url, timeout=5, headers=headers)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
 
     def _is_update_check_disabled(self) -> bool:
         try:
