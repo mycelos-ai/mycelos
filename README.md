@@ -151,18 +151,34 @@ On the rolling `:main` Docker image (default), the check compares the build-time
 
 ### Local MCP servers on the same host
 
-If you run another MCP server (e.g. [yt-summary](https://github.com/mycelos-ai/yt-summary), a self-hosted Pinecone proxy, …) as **another container on the same machine** and reach it through a reverse proxy (Caddy/Nginx/Traefik) on a public-ish hostname, you'll hit a NAT hairpinning wall: DNS resolves to your LAN IP, but the TCP connect from inside the Mycelos proxy container to that IP times out.
+If you run another MCP server as a separate Docker container on the same host (a self-hosted yt-summary, a Pinecone proxy, …), don't try to reach it through its public hostname. Docker's default bridge-isolation rules drop traffic between separate bridge networks, and NAT hairpinning back through your LAN's reverse proxy usually times out from inside the proxy container.
 
-The compose file ships with `extra_hosts: ["host.docker.internal:host-gateway"]` on the `proxy` service for this exact case. In the Mycelos UI, add the MCP server with a `host.docker.internal` URL pointing at the **host port** the other container exposes — *not* the public hostname:
+The compose file ships with a `mycelos-mcp` bridge network for exactly this case. The proxy joins it; the gateway does not (preserving the Phase-1b isolation model). Attach the other container to the same network:
+
+```bash
+docker network connect mycelos-mcp <other-container>
+```
+
+Then point the MCP connector at the container by name and its internal port (not the host-published one):
 
 ```
-# yt-summary exposes container port 8000 as host port 8200:
-http://host.docker.internal:8200/mcp/sse
+http://<other-container>:<internal-port>/mcp/sse
 ```
 
-This bypasses your reverse proxy entirely, so no TLS handshake, no hairpin, no need for the two containers to share a Docker network. The traffic stays on the host bridge.
+To make the attachment survive `docker compose down` on the other stack, add the shared network to its compose file:
 
-If you'd rather keep MCP traffic off the host network — e.g. you want the MCP server reachable by container name only — create a shared Docker network (`docker network create mycelos-mcp`), attach both stacks to it, and use the container name as the hostname.
+```yaml
+services:
+  <other-container>:
+    networks:
+      - default
+      - mycelos-mcp
+networks:
+  mycelos-mcp:
+    external: true
+```
+
+For non-containerized host services (e.g. an MCP server you run from npm directly on the host) use `host.docker.internal` — the compose file maps it to `host-gateway` on the proxy service. Container-to-container links should always prefer the shared bridge though; it's more robust.
 
 ### With pip (single-process mode — development only)
 
