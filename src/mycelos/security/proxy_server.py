@@ -512,8 +512,19 @@ def create_proxy_app() -> FastAPI:
             )
         except Exception as e:
             logger.error("MCP start failed for connector '%s': %s", req.connector_id, e)
+            # Pass the real reason back to the gateway so the user sees
+            # something actionable in the UI ("--allow-http flag missing",
+            # "ENOTFOUND", ...) instead of "check server logs for details"
+            # — they don't have the logs. Sanitize first: strip any
+            # resolved env values (tokens, api keys) and collapse repeated
+            # whitespace so the message fits in a UI banner.
+            raw = str(e) or repr(e)
+            for secret in resolved_env.values():
+                if secret and len(secret) >= 6:
+                    raw = raw.replace(secret, "***")
+            cleaned = " ".join(raw.split())[:400]
             return JSONResponse(
-                {"error": "MCP connector start failed. Check server logs for details.", "status": 0},
+                {"error": f"MCP connector start failed: {cleaned}", "status": 0},
                 status_code=500,
             )
 
@@ -574,8 +585,17 @@ def create_proxy_app() -> FastAPI:
             result = mcp.call_tool(full_tool_name, req.arguments)
         except Exception as e:
             logger.error("MCP call failed for tool '%s' in session '%s': %s", req.tool, req.session_id, e)
+            # Pass the real reason back. Sanitize against arg values
+            # that look like secrets — caller-supplied tool arguments
+            # can contain tokens, file paths the user doesn't want
+            # echoed, etc. Strip any string arg value >= 6 chars.
+            raw = str(e) or repr(e)
+            for v in (req.arguments or {}).values():
+                if isinstance(v, str) and len(v) >= 6:
+                    raw = raw.replace(v, "***")
+            cleaned = " ".join(raw.split())[:400]
             return JSONResponse(
-                {"error": "MCP tool call failed. Check server logs for details.", "status": 0},
+                {"error": f"MCP tool call failed: {cleaned}", "status": 0},
                 status_code=500,
             )
 

@@ -259,6 +259,79 @@ class TestMcpProxy:
         assert resp.status_code == 200, resp.text
         assert seen["tool_name"] == "yt-summary.list_recent"
 
+    def test_mcp_start_surfaces_real_error_to_gateway(
+        self, client, proxy_app, monkeypatch,
+    ):
+        """Regression: when the spawned MCP subprocess dies (missing
+        --allow-http, ENOTFOUND, wrong port, ...) the proxy used to
+        swallow the reason behind a generic 'check server logs'
+        message. Users in the gateway UI had no way to debug. The
+        real exception text is now passed through so the Connectors
+        page shows something actionable.
+        """
+        class _BadMgr:
+            def connect(self, connector_id, command, env_vars=None, transport="stdio"):
+                raise RuntimeError(
+                    "Non-HTTPS URLs are only allowed for localhost "
+                    "or when --allow-http flag is provided"
+                )
+
+        import mycelos.connectors.mcp_manager as mcp_mod
+        monkeypatch.setattr(
+            mcp_mod, "MCPConnectorManager", lambda *a, **kw: _BadMgr(),
+        )
+
+        resp = client.post("/mcp/start", json={
+            "connector_id": "yt-summary",
+            "command": ["echo", "stub"],
+            "env_vars": {},
+            "transport": "stdio",
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+
+        assert resp.status_code == 500
+        err = resp.json()["error"]
+        assert "--allow-http" in err
+        assert "check server logs" not in err.lower()
+
+    def test_mcp_start_error_redacts_resolved_credentials(
+        self, client, proxy_app, monkeypatch,
+    ):
+        """If the subprocess error happens to echo back the resolved
+        credential value, the proxy must scrub it before passing the
+        message to the gateway. Otherwise a connector that prints its
+        env on startup leaks secrets into the UI banner."""
+        leaky_secret = "sk-supersecretkey-9999"
+
+        class _LeakyMgr:
+            def connect(self, connector_id, command, env_vars=None, transport="stdio"):
+                # Simulate a subprocess that died and quoted its env
+                raise RuntimeError(
+                    f"Failed to start: API_KEY={leaky_secret} was rejected"
+                )
+
+        import mycelos.connectors.mcp_manager as mcp_mod
+        monkeypatch.setattr(
+            mcp_mod, "MCPConnectorManager", lambda *a, **kw: _LeakyMgr(),
+        )
+
+        resp = client.post("/mcp/start", json={
+            "connector_id": "leaky",
+            "command": ["echo", "stub"],
+            "env_vars": {"API_KEY": leaky_secret},
+            "transport": "stdio",
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+
+        assert resp.status_code == 500
+        err = resp.json()["error"]
+        assert leaky_secret not in err
+        assert "***" in err
+
 
 class TestLlmProxy:
     def test_llm_complete_non_streaming(self, client):
