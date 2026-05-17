@@ -56,6 +56,20 @@ class ConnectorAddRequest(BaseModel):
     env_vars: dict[str, str] | None = None  # multi-var path; wins over `secret`
 
 
+class ConnectorEditRequest(BaseModel):
+    """Request body for PATCH /api/connectors/{id}.
+
+    All fields optional — only present keys get applied. Connector ID
+    is immutable (it's the lookup key); use the URL path to identify
+    the target. Renaming would cascade through tool prefixes, audit
+    logs, and agent memory, so it's deliberately not supported.
+    """
+    name: str | None = None         # display name
+    command: str | None = None      # MCP launch command (custom MCPs only)
+    secret: str | None = None       # single-secret update (legacy path)
+    env_vars: dict[str, str] | None = None  # multi-var update; wins over secret
+
+
 class CredentialAddRequest(BaseModel):
     """Request body for POST /api/credentials."""
     service: str

@@ -652,13 +652,19 @@
                    :id="'connector-card-' + (connector.id || connector.name)"
                    :class="connector._highlight && 'ring-2 ring-primary ring-offset-2 ring-offset-background'">
 
-                <!-- Delete button (top-right, visible on hover) -->
-                <button @click="confirmDelete(connector)"
-                        class="absolute top-4 right-4 p-1.5 rounded-lg text-on-surface-variant/30 hover:text-error hover:bg-error/10
-                               opacity-0 group-hover:opacity-100 transition-all"
-                        title="Remove connector">
-                  <span class="material-symbols-outlined text-sm">delete</span>
-                </button>
+                <!-- Edit + Delete buttons (top-right, visible on hover) -->
+                <div class="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <button @click="openEdit(connector)"
+                          class="p-1.5 rounded-lg text-on-surface-variant/30 hover:text-primary hover:bg-primary/10 transition-all"
+                          title="Edit connector">
+                    <span class="material-symbols-outlined text-sm">edit</span>
+                  </button>
+                  <button @click="confirmDelete(connector)"
+                          class="p-1.5 rounded-lg text-on-surface-variant/30 hover:text-error hover:bg-error/10 transition-all"
+                          title="Remove connector">
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                  </button>
+                </div>
 
                 <!-- Header: name + status -->
                 <div class="flex items-start gap-3 mb-3">
@@ -916,6 +922,105 @@
       </div>
     </div>
 
+    <!-- Edit connector dialog -->
+    <div x-show="editTarget" x-cloak x-transition class="fixed inset-0 z-50 flex items-center justify-center p-4"
+         @keydown.escape.window="editTarget = null">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="editTarget = null"></div>
+      <!-- Dialog -->
+      <div class="relative glass-card-strong rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+           style="border: 1px solid rgba(70, 72, 77, 0.3);">
+
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <span class="material-symbols-outlined text-primary">edit</span>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-headline font-bold text-sm">Edit Connector</h3>
+            <p class="text-xs text-on-surface-variant truncate">
+              ID: <code class="font-mono text-on-surface-variant/70" x-text="editTarget?.id || editTarget?.name"></code>
+              (immutable)
+            </p>
+          </div>
+        </div>
+
+        <!-- Display name -->
+        <div class="mb-4">
+          <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-1.5">
+            Display Name
+          </label>
+          <input type="text" x-model="editForm.name"
+                 class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:border-primary"
+                 placeholder="Human-readable label">
+        </div>
+
+        <!-- Command (custom MCPs only) -->
+        <div class="mb-4">
+          <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-1.5">
+            MCP Command
+            <span x-show="editForm.isRecipeBacked" class="text-warning normal-case font-normal tracking-normal ml-2">
+              · locked (recipe-backed)
+            </span>
+          </label>
+          <textarea x-model="editForm.command"
+                    :disabled="editForm.isRecipeBacked"
+                    rows="3"
+                    class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono
+                           focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder='npx -y mcp-remote http://yt-summary:8000/mcp/sse --allow-http --header "Authorization:Bearer ..."'></textarea>
+          <p x-show="!editForm.isRecipeBacked" class="text-[10px] text-on-surface-variant/60 mt-1">
+            Allowed launchers: npx, node, python, python3, uvx, docker, deno, bun.
+          </p>
+        </div>
+
+        <!-- Env vars -->
+        <div class="mb-5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant">
+              Update Credentials / Env Vars
+            </label>
+            <button @click="addEditEnvVar()"
+                    class="text-[10px] font-label uppercase tracking-widest text-primary hover:text-primary/80 transition-colors">
+              + add row
+            </button>
+          </div>
+          <p class="text-[10px] text-on-surface-variant/60 mb-2">
+            Leave blank to keep existing credentials. Any row you fill in replaces the stored value.
+          </p>
+          <template x-for="(row, idx) in editForm.envVars" :key="idx">
+            <div class="flex items-center gap-2 mb-2">
+              <input type="text" x-model="row.key" placeholder="VAR_NAME"
+                     class="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:border-primary">
+              <input type="text" x-model="row.value" placeholder="value"
+                     class="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:border-primary">
+              <button @click="removeEditEnvVar(idx)"
+                      class="p-1 rounded text-on-surface-variant/50 hover:text-error transition-colors"
+                      title="Remove row">
+                <span class="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <div class="flex justify-end gap-3">
+          <button @click="editTarget = null"
+                  class="text-xs font-label uppercase tracking-widest text-on-surface-variant hover:text-on-surface transition-colors px-4 py-2">
+            Cancel
+          </button>
+          <button @click="saveEdit()"
+                  :disabled="editing"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/15 text-primary text-xs font-bold hover:bg-primary/25 transition-colors disabled:opacity-50">
+            <span class="material-symbols-outlined text-sm" x-show="!editing">save</span>
+            <span class="material-symbols-outlined text-sm animate-spin" x-show="editing">progress_activity</span>
+            <span x-text="editing ? 'Saving...' : 'Save changes'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_http' -->
     <div x-show="oauthDialog.open" x-cloak
          class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
@@ -1090,6 +1195,17 @@
         searching: false,
         deleteTarget: null,
         deleting: false,
+        // Edit dialog — open via openEdit(connector). editForm is pre-filled
+        // from the connector row; only changed fields are PATCH'd, so a
+        // user who just opens & closes the dialog sends an empty body.
+        editTarget: null,
+        editForm: {
+          name: '',
+          command: '',
+          envVars: [],            // [{ key, value }]
+          isRecipeBacked: false,  // disables command editing
+        },
+        editing: false,
         toast: { show: false, message: '', type: 'success' },
         wizard: {
           active: false, type: '', step: 1, totalSteps: 3,
@@ -1476,6 +1592,115 @@
           }
 
           this.submitting = false;
+        },
+
+        /**
+         * Open the edit dialog. Pre-fills the form from the connector
+         * row so the user only needs to change what's wrong.
+         *
+         * Recipe-backed connectors get the command field locked —
+         * backend rejects PATCH on that field anyway, and surfacing
+         * it as disabled is friendlier than a 400 on submit.
+         */
+        openEdit(connector) {
+          const isRecipe = this.allMcp.some(r => r.id === (connector.id || connector.name))
+                        || this.allChannels.some(r => r.id === (connector.id || connector.name));
+
+          // Strip "MCP: " prefix off the description for the command field.
+          let command = '';
+          const desc = connector.description || '';
+          if (desc.startsWith('MCP: ')) command = desc.slice(5);
+
+          this.editTarget = connector;
+          this.editForm = {
+            name: connector.name || connector.id || '',
+            command,
+            envVars: [{ key: '', value: '' }],  // empty row; user adds more
+            isRecipeBacked: isRecipe,
+          };
+        },
+
+        /**
+         * Add a fresh empty env-var row to the edit form.
+         */
+        addEditEnvVar() {
+          this.editForm.envVars.push({ key: '', value: '' });
+        },
+
+        /**
+         * Remove an env-var row by index.
+         */
+        removeEditEnvVar(idx) {
+          this.editForm.envVars.splice(idx, 1);
+          if (this.editForm.envVars.length === 0) {
+            this.editForm.envVars.push({ key: '', value: '' });
+          }
+        },
+
+        /**
+         * PATCH the connector. Only sends fields the user actually
+         * changed — keeps the audit trail honest and avoids triggering
+         * an MCP restart when only the display name changed.
+         */
+        async saveEdit() {
+          if (!this.editTarget) return;
+          this.editing = true;
+
+          try {
+            const id = this.editTarget.id || this.editTarget.name;
+            const original = this.editTarget;
+            const originalCommand = (original.description || '').startsWith('MCP: ')
+              ? original.description.slice(5)
+              : '';
+
+            const payload = {};
+
+            const newName = (this.editForm.name || '').trim();
+            if (newName && newName !== (original.name || '')) {
+              payload.name = newName;
+            }
+
+            if (!this.editForm.isRecipeBacked) {
+              const newCommand = (this.editForm.command || '').trim();
+              if (newCommand && newCommand !== originalCommand) {
+                payload.command = newCommand;
+              }
+            }
+
+            const env_vars = {};
+            let envHasContent = false;
+            for (const row of this.editForm.envVars) {
+              const k = (row.key || '').trim();
+              if (!k) continue;
+              env_vars[k] = (row.value || '').toString();
+              envHasContent = true;
+            }
+            if (envHasContent) {
+              payload.env_vars = env_vars;
+            }
+
+            if (Object.keys(payload).length === 0) {
+              this.showToast('Nothing changed', 'success');
+              this.editTarget = null;
+              this.editing = false;
+              return;
+            }
+
+            const res = await MycelosAPI.patch(
+              '/api/connectors/' + encodeURIComponent(id), payload,
+            );
+            await this.loadConnectors();
+            const changed = (res && res.changed) || [];
+            const msg = changed.length
+              ? `Updated: ${changed.join(', ')}`
+              : 'Connector updated';
+            this.showToast(msg, 'success');
+            this.editTarget = null;
+          } catch (e) {
+            this.showToast('Edit failed: ' + e.message, 'error');
+          }
+
+          this.editing = false;
         },
 
         /**

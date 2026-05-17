@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from mycelos.gateway.routers._helpers import (
     ConnectorAddRequest,
+    ConnectorEditRequest,
     resolve_user_id,
 )
 
@@ -623,6 +624,195 @@ async def add_connector(request: Request, body: ConnectorAddRequest) -> dict[str
         ).start()
 
     return {"status": "registered", "connector": body.name}
+
+
+@router.patch("/api/connectors/{connector_id}")
+async def edit_connector(
+    request: Request, connector_id: str, body: ConnectorEditRequest,
+) -> dict[str, Any]:
+    """Edit a connector in place — display name, MCP command, and/or
+    credentials. All body fields are optional; only the present ones
+    get applied. The connector id is immutable (it's the lookup key
+    used by tool prefixes, audit logs, agent memory).
+
+    When the command or credentials change, the running MCP session
+    is restarted so the agent sees the new behavior without a gateway
+    bounce.
+    """
+    mycelos = request.app.state.mycelos
+    existing = mycelos.connector_registry.get(connector_id)
+    if not existing:
+        return JSONResponse(
+            {"error": f"Connector '{connector_id}' not found"}, status_code=404,
+        )
+
+    user_id = resolve_user_id(request)
+    changed: list[str] = []
+
+    # Display name — pure metadata, no restart.
+    if body.name is not None and body.name.strip():
+        new_name = body.name.strip()
+        if new_name != existing.get("name"):
+            mycelos.connector_registry.update_name(connector_id, new_name)
+            changed.append("name")
+
+    # Command — only meaningful for custom MCP connectors (recipe-less).
+    # Recipe-backed connectors get their command from the recipe; editing
+    # it here would silently diverge from the recipe definition.
+    command_changed = False
+    if body.command is not None:
+        from mycelos.connectors.mcp_recipes import get_recipe
+        if get_recipe(connector_id) is not None:
+            return JSONResponse(
+                {
+                    "error": (
+                        f"Connector '{connector_id}' is recipe-backed — its "
+                        "command is fixed by the recipe and cannot be edited."
+                    ),
+                },
+                status_code=400,
+            )
+
+        new_command = body.command.strip()
+        if not new_command:
+            return JSONResponse(
+                {"error": "Command cannot be empty"}, status_code=400,
+            )
+
+        from mycelos.chat.slash_commands import _validate_mcp_command
+        validation_error = _validate_mcp_command(new_command)
+        if validation_error:
+            return JSONResponse(
+                {"error": f"Invalid command: {validation_error}"}, status_code=400,
+            )
+
+        new_description = f"MCP: {new_command}"
+        if new_description != existing.get("description"):
+            mycelos.connector_registry.update_description(
+                connector_id, new_description,
+            )
+            changed.append("command")
+            command_changed = True
+
+    # Credentials — same shape rules as the add endpoint: env_vars (multi)
+    # wins over secret (single legacy). Either one triggers a credential
+    # rewrite, which means the next MCP start will resolve fresh values.
+    cleaned_env_vars: dict[str, str] | None = None
+    if body.env_vars:
+        cleaned_env_vars = {k: v for k, v in body.env_vars.items() if k.strip()}
+        if not cleaned_env_vars:
+            cleaned_env_vars = None
+
+    credentials_changed = False
+    if cleaned_env_vars:
+        try:
+            mycelos.credentials.store_credential(
+                connector_id,
+                {
+                    "api_key": json.dumps(cleaned_env_vars),
+                    "env_var": "__multi__",
+                    "connector": connector_id,
+                },
+                description=f"Credentials for {connector_id}",
+            )
+            mycelos.audit.log(
+                "credential.updated",
+                details={
+                    "connector": connector_id, "env_var": "__multi__",
+                    "var_names": list(cleaned_env_vars.keys()),
+                },
+                user_id=user_id,
+            )
+            changed.append("env_vars")
+            credentials_changed = True
+        except Exception as e:
+            logger.exception("Credential update failed for %s: %s", connector_id, e)
+            return JSONResponse(
+                {"error": f"Failed to update credentials: {e}"}, status_code=500,
+            )
+    elif body.secret is not None:
+        try:
+            env_var_name = f"{connector_id.upper().replace('-', '_')}_API_KEY"
+            mycelos.credentials.store_credential(
+                connector_id,
+                {"api_key": body.secret, "env_var": env_var_name},
+                description=f"Credentials for {connector_id}",
+            )
+            mycelos.audit.log(
+                "credential.updated",
+                details={"connector": connector_id, "env_var": env_var_name},
+                user_id=user_id,
+            )
+            changed.append("secret")
+            credentials_changed = True
+        except Exception as e:
+            logger.exception("Credential update failed for %s: %s", connector_id, e)
+            return JSONResponse(
+                {"error": f"Failed to update credentials: {e}"}, status_code=500,
+            )
+
+    # Restart the MCP session if anything that affects runtime changed.
+    # We tear down the old session first (best-effort), then let the
+    # standard reconnect path re-spawn with the fresh row + creds.
+    restart_attempted = False
+    if command_changed or credentials_changed:
+        restart_attempted = True
+        mcp_mgr = mycelos.mcp_manager
+        from mycelos.connectors import http_tools as _http_tools
+        proxy_client = getattr(_http_tools, "_proxy_client", None)
+
+        # Stop existing session in the proxy (two-container mode) or
+        # locally (single-process mode). Failures are swallowed —
+        # we're about to reconnect anyway, and the old subprocess may
+        # already be dead.
+        try:
+            if proxy_client is not None:
+                remote_sessions = getattr(mcp_mgr, "_remote_sessions", {}) or {}
+                old_session = remote_sessions.get(connector_id)
+                if old_session:
+                    try:
+                        proxy_client.mcp_stop(old_session)
+                    except Exception:
+                        pass
+                    remote_sessions.pop(connector_id, None)
+                # Drop stale tool entries from the local catalog so the
+                # next list_tools() doesn't show ghosts before reconnect.
+                for name in [
+                    n for n, t in list(mcp_mgr._all_tools.items())
+                    if t.get("_remote") and t.get("_session_id") == old_session
+                ]:
+                    mcp_mgr._all_tools.pop(name, None)
+            else:
+                local_client = mcp_mgr._clients.get(connector_id)
+                if local_client is not None:
+                    try:
+                        mcp_mgr._run_async(local_client.disconnect())
+                    except Exception:
+                        pass
+                    mcp_mgr._clients.pop(connector_id, None)
+                    for name in [
+                        n for n, t in list(mcp_mgr._all_tools.items())
+                        if t.get("client") is local_client
+                    ]:
+                        mcp_mgr._all_tools.pop(name, None)
+        except Exception as e:
+            logger.warning(
+                "Could not cleanly stop old MCP session for '%s': %s",
+                connector_id, e,
+            )
+
+    mycelos.audit.log(
+        "connector.edited",
+        details={"connector": connector_id, "changed": changed},
+        user_id=user_id,
+    )
+
+    return {
+        "status": "updated",
+        "connector": connector_id,
+        "changed": changed,
+        "restart_attempted": restart_attempted,
+    }
 
 
 @router.delete("/api/connectors/{connector_id}")
