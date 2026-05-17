@@ -556,10 +556,22 @@ def create_proxy_app() -> FastAPI:
                 "status": 0,
             })
 
+        # The proxy's local MCPConnectorManager stores tools as
+        # "<connector_id>.<bare_name>" (matches the gateway's local
+        # shape). The gateway sends the bare name in `req.tool` because
+        # it strips the prefix before calling us. Rebuild the full
+        # name from the session's connector_id so the lookup hits.
+        connector_id = _state["_mcp_sessions"][req.session_id]
+        full_tool_name = (
+            req.tool
+            if req.tool.startswith(f"{connector_id}.")
+            else f"{connector_id}.{req.tool}"
+        )
+
         t_start = time.time()
         try:
             mcp = _get_mcp_manager()
-            result = mcp.call_tool(req.tool, req.arguments)
+            result = mcp.call_tool(full_tool_name, req.arguments)
         except Exception as e:
             logger.error("MCP call failed for tool '%s' in session '%s': %s", req.tool, req.session_id, e)
             return JSONResponse(

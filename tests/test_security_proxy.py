@@ -162,6 +162,103 @@ class TestMcpProxy:
         })
         assert resp.status_code == 401
 
+    def test_mcp_call_rebuilds_prefixed_tool_name(
+        self, client, proxy_app, monkeypatch,
+    ):
+        """Regression: the gateway sends the bare tool name (e.g.
+        'list_recent') because it strips the connector prefix before
+        the RPC. The proxy's local MCPConnectorManager stores tools
+        as '<connector>.<bare>' though, so a naive lookup misses and
+        the user sees a confusing "MCP tool 'list_recent' not found"
+        from a completely different code path. The proxy must rebuild
+        the full name from the session's connector_id before calling
+        the manager.
+
+        End-to-end via /mcp/start (to seat the session_id → connector_id
+        mapping) and then /mcp/call.
+        """
+        seen: dict[str, str] = {}
+
+        class _FakeMgr:
+            def connect(self, connector_id, command, env_vars=None, transport="stdio"):
+                return [{"name": f"{connector_id}.list_recent", "description": ""}]
+            def call_tool(self, tool_name, arguments):
+                seen["tool_name"] = tool_name
+                return {"echo": tool_name}
+
+        import mycelos.connectors.mcp_manager as mcp_mod
+        monkeypatch.setattr(
+            mcp_mod, "MCPConnectorManager", lambda *a, **kw: _FakeMgr(),
+        )
+
+        start = client.post("/mcp/start", json={
+            "connector_id": "yt-summary",
+            "command": ["echo", "stub"],
+            "env_vars": {},
+            "transport": "stdio",
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+        assert start.status_code == 200, start.text
+        session_id = start.json()["session_id"]
+
+        resp = client.post("/mcp/call", json={
+            "session_id": session_id,
+            "tool": "list_recent",   # bare name, as the gateway sends it
+            "arguments": {},
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+
+        assert resp.status_code == 200, resp.text
+        assert seen["tool_name"] == "yt-summary.list_recent"
+        assert resp.json() == {"result": {"echo": "yt-summary.list_recent"}}
+
+    def test_mcp_call_passes_through_already_prefixed(
+        self, client, proxy_app, monkeypatch,
+    ):
+        """If a caller already sends the prefixed name (older clients,
+        or symmetry between local and remote paths), do not double-prefix."""
+        seen: dict[str, str] = {}
+
+        class _FakeMgr:
+            def connect(self, connector_id, command, env_vars=None, transport="stdio"):
+                return []
+            def call_tool(self, tool_name, arguments):
+                seen["tool_name"] = tool_name
+                return {"ok": True}
+
+        import mycelos.connectors.mcp_manager as mcp_mod
+        monkeypatch.setattr(
+            mcp_mod, "MCPConnectorManager", lambda *a, **kw: _FakeMgr(),
+        )
+
+        start = client.post("/mcp/start", json={
+            "connector_id": "yt-summary",
+            "command": ["echo", "stub"],
+            "env_vars": {},
+            "transport": "stdio",
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+        assert start.status_code == 200, start.text
+        session_id = start.json()["session_id"]
+
+        resp = client.post("/mcp/call", json={
+            "session_id": session_id,
+            "tool": "yt-summary.list_recent",   # already prefixed
+            "arguments": {},
+        }, headers={
+            "Authorization": f"Bearer {SESSION_TOKEN}",
+            "X-User-Id": "default",
+        })
+
+        assert resp.status_code == 200, resp.text
+        assert seen["tool_name"] == "yt-summary.list_recent"
+
 
 class TestLlmProxy:
     def test_llm_complete_non_streaming(self, client):
