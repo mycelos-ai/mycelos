@@ -402,6 +402,7 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     content_hash TEXT,
     organizer_state TEXT NOT NULL DEFAULT 'pending',
     organizer_seen_at TEXT,
+    organizer_attempts INTEGER NOT NULL DEFAULT 0,    -- failed classification attempts; parked as 'manual' at the cap
     source_file TEXT,                                 -- relative path to original document (e.g. documents/report.pdf)
     created_by  TEXT,                                 -- provenance: agent id / 'user' / 'organizer' / 'import'
     source      TEXT                                  -- provenance JSON: kind, conversation_id, connector, external_id, ...

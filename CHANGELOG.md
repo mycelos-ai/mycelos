@@ -50,6 +50,35 @@ deployment on localhost.
   was still reachable at `/out/` from the pre-rename era.
 
 
+## Week 24 (2026) — organizer robustness
+
+Hardens the knowledge organizer so bulk external content (the upcoming
+"day-one knowledge" connector ingest) cannot burn costs, be steered by
+injected text, or misfile notes:
+
+- **Retry cap.** Failed classifications (LLM error, unparseable answer,
+  answer with neither a topic nor a proposed name) increment
+  `organizer_attempts`; after 3 failures the note is parked as
+  `organizer_state='manual'` with an audit event instead of retrying
+  every hour forever. Success resets the counter. Empty-target
+  suggestions (which fed an infinite delete-and-requeue loop) are no
+  longer created at all.
+- **Batch classification.** Up to 10 notes per LLM call — a full 30-note
+  run costs 3 calls instead of 30. Notes missing from a batch answer
+  count as failed attempts (fail-closed, never "file under misc").
+- **Injection hardening.** The classifier receives note *content*
+  (frontmatter stripped) wrapped in `<note-content>` tags with an
+  explicit "data, not instructions" rule — imported emails/web pages
+  cannot steer move/new-topic decisions. Confidence is clamped to [0, 1]
+  and response fields are type-validated.
+- **One `slugify()`.** Topic paths were computed with two different
+  algorithms ("Ernährung" → `ern-hrung` vs `ernährung`), so auto-accepted
+  umlaut topics moved notes under parents that don't exist. A single
+  `slugify()` (German transliteration: ä→ae, ö→oe, ü→ue, ß→ss) now serves
+  path generation, topic rename, the inbox, and auto-accept — which also
+  switched to find-or-create, so it can no longer create duplicate `-2`
+  topics for existing names.
+
 ## Week 24 (2026) — claims enforcement (P1)
 
 Makes the EU-residency and "secure by default" claims true and testable,
