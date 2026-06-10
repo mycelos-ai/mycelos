@@ -160,6 +160,8 @@ def create_proxy_app() -> FastAPI:
         "openai": "openai",
         "gemini": "gemini",
         "openrouter": "openrouter",
+        "mistral": "mistral",
+        "vertex_ai": "vertex_ai",
     }
 
     # Mutable state container — avoids closures over app.state before app is created
@@ -258,8 +260,37 @@ def create_proxy_app() -> FastAPI:
                     logger.warning("STT credential lookup failed for %s: %s", service_name, exc)
                     return None  # Caller will deny — SttError raised in _create_backend
 
-            _state["_stt_service"] = SttService(credential_lookup=_lookup)
+            _state["_stt_service"] = SttService(
+                credential_lookup=_lookup, eu_mode_check=_eu_mode_enabled
+            )
         return _state["_stt_service"]
+
+    def _eu_mode_enabled(user_id: str = "default") -> bool:
+        """Read the persisted EU-mode flag from the (read-only) DB.
+
+        The proxy is the LAST egress point — it enforces EU residency itself
+        instead of trusting the gateway's broker, so a future code path that
+        bypasses the broker still cannot send data to a non-EU provider.
+        The flag is the same row mycelos.llm.eu_mode writes (system memory
+        scope, JSON-encoded bool). Per-request read: a single indexed row,
+        and a toggle takes effect immediately without a proxy restart.
+        """
+        storage = _get_storage()
+        if storage is None:
+            return False
+        try:
+            row = storage.fetchone(
+                "SELECT value FROM memory_entries "
+                "WHERE user_id = ? AND scope = 'system' AND agent_id IS NULL "
+                "AND key = 'eu_mode'",
+                (user_id,),
+            )
+            if not row:
+                return False
+            return json.loads(row["value"]) is True
+        except Exception as exc:
+            logger.warning("EU-mode lookup failed (treating as off): %s", exc)
+            return False
 
     # ---------------------------------------------------------------------------
     # Lifespan — log proxy.started
@@ -650,19 +681,37 @@ def create_proxy_app() -> FastAPI:
 
         storage = _get_storage()
 
-        # Resolve API key from credential proxy — pass directly, never set in os.environ
-        api_key: str | None = None
+        # Resolve credentials from credential proxy — pass directly, never set
+        # in os.environ. Vertex AI is multi-field (service-account JSON,
+        # project, region); everything else is a single api_key.
         provider = req.model.split("/")[0] if "/" in req.model else ""
         credential_name = _PROVIDER_MAP.get(provider)
+        cred: dict | None = None
         if credential_name:
             credential_proxy = _get_credential_proxy()
             if credential_proxy:
                 try:
                     cred = credential_proxy.get_credential(credential_name, user_id=user_id)
-                    if cred and cred.get("api_key"):
-                        api_key = cred["api_key"]
                 except Exception as e:
                     logger.warning("Credential lookup failed for LLM provider %s: %s", credential_name, e)
+        api_key = (cred or {}).get("api_key")
+
+        # EU-residency gate at the last egress point (fail-closed). The
+        # gateway broker enforces this too — but the proxy is where bytes
+        # actually leave the machine, so it does not trust upstream checks.
+        if _eu_mode_enabled(user_id):
+            from mycelos.llm.eu_enforcement import is_eu_model, vertex_region_is_eu
+            denied = not is_eu_model(req.model)
+            if not denied and provider == "vertex_ai":
+                denied = not vertex_region_is_eu((cred or {}).get("vertex_location"))
+            if denied:
+                _write_audit(storage, "llm.blocked_eu_mode", user_id,
+                             {"model": req.model, "agent_id": agent_id})
+                return JSONResponse(
+                    {"error": f"EU mode is on: model '{req.model}' is not "
+                              "EU-resident (or Vertex region is outside the EU)"},
+                    status_code=403,
+                )
 
         if litellm is None:
             return JSONResponse({"error": "litellm not installed"}, status_code=500)
@@ -678,6 +727,10 @@ def create_proxy_app() -> FastAPI:
             kwargs["tools"] = req.tools
         if api_key:
             kwargs["api_key"] = api_key
+        if provider == "vertex_ai" and cred:
+            for field in ("vertex_credentials", "vertex_project", "vertex_location"):
+                if cred.get(field):
+                    kwargs[field] = cred[field]
 
         def _sanitize_llm_error(e: Exception) -> str:
             """Strip potential credentials from LLM error messages."""

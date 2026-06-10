@@ -200,6 +200,25 @@ silently corrupt or lose knowledge data. Fixed:
   permanent access to whoever found the bot handle first. The allowlist
   must now be populated at setup; an empty allowlist blocks everyone
 
+## Week 24 (2026) — EU enforcement at the proxy (last egress point)
+
+The SecurityProxy now enforces EU residency itself instead of trusting
+the gateway's broker — the proxy is where bytes actually leave the
+machine, so a future code path that bypasses the broker still cannot
+send data to a non-EU provider (defense in depth):
+
+- The proxy reads the persisted EU-mode flag from its read-only DB view
+  per request — a toggle takes effect immediately, no restart needed.
+- **STT**: with EU mode on, cloud transcription backends (OpenAI Whisper,
+  Google) are refused at the proxy; only local/openai_compatible pass.
+- **LLM**: `/llm/complete` denies non-EU providers with 403 and a
+  `llm.blocked_eu_mode` audit event; Vertex AI additionally requires a
+  `europe-*` region in the stored credential.
+- **EU provider credentials fixed**: the proxy's provider map now covers
+  `mistral` (api_key) and `vertex_ai` (service-account JSON + project +
+  region injected as litellm kwargs). Previously these authenticated via
+  env vars inside the proxy — bypassing the audited credential path the
+  EU story depends on.
 
 ## Week 18 (2026)
 
