@@ -46,6 +46,8 @@ class KnowledgeIndexer:
         reminder: bool = False,
         remind_via: str | None = None,
         source_file: str | None = None,
+        created_by: str | None = None,
+        source: str | None = None,
     ) -> int:
         """INSERT or UPDATE knowledge_notes row and sync FTS5 index.
 
@@ -60,10 +62,12 @@ class KnowledgeIndexer:
                 """UPDATE knowledge_notes
                    SET title=?, type=?, status=?, tags=?, priority=?, due=?,
                        content_hash=?, parent_path=?, reminder=?, remind_via=?,
-                       source_file=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                       source_file=?, created_by=?, source=?,
+                       updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
                    WHERE path=?""",
                 (title, type, status, tags, priority, due, content_hash,
-                 parent_path, reminder, remind_via, source_file, path),
+                 parent_path, reminder, remind_via, source_file,
+                 created_by, source, path),
             )
             # Sync FTS5
             self._storage.execute(
@@ -77,10 +81,10 @@ class KnowledgeIndexer:
             cursor = self._storage.execute(
                 """INSERT INTO knowledge_notes
                    (path, title, type, status, tags, priority, due, content_hash,
-                    parent_path, reminder, remind_via, source_file)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    parent_path, reminder, remind_via, source_file, created_by, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (path, title, type, status, tags, priority, due, content_hash,
-                 parent_path, reminder, remind_via, source_file),
+                 parent_path, reminder, remind_via, source_file, created_by, source),
             )
             note_id = cursor.lastrowid
             self._storage.execute(
@@ -90,7 +94,11 @@ class KnowledgeIndexer:
         return note_id
 
     def remove_note(self, path: str) -> None:
-        """Delete a note from index and FTS5."""
+        """Delete a note from the index, FTS5, vector table, and link graph.
+
+        Cleaning links and vectors here keeps the graph free of ghost edges
+        and the KNN result set free of deleted rows.
+        """
         existing = self._storage.fetchone(
             "SELECT id FROM knowledge_notes WHERE path = ?", (path,)
         )
@@ -99,6 +107,16 @@ class KnowledgeIndexer:
             self._storage.execute(
                 "DELETE FROM knowledge_fts WHERE rowid = ?", (note_id,)
             )
+            try:
+                self._storage.execute(
+                    "DELETE FROM knowledge_vec WHERE rowid = ?", (note_id,)
+                )
+            except Exception:
+                pass  # no vec table when embeddings are unavailable
+        self._storage.execute(
+            "DELETE FROM knowledge_links WHERE from_path = ? OR to_path = ?",
+            (path, path),
+        )
         self._storage.execute(
             "DELETE FROM knowledge_notes WHERE path = ?", (path,)
         )
@@ -299,20 +317,39 @@ class KnowledgeIndexer:
             (limit,),
         )
 
-    def add_link(self, from_path: str, to_path: str) -> None:
-        """Insert a link between two notes."""
+    def add_link(self, from_path: str, to_path: str, kind: str = "wikilink") -> None:
+        """Insert a typed link between two notes."""
         self._storage.execute(
-            "INSERT OR IGNORE INTO knowledge_links(from_path, to_path) VALUES (?, ?)",
-            (from_path, to_path),
+            "INSERT OR IGNORE INTO knowledge_links(from_path, to_path, kind) VALUES (?, ?, ?)",
+            (from_path, to_path, kind),
         )
 
-    def replace_links(self, from_path: str, to_paths: list[str]) -> None:
+    def replace_links(self, from_path: str, to_paths: list[str], kind: str = "wikilink") -> None:
         """Replace all outbound links for a note with a fresh set."""
         self._storage.execute(
             "DELETE FROM knowledge_links WHERE from_path = ?", (from_path,)
         )
         for to_path in to_paths:
-            self.add_link(from_path, to_path)
+            self.add_link(from_path, to_path, kind=kind)
+
+    def repoint_links(self, old_path: str, new_path: str) -> None:
+        """Rewrite every link endpoint from old_path to new_path.
+
+        Called on rename/merge so graph edges never dangle."""
+        self._storage.execute(
+            "UPDATE OR IGNORE knowledge_links SET to_path = ? WHERE to_path = ?",
+            (new_path, old_path),
+        )
+        self._storage.execute(
+            "UPDATE OR IGNORE knowledge_links SET from_path = ? WHERE from_path = ?",
+            (new_path, old_path),
+        )
+        # OR IGNORE can leave stale rows behind when the rewritten pair
+        # already exists — drop those leftovers.
+        self._storage.execute(
+            "DELETE FROM knowledge_links WHERE from_path = ? OR to_path = ?",
+            (old_path, old_path),
+        )
 
     def get_backlinks(self, path: str) -> list[str]:
         """Return all paths that link to the given path."""
@@ -331,7 +368,7 @@ class KnowledgeIndexer:
     def list_links(self) -> list[dict]:
         """Return all links for graph rendering."""
         return self._storage.fetchall(
-            "SELECT from_path, to_path FROM knowledge_links ORDER BY from_path, to_path"
+            "SELECT from_path, to_path, kind FROM knowledge_links ORDER BY from_path, to_path"
         )
 
 
