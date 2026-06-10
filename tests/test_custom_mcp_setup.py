@@ -227,7 +227,7 @@ def _make_patch_client(tmp_data_dir: Path, master_key: str) -> TestClient:
 
     os.environ["MYCELOS_MASTER_KEY"] = master_key
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     return TestClient(fastapi_app)
 
 
