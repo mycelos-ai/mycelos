@@ -151,8 +151,13 @@ class KnowledgeBase:
                 except Exception:
                     pass
 
+            # Pin the metric to cosine. sqlite-vec defaults to L2; the
+            # similarity math in find_relevant/find_duplicates assumes cosine
+            # distance (similarity = 1 - distance). Mixing the two silently
+            # miscalibrates every threshold.
             conn.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vec USING vec0(embedding float[{dim}])"
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vec "
+                f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
             )
             conn.commit()
 
@@ -521,7 +526,12 @@ class KnowledgeBase:
 
         file_path.write_text(render_note(note), encoding="utf-8")
 
-        # Re-index
+        # Re-index. Preserve columns that `update()` does not manage —
+        # parent_path, reminder, remind_via, source_file — by forwarding the
+        # existing row's values. Without this, index_note's UPDATE branch
+        # overwrites them with defaults, orphaning the note from its topic,
+        # clearing pending reminders, and destroying document provenance.
+        existing_meta = self._indexer.get_note_meta(path) or {}
         content_hash = hashlib.md5(note.content.encode()).hexdigest()
         self._indexer.index_note(
             path,
@@ -533,6 +543,10 @@ class KnowledgeBase:
             note.due,
             content_hash,
             note.content,
+            parent_path=existing_meta.get("parent_path"),
+            reminder=bool(existing_meta.get("reminder")),
+            remind_via=existing_meta.get("remind_via"),
+            source_file=existing_meta.get("source_file"),
         )
         # Re-compute embedding if content changed
         if content is not None and self._embedding_provider.dimension > 0:
@@ -978,6 +992,51 @@ class KnowledgeBase:
 
     # ─── Relevance ─────────────────────────────────────────────────────────────
 
+    def _find_relevant_by_vector(
+        self,
+        text: str,
+        top_k: int = 5,
+        threshold: float = 0.7,
+    ) -> list[dict]:
+        """Vector-only relevance search. Returns [] when no embedding provider
+        is available or the vector query fails — never falls back to keyword
+        search, so callers (e.g. duplicate detection) can rely on the
+        threshold actually being honored.
+        """
+        if self._embedding_provider.dimension == 0:
+            return []
+        try:
+            embedding = self._embedding_provider.compute(text)
+            if not embedding:
+                return []
+            from mycelos.knowledge.embeddings import serialize_embedding
+            emb_bytes = serialize_embedding(embedding)
+            rows = self._app.storage.fetchall(
+                """SELECT kn.path, kn.title, kn.type, kn.status, kn.priority,
+                          kn.due, kn.tags, kn.created_at, kn.updated_at,
+                          v.distance
+                   FROM knowledge_vec v
+                   JOIN knowledge_notes kn ON kn.id = v.rowid
+                   WHERE embedding MATCH ?
+                   AND k = ?
+                   ORDER BY v.distance""",
+                (emb_bytes, top_k),
+            )
+            # The vec table uses cosine distance, so similarity = 1 - distance.
+            results = []
+            for r in rows:
+                score = 1.0 - r.get("distance", 1.0)
+                # Priority boost: each priority level adds 0.05
+                score += r.get("priority", 0) * 0.05
+                if score >= threshold:
+                    result = dict(r)
+                    result["score"] = score
+                    results.append(result)
+            return sorted(results, key=lambda x: x["score"], reverse=True)
+        except Exception as e:
+            logger.debug("Vector search failed: %s", e)
+            return []
+
     def find_relevant(
         self,
         text: str,
@@ -987,40 +1046,13 @@ class KnowledgeBase:
         """Find notes relevant to the given text.
 
         Uses vector search (sqlite-vec) when an embedding provider is available,
-        falling back to FTS5 otherwise.
+        falling back to FTS5 when vectors yield nothing or are unavailable.
+        Relevance is non-destructive, so the keyword fallback is appropriate
+        here (unlike duplicate detection, which must not fall back).
         """
-        if self._embedding_provider.dimension > 0:
-            try:
-                embedding = self._embedding_provider.compute(text)
-                if embedding:
-                    from mycelos.knowledge.embeddings import serialize_embedding
-                    emb_bytes = serialize_embedding(embedding)
-                    rows = self._app.storage.fetchall(
-                        """SELECT kn.path, kn.title, kn.type, kn.status, kn.priority,
-                                  kn.due, kn.tags, kn.created_at, kn.updated_at,
-                                  v.distance
-                           FROM knowledge_vec v
-                           JOIN knowledge_notes kn ON kn.id = v.rowid
-                           WHERE embedding MATCH ?
-                           AND k > ?
-                           ORDER BY v.distance
-                           LIMIT ?""",
-                        (emb_bytes, top_k, top_k),
-                    )
-                    # Filter by threshold (distance < 1-threshold for cosine)
-                    # Apply priority boost
-                    results = []
-                    for r in rows:
-                        score = 1.0 - r.get("distance", 1.0)
-                        # Priority boost: each priority level adds 0.05
-                        score += r.get("priority", 0) * 0.05
-                        if score >= threshold:
-                            result = dict(r)
-                            result["score"] = score
-                            results.append(result)
-                    return sorted(results, key=lambda x: x["score"], reverse=True)
-            except Exception as e:
-                logger.debug("Vector search failed, falling back to FTS5: %s", e)
+        results = self._find_relevant_by_vector(text, top_k=top_k, threshold=threshold)
+        if results:
+            return results
         # Fallback to FTS5
         return self.search(text, limit=top_k)
 
@@ -1039,6 +1071,14 @@ class KnowledgeBase:
         if not note:
             return []
 
+        # Duplicate detection requires real semantic similarity. Without an
+        # embedding provider we must NOT fall back to keyword search — FTS
+        # ignores the similarity threshold, so mere keyword overlap ("invoice",
+        # "meeting") would be proposed as a merge and could destroy data.
+        # Fail closed: no embeddings → no duplicate claims.
+        if self._embedding_provider.dimension == 0:
+            return []
+
         # Read note content for embedding query
         file_path = self._safe_path(path)
         if not file_path.exists():
@@ -1048,7 +1088,7 @@ class KnowledgeBase:
         parsed = parse_frontmatter(md)
         query_text = f"{parsed.title} {parsed.content[:400]}"
 
-        candidates = self.find_relevant(query_text, top_k=top_k + 1, threshold=threshold)
+        candidates = self._find_relevant_by_vector(query_text, top_k=top_k + 1, threshold=threshold)
 
         # Filter out self and archived notes
         results = []

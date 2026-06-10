@@ -360,24 +360,13 @@ def verify_webhook_secret(request_secret: str | None) -> bool:
 def is_user_allowed(user_id: int) -> bool:
     """Check if a Telegram user is allowed to use the bot.
 
-    Fail-closed: empty allowlist means NO users are allowed (Constitution Rule 3).
-    Exception: on first message after setup, auto-add the first user (bootstrap).
+    Fail-closed: an empty allowlist means NO users are allowed
+    (Constitution Rule 3). The allowlist must be populated at setup time
+    (``mycelos connector setup telegram``). There is deliberately no
+    "auto-trust the first sender" bootstrap: whoever discovered the bot
+    handle first would otherwise gain permanent access.
     """
     if not _allowed_users:
-        # Bootstrap: auto-add the first user who messages the bot
-        if _app:
-            try:
-                import json as _json
-                _allowed_users.add(user_id)
-                _app.storage.execute(
-                    "UPDATE channels SET allowed_users = ? WHERE id = 'telegram'",
-                    (_json.dumps(list(_allowed_users)),),
-                )
-                logger.info("Telegram: auto-added first user %s to allowlist (bootstrap)", user_id)
-                _app.audit.log("telegram.user_bootstrapped", details={"user_id": user_id})
-                return True
-            except Exception as e:
-                logger.error("Failed to bootstrap Telegram user: %s", e)
         logger.warning("Telegram allowlist is empty — blocking user %s (fail-closed)", user_id)
         return False
     return user_id in _allowed_users

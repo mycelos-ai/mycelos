@@ -60,6 +60,9 @@ mycelos-sec-*/
 maicel-sec-*/
 /tmp[0-9a-z]*/
 
+# Local-only working dir (cloned reference repos, scratch dumps)
+/tmp/
+
 # Inspection (reference repos)
 insp/
 
