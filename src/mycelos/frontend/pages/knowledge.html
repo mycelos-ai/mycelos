@@ -539,6 +539,11 @@
                   class="ml-1 px-1 py-0.5 rounded text-[9px] bg-error/20 text-error font-bold"
                   x-text="overdueTasks.length"></span>
           </button>
+          <button @click="viewMode = 'graph'; deselectNote(); filteredNotes = notes; $dispatch('load-graph')"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  :class="viewMode === 'graph' ? 'bg-tertiary/15 text-tertiary' : 'text-on-surface-variant hover:text-tertiary'">
+            Graph
+          </button>
         </div>
 
         <!-- Content area -->
@@ -683,7 +688,7 @@
           </template>
 
           <!-- === ALL NOTES VIEW === -->
-          <template x-if="!loading && viewMode === 'all'">
+          <template x-if="!loading && (viewMode === 'all' || viewMode === 'graph')">
             <div>
               <template x-for="note in filteredNotes" :key="note.path">
                 <button @click="selectNote(note)"
@@ -835,6 +840,22 @@
                       <button @click="navigateToBreadcrumb(seg.path)"
                               class="hover:text-[var(--primary)] transition-colors truncate max-w-[120px]"
                               x-text="seg.label"></button>
+                    </span>
+                  </template>
+                </div>
+                <!-- Provenance: who created this note, from what -->
+                <div x-show="selectedNote.created_by"
+                     class="flex items-center gap-1 text-[10px] mb-0.5"
+                     style="color: var(--on-surface-variant)">
+                  <span class="material-symbols-outlined" style="font-size: 11px">fingerprint</span>
+                  <span class="opacity-60">Created by</span>
+                  <span x-text="selectedNote.created_by" class="font-medium"></span>
+                  <template x-if="selectedNote.source && selectedNote.source.kind">
+                    <span class="flex items-center gap-1">
+                      <span class="opacity-60">via</span>
+                      <span x-text="selectedNote.source.kind" class="font-medium"></span>
+                      <span x-show="selectedNote.source.filename" class="opacity-60 truncate max-w-[160px]"
+                            x-text="selectedNote.source.filename"></span>
                     </span>
                   </template>
                 </div>
@@ -1161,7 +1182,33 @@
       </section>
 
       <!-- Empty state: no note selected (desktop only) -->
-      <section x-show="!selectedNote && !creatingNew && !mobileView"
+      <!-- Knowledge graph pane (replaces the empty state in graph view) -->
+      <section x-show="!selectedNote && !creatingNew && viewMode === 'graph'"
+               x-data="knowledgeGraph()"
+               @load-graph.window="load()"
+               class="flex-1 flex flex-col relative overflow-hidden">
+        <div class="flex items-center gap-4 px-6 py-3 flex-shrink-0 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/60"
+             style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background: var(--primary)"></span> Topic</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background: var(--secondary)"></span> Task</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full" style="background: var(--tertiary)"></span> Document</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-on-surface-variant/50"></span> Note</span>
+          <span class="ml-auto" x-text="stats"></span>
+        </div>
+        <div class="flex-1 relative">
+          <canvas x-ref="graphCanvas" class="absolute inset-0 w-full h-full cursor-pointer"
+                  @click="onClick($event)" @mousemove="onMove($event)"></canvas>
+          <div x-show="hoverLabel" :style="hoverStyle"
+               class="absolute pointer-events-none px-2 py-1 rounded-lg text-xs bg-surface-container-high text-on-surface shadow-lg"
+               x-text="hoverLabel"></div>
+          <div x-show="!loading && nodes.length === 0"
+               class="absolute inset-0 flex items-center justify-center text-on-surface-variant/40 text-sm">
+            No notes yet — the graph grows as your knowledge does.
+          </div>
+        </div>
+      </section>
+
+      <section x-show="!selectedNote && !creatingNew && !mobileView && viewMode !== 'graph'"
                class="flex-1 hidden md:flex flex-col items-center justify-center text-center px-8">
         <div class="w-20 h-20 rounded-full bg-gradient-to-tr from-tertiary/20 to-primary/10 p-[1px] mb-6">
           <div class="w-full h-full rounded-full bg-surface-container-low flex items-center justify-center relative overflow-hidden">
@@ -1996,6 +2043,161 @@
             if (inList) inList.priority = level;
           } catch (e) {
             console.warn('Set priority failed:', e.message);
+          }
+        },
+      };
+    }
+
+    /**
+     * Interactive knowledge graph — force-directed layout on canvas.
+     * Nodes are notes (colored by type), edges are typed links
+     * (wikilink solid, parent dashed, related dotted). Clicking a node
+     * opens the note via the parent knowledgeApp scope (selectNote).
+     */
+    function knowledgeGraph() {
+      return {
+        nodes: [], edges: [], stats: '', loading: false,
+        hoverLabel: '', hoverStyle: '',
+        _anim: null, _ticks: 0,
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await MycelosAPI.get('/api/knowledge/graph');
+            const idx = {};
+            this.nodes = (data.nodes || []).map((n, i) => {
+              // Deterministic spread from the path hash so reloads look stable.
+              let h = 0;
+              for (const c of n.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+              idx[n.id] = i;
+              return { ...n, x: (h % 1000) / 1000, y: ((h >> 10) % 1000) / 1000, vx: 0, vy: 0 };
+            });
+            this.edges = (data.edges || [])
+              .filter(e => idx[e.source] !== undefined && idx[e.target] !== undefined)
+              .map(e => ({ s: idx[e.source], t: idx[e.target], kind: e.kind || 'wikilink' }));
+            this.stats = `${this.nodes.length} notes · ${this.edges.length} links`;
+            this._ticks = 0;
+            this._startSim();
+          } catch (e) {
+            console.warn('Graph load failed:', e.message);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        _canvasSize() {
+          const c = this.$refs.graphCanvas;
+          const r = c.parentElement.getBoundingClientRect();
+          const dpr = window.devicePixelRatio || 1;
+          c.width = r.width * dpr; c.height = r.height * dpr;
+          return { w: r.width, h: r.height, dpr };
+        },
+
+        _startSim() {
+          if (this._anim) cancelAnimationFrame(this._anim);
+          const step = () => {
+            this._tick();
+            this._draw();
+            this._ticks++;
+            if (this._ticks < 300) this._anim = requestAnimationFrame(step);
+          };
+          this._anim = requestAnimationFrame(step);
+        },
+
+        _tick() {
+          const N = this.nodes;
+          const repulsion = 0.0009, spring = 0.02, center = 0.005, damping = 0.85;
+          for (let i = 0; i < N.length; i++) {
+            const a = N[i];
+            for (let j = i + 1; j < N.length; j++) {
+              const b = N[j];
+              let dx = a.x - b.x, dy = a.y - b.y;
+              let d2 = dx * dx + dy * dy + 0.0001;
+              const f = repulsion / d2;
+              a.vx += dx * f; a.vy += dy * f;
+              b.vx -= dx * f; b.vy -= dy * f;
+            }
+            a.vx += (0.5 - a.x) * center;
+            a.vy += (0.5 - a.y) * center;
+          }
+          for (const e of this.edges) {
+            const a = N[e.s], b = N[e.t];
+            const dx = b.x - a.x, dy = b.y - a.y;
+            a.vx += dx * spring; a.vy += dy * spring;
+            b.vx -= dx * spring; b.vy -= dy * spring;
+          }
+          for (const n of N) {
+            n.vx *= damping; n.vy *= damping;
+            n.x = Math.min(0.97, Math.max(0.03, n.x + n.vx));
+            n.y = Math.min(0.97, Math.max(0.03, n.y + n.vy));
+          }
+        },
+
+        _color(type) {
+          const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+          if (type === 'topic') return css('--primary') || '#6ad6ff';
+          if (type === 'task') return css('--secondary') || '#b8c4ff';
+          if (type === 'document') return css('--tertiary') || '#e3b8ff';
+          return css('--on-surface-variant') || '#9aa0a6';
+        },
+
+        _radius(n) { return n.type === 'topic' ? 9 : 5 + Math.min(2, n.priority || 0); },
+
+        _draw() {
+          const c = this.$refs.graphCanvas;
+          if (!c) return;
+          const { w, h, dpr } = this._canvasSize();
+          const ctx = c.getContext('2d');
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          // Edges
+          for (const e of this.edges) {
+            const a = this.nodes[e.s], b = this.nodes[e.t];
+            ctx.beginPath();
+            ctx.setLineDash(e.kind === 'parent' ? [4, 4] : e.kind === 'related' ? [1, 3] : []);
+            ctx.strokeStyle = 'rgba(154, 160, 166, 0.25)';
+            ctx.lineWidth = 1;
+            ctx.moveTo(a.x * w, a.y * h);
+            ctx.lineTo(b.x * w, b.y * h);
+            ctx.stroke();
+          }
+          ctx.setLineDash([]);
+          // Nodes + labels for topics
+          for (const n of this.nodes) {
+            ctx.beginPath();
+            ctx.fillStyle = this._color(n.type);
+            ctx.arc(n.x * w, n.y * h, this._radius(n), 0, Math.PI * 2);
+            ctx.fill();
+            if (n.type === 'topic') {
+              ctx.fillStyle = 'rgba(230, 232, 235, 0.75)';
+              ctx.font = '11px Inter, sans-serif';
+              ctx.fillText(n.title, n.x * w + 12, n.y * h + 4);
+            }
+          }
+        },
+
+        _hit(ev) {
+          const c = this.$refs.graphCanvas;
+          const r = c.getBoundingClientRect();
+          const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+          for (const n of this.nodes) {
+            const dx = n.x * r.width - mx, dy = n.y * r.height - my;
+            if (dx * dx + dy * dy < Math.pow(this._radius(n) + 4, 2)) return n;
+          }
+          return null;
+        },
+
+        onClick(ev) {
+          const n = this._hit(ev);
+          if (n) this.selectNote({ path: n.id, title: n.title });
+        },
+
+        onMove(ev) {
+          const n = this._hit(ev);
+          this.hoverLabel = n ? n.title : '';
+          if (n) {
+            const r = this.$refs.graphCanvas.getBoundingClientRect();
+            this.hoverStyle = `left: ${ev.clientX - r.left + 14}px; top: ${ev.clientY - r.top - 10}px`;
           }
         },
       };

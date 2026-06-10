@@ -19,6 +19,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mycelos.knowledge")
 
 
+def _parse_source(raw: str | None) -> dict | None:
+    """Parse the provenance `source` JSON column; None when absent/invalid."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 def _now() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -191,6 +202,8 @@ class KnowledgeBase:
         topic: str | None = None,
         reminder: bool = False,
         auto_classify: bool = False,
+        created_by: str | None = None,
+        source: dict | None = None,
     ) -> str:
         """Create a new note. Returns the note path (without .md extension).
 
@@ -198,6 +211,10 @@ class KnowledgeBase:
             topic: Parent topic path. If set, note is linked to this topic.
             reminder: If True and due is set, triggers notifications.
             auto_classify: If True, calls LLM to classify topic/type/tags.
+            created_by: Provenance — agent id, 'user', 'organizer', 'import'.
+                Defaults to 'user'.
+            source: Provenance JSON — kind plus references (conversation_id,
+                connector, external_id, filename, url).
         """
         # Auto-classify via LLM if requested
         if auto_classify:
@@ -245,6 +262,7 @@ class KnowledgeBase:
                 topic_name = topic.rsplit("/", 1)[-1].replace("-", " ").title()
                 self.create_topic(topic_name)
 
+        created_by = created_by or "user"
         note = Note(
             title=title,
             content=content,
@@ -258,6 +276,8 @@ class KnowledgeBase:
             parent_path=topic or "",
             created_at=_now(),
             updated_at=_now(),
+            created_by=created_by,
+            source=source,
         )
         path = note.generate_path()
 
@@ -307,6 +327,8 @@ class KnowledgeBase:
             parent_path=topic,
             reminder=reminder,
             remind_via=remind_via_json,
+            created_by=created_by,
+            source=json.dumps(source) if source else None,
         )
 
         # Store links
@@ -328,10 +350,16 @@ class KnowledgeBase:
             except Exception as e:
                 logger.debug("Embedding failed for %s: %s", path, e)
 
-        # Audit
+        # Audit — record the creator so provenance is reconstructable from
+        # the audit trail too, not only from the note row.
         self._app.audit.log(
             "knowledge.note.created",
-            details={"path": path, "type": type, "tags": tags or []},
+            agent_id=created_by if created_by != "user" else None,
+            details={
+                "path": path, "type": type, "tags": tags or [],
+                "created_by": created_by,
+                "source_kind": (source or {}).get("kind"),
+            },
         )
 
         return path
@@ -345,6 +373,8 @@ class KnowledgeBase:
         title: str = "",
         summary: str = "",
         tags: list[str] | None = None,
+        created_by: str | None = None,
+        source: dict | None = None,
     ) -> str:
         """Store a document file and create a Knowledge Note for it. Returns the note path."""
         from pathlib import Path
@@ -383,6 +413,8 @@ class KnowledgeBase:
             content=content,
             type="document",
             tags=tags or [],
+            created_by=created_by,
+            source=source or {"kind": "document", "filename": filename},
         )
 
         # Set source_file on the note
@@ -456,6 +488,8 @@ class KnowledgeBase:
             "remind_at": remind_at,
             "remind_via": remind_via,
             "source_file": row.get("source_file") if row else None,
+            "created_by": (row.get("created_by") if row else None) or note.created_by or None,
+            "source": _parse_source(row.get("source")) if row else note.source,
         }
 
     # ─── Search ────────────────────────────────────────────────────────────────
@@ -527,10 +561,10 @@ class KnowledgeBase:
         file_path.write_text(render_note(note), encoding="utf-8")
 
         # Re-index. Preserve columns that `update()` does not manage —
-        # parent_path, reminder, remind_via, source_file — by forwarding the
-        # existing row's values. Without this, index_note's UPDATE branch
-        # overwrites them with defaults, orphaning the note from its topic,
-        # clearing pending reminders, and destroying document provenance.
+        # parent_path, reminder, remind_via, source_file, provenance — by
+        # forwarding the existing row's values. Without this, index_note's
+        # UPDATE branch overwrites them with defaults, orphaning the note from
+        # its topic, clearing pending reminders, and destroying provenance.
         existing_meta = self._indexer.get_note_meta(path) or {}
         content_hash = hashlib.md5(note.content.encode()).hexdigest()
         self._indexer.index_note(
@@ -547,6 +581,8 @@ class KnowledgeBase:
             reminder=bool(existing_meta.get("reminder")),
             remind_via=existing_meta.get("remind_via"),
             source_file=existing_meta.get("source_file"),
+            created_by=existing_meta.get("created_by"),
+            source=existing_meta.get("source"),
         )
         # Re-compute embedding if content changed
         if content is not None and self._embedding_provider.dimension > 0:
@@ -693,6 +729,20 @@ class KnowledgeBase:
             (new_path, _now(), path),
         )
 
+        # Keep the graph consistent: re-point link endpoints to the new path
+        # and sync the FTS row so search finds the new title (the raw UPDATE
+        # above bypasses index_note's FTS sync).
+        self._indexer.repoint_links(path, new_path)
+        note_id = self._indexer.get_note_id(new_path)
+        if note_id:
+            self._app.storage.execute(
+                "DELETE FROM knowledge_fts WHERE rowid = ?", (note_id,)
+            )
+            self._app.storage.execute(
+                "INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES (?, ?, '', '')",
+                (note_id, new_name),
+            )
+
         self._app.audit.log(
             "knowledge.topic.renamed",
             details={"old_path": path, "new_path": new_path, "new_name": new_name},
@@ -708,7 +758,9 @@ class KnowledgeBase:
         for child in children:
             self.move_to_topic(child["path"], target)
 
-        # Overwrite source .md with a redirect
+        # Overwrite source .md with a redirect (kept on disk for humans
+        # browsing the folder), but remove the DB row — a merged-away topic
+        # must disappear from list_topics, search, and the graph.
         source_meta = self._indexer.get_note_meta(source)
         old_title = source_meta["title"] if source_meta else source
         source_file = self._safe_path(source)
@@ -717,6 +769,11 @@ class KnowledgeBase:
             f"# {old_title}\n\n> Moved to [[{target}]]\n",
             encoding="utf-8",
         )
+
+        # Re-point inbound graph edges at the target before dropping the row
+        # (remove_note would delete them outright, losing the relationship).
+        self._indexer.repoint_links(source, target)
+        self._indexer.remove_note(source)
 
         self._app.audit.log(
             "knowledge.topic.merged",
@@ -959,8 +1016,16 @@ class KnowledgeBase:
         return {"notes": len(notes), "links": edge_count}
 
     def get_graph_data(self) -> dict:
-        """Return note graph data suitable for web visualization."""
-        notes = self.list_notes(limit=5000)
+        """Return note graph data suitable for web visualization.
+
+        Archived notes are excluded; edges carry a ``kind``
+        (wikilink | parent | related | merged_from). Topic membership
+        (parent_path) is synthesized into ``parent`` edges so the graph
+        shows the hierarchy without a separate query.
+        """
+        notes = [n for n in self.list_notes(limit=5000)
+                 if n.get("status") != "archived"]
+        visible = {n["path"] for n in notes}
         links = self._indexer.list_links()
         nodes = [
             {
@@ -973,7 +1038,17 @@ class KnowledgeBase:
             }
             for n in notes
         ]
-        edges = [{"source": l["from_path"], "target": l["to_path"]} for l in links]
+        edges = [
+            {"source": l["from_path"], "target": l["to_path"],
+             "kind": l.get("kind") or "wikilink"}
+            for l in links
+            if l["from_path"] in visible and l["to_path"] in visible
+        ]
+        # Topic membership as typed edges.
+        for n in notes:
+            parent = n.get("parent_path")
+            if parent and parent in visible:
+                edges.append({"source": n["path"], "target": parent, "kind": "parent"})
         return {
             "nodes": nodes,
             "edges": edges,

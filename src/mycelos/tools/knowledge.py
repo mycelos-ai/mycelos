@@ -192,6 +192,12 @@ def execute_note_write(args: dict, context: dict) -> Any:
             from datetime import date as _date
             due = _date.today().isoformat()
 
+    # Provenance: which agent created this note, from which conversation.
+    creator = context.get("agent_id") or "mycelos"
+    origin: dict = {"kind": "chat"}
+    if context.get("session_id"):
+        origin["conversation_id"] = context["session_id"]
+
     path = kb.write(
         title=title,
         content=content,
@@ -202,6 +208,8 @@ def execute_note_write(args: dict, context: dict) -> Any:
         priority=args.get("priority", 0),
         topic=args.get("topic"),
         reminder=reminder,
+        created_by=creator,
+        source=origin,
     )
 
     result = {"path": path, "status": "created"}

@@ -90,6 +90,8 @@ def run_preserve_import(
             content=body,
             tags=tags,
             topic=topic_path,
+            created_by="import",
+            source={"kind": "import", "filename": parts[-1]},
         )
 
         # Preserve mode trusts the source layout — mark as organized.
@@ -129,7 +131,9 @@ def run_suggest_import(
         else:
             body = text
             title = f.relpath.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        path = knowledge.write(title=title, content=body, topic=bucket)
+        path = knowledge.write(title=title, content=body, topic=bucket,
+                               created_by="import",
+                               source={"kind": "import", "filename": f.relpath})
         created.append(path)
 
     return {
