@@ -102,6 +102,13 @@ class SQLiteStorage:
             # Reminder dispatch retry bookkeeping — see ReminderService.
             ("knowledge_notes", "dispatch_attempts", "INTEGER NOT NULL DEFAULT 0"),
             ("knowledge_notes", "last_dispatch_error", "TEXT"),
+            # Provenance: who created the note (agent id / 'user' / 'organizer'
+            # / 'import') and from what (JSON: kind, conversation_id,
+            # connector, external_id, filename, url).
+            ("knowledge_notes", "created_by", "TEXT"),
+            ("knowledge_notes", "source", "TEXT"),
+            # Typed graph edges: wikilink | parent | related | merged_from.
+            ("knowledge_links", "kind", "TEXT"),
         ]
         for table, column, col_type in _MIGRATIONS:
             try:

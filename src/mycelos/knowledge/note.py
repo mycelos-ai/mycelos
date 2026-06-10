@@ -24,6 +24,11 @@ class Note:
     created_at: str = ""
     updated_at: str = ""
     path: str = ""
+    # Provenance: who created the note and from what (kind, conversation_id,
+    # connector, external_id, ...). Kept in frontmatter so files stay
+    # self-describing; the DB columns are the queryable copy.
+    created_by: str = ""
+    source: dict | None = None
 
     _TYPE_FOLDERS: dict[str, str] = field(default_factory=lambda: {
         "note": "notes",
@@ -72,6 +77,10 @@ def render_note(note: Note) -> str:
         frontmatter["updated_at"] = note.updated_at
     if note.path:
         frontmatter["path"] = note.path
+    if note.created_by:
+        frontmatter["created_by"] = note.created_by
+    if note.source:
+        frontmatter["source"] = note.source
 
     yaml_str = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True, sort_keys=False)
     return f"---\n{yaml_str}---\n\n{note.content}"
@@ -109,4 +118,6 @@ def parse_frontmatter(markdown: str) -> Note:
         created_at=data.get("created_at", ""),
         updated_at=data.get("updated_at", ""),
         path=data.get("path", ""),
+        created_by=data.get("created_by", ""),
+        source=data.get("source") if isinstance(data.get("source"), dict) else None,
     )

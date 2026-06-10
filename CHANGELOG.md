@@ -51,6 +51,32 @@ deployment on localhost.
 
 ## Week 24 (2026)
 
+### Knowledge provenance + interactive graph
+
+Every note now answers "who created me, from what":
+
+- **Provenance columns.** `knowledge_notes` gains `created_by` (agent id /
+  `user` / `organizer` / `import`) and `source` (JSON: kind plus
+  conversation, connector, filename references). Threaded through every
+  write path: the `note_write` tool records the creating agent and
+  conversation, Quick Capture records `quick_capture`, the import
+  pipeline records `import` + filename, document ingest records the
+  upload. Provenance survives edits, lands in the note frontmatter
+  (files stay self-describing), and the `knowledge.note.created` audit
+  event carries the creating agent.
+- **Note detail shows provenance** — "Created by mycelos via chat" under
+  the breadcrumb, with the source filename for documents.
+- **Typed graph edges with referential integrity.** `knowledge_links`
+  gains a `kind` (wikilink | parent | related | merged_from). Renaming a
+  topic re-points all link endpoints and re-syncs the FTS row; merging
+  topics redirects inbound links to the target and removes the merged-away
+  topic from listings/search; deleting a note cleans its links and vector
+  row, so the graph never renders dangling edges or ghost nodes.
+- **Interactive knowledge graph** in the web UI: a new Graph view renders
+  the whole knowledge base as a force-directed canvas — topics, tasks,
+  documents, and notes colored by type, wikilinks solid, topic membership
+  dashed. Clicking a node opens the note.
+
 ### Knowledge-layer data-integrity fixes (P0)
 
 A claims-vs-implementation audit surfaced several paths that could

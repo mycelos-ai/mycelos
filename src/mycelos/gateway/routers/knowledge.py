@@ -72,6 +72,8 @@ async def knowledge_create_note(request: Request) -> Any:
         due=due,
         reminder=reminder,
         topic=parent,
+        created_by="user",
+        source={"kind": "quick_capture"},
     )
 
     try:

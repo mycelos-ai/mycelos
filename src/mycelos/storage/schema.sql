@@ -402,7 +402,9 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     content_hash TEXT,
     organizer_state TEXT NOT NULL DEFAULT 'pending',
     organizer_seen_at TEXT,
-    source_file TEXT                                  -- relative path to original document (e.g. documents/report.pdf)
+    source_file TEXT,                                 -- relative path to original document (e.g. documents/report.pdf)
+    created_by  TEXT,                                 -- provenance: agent id / 'user' / 'organizer' / 'import'
+    source      TEXT                                  -- provenance JSON: kind, conversation_id, connector, external_id, ...
 );
 
 CREATE INDEX IF NOT EXISTS idx_kn_type ON knowledge_notes(type, status);
@@ -414,6 +416,7 @@ CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_notes(parent_path) WHERE p
 CREATE TABLE IF NOT EXISTS knowledge_links (
     from_path   TEXT NOT NULL,
     to_path     TEXT NOT NULL,
+    kind        TEXT,                                 -- wikilink | parent | related | merged_from
     PRIMARY KEY (from_path, to_path)
 );
 
