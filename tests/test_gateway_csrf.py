@@ -26,7 +26,7 @@ def client() -> TestClient:
         from mycelos.gateway.server import create_app
         app = App(data_dir)
         app.initialize()
-        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         yield TestClient(fastapi_app)
 
 
@@ -135,7 +135,7 @@ def test_allowed_origins_env_opens_specific_origin(
     from mycelos.gateway.server import create_app
     app = App(tmp_path)
     app.initialize()
-    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     # Whitelisted origin — passes.
@@ -206,7 +206,7 @@ def test_lan_origin_passes_when_bound_to_0_0_0_0(monkeypatch, tmp_path):
     from mycelos.gateway.server import create_app
     app = App(tmp_path)
     app.initialize()
-    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0", port=9100)
+    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0", port=9100, allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     # The host's own hostname must be in the allowlist now.

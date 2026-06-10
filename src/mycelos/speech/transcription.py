@@ -165,12 +165,25 @@ class OpenAICompatibleTranscriber(BaseTranscriber):
         )
 
 
+# STT backends that keep audio inside EU-resident / on-device infrastructure.
+# Cloud backends (OpenAI Whisper, Google) are not residency-guaranteed.
+_EU_RESIDENT_STT_BACKENDS = {"local", "openai_compatible"}
+
+
+def stt_backend_allowed_in_eu(provider: str) -> bool:
+    """True if an STT backend may be used while EU mode is on."""
+    return (provider or "").strip().lower() in _EU_RESIDENT_STT_BACKENDS
+
+
 class SttService:
     """Factory + router for multiple STT providers."""
 
-    def __init__(self, credential_lookup):
+    def __init__(self, credential_lookup, eu_mode_check=None):
         self._credential_lookup = credential_lookup
         self._default_provider = os.environ.get("MYCELOS_STT_PROVIDER", "openai").strip().lower()
+        # Optional callable returning True when EU mode is on. When True, only
+        # EU-resident STT backends are permitted.
+        self._eu_mode_check = eu_mode_check
 
     @property
     def default_provider(self) -> str:
@@ -185,6 +198,14 @@ class SttService:
         return backend.transcribe(request)
 
     def _create_backend(self, provider: str, user_id: str = "default") -> BaseTranscriber:
+        # EU-mode enforcement: refuse cloud STT backends fail-closed.
+        if self._eu_mode_check is not None and self._eu_mode_check():
+            if not stt_backend_allowed_in_eu(provider):
+                raise SttError(
+                    f"STT provider '{provider}' is not EU-resident; EU mode is on. "
+                    "Use a local/openai_compatible STT backend."
+                )
+
         if provider == "openai":
             cred = self._credential_lookup("openai", user_id=user_id)
             api_key = (cred or {}).get("api_key")

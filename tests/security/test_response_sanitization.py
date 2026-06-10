@@ -94,11 +94,54 @@ def test_redact_slack_token(sanitizer: ResponseSanitizer) -> None:
     assert "[REDACTED]" in result
 
 
+def test_redact_google_access_token(sanitizer: ResponseSanitizer) -> None:
+    """Google OAuth access tokens (ya29.*) used by Vertex AI / ADC are redacted.
+
+    Regression for P1-7: the EU pitch rests on Vertex AI, whose access tokens
+    are ya29.* — previously uncovered (only the 1// refresh form was).
+    """
+    text = "token: ya29.a0AfH6SMBxFAKE-token_value_1234567890abcdefGHIJKLmnop"
+    result = sanitizer.sanitize_text(text)
+    assert "ya29." not in result
+    assert "[REDACTED]" in result
+
+
+def test_redact_pem_private_key_block(sanitizer: ResponseSanitizer) -> None:
+    """Service-account PEM private keys (Vertex AI) are redacted as a block."""
+    text = (
+        "creds:\n-----BEGIN PRIVATE KEY-----\n"
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQFAKE\n"
+        "fakeprivatekeymaterialfakeprivatekeymaterialfakeprivate\n"
+        "-----END PRIVATE KEY-----\nrest"
+    )
+    result = sanitizer.sanitize_text(text)
+    assert "BEGIN PRIVATE KEY" not in result
+    assert "fakeprivatekeymaterial" not in result
+    assert "[REDACTED" in result
+
+
+def test_redact_mistral_api_key(sanitizer: ResponseSanitizer) -> None:
+    """Mistral API keys (EU provider) are redacted even without a key= prefix.
+
+    Mistral keys are 32 alphanumeric chars with no distinctive prefix; a key
+    echoed in a bare error string previously matched no pattern.
+    """
+    text = "Mistral auth failed for key aZ9bX2cV4dF6gH8jK0lM1nP3qR5sT7uW"
+    result = sanitizer.sanitize_text(text)
+    assert "aZ9bX2cV4dF6gH8jK0lM1nP3qR5sT7uW" not in result
+    assert "[REDACTED]" in result
+
+
 def test_safe_text_unchanged(sanitizer: ResponseSanitizer) -> None:
     """Normal text without credentials passes through unchanged."""
     text = "The email summary contains 12 messages from 5 senders."
     result = sanitizer.sanitize_text(text)
     assert result == text
+
+    # Ordinary 32-char-ish words / hashes must not be eaten by the Mistral
+    # catch — guard against over-redaction.
+    benign = "The commit hash is abc123 and the file has 32 lines of code."
+    assert sanitizer.sanitize_text(benign) == benign
 
 
 def test_multiple_credentials_in_one_text(sanitizer: ResponseSanitizer) -> None:

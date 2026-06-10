@@ -133,6 +133,7 @@ class LiteLLMBroker:
         proxy_client: Any | None = None,
         fallback_models: list[str] | None = None,
         recorder: "CassetteRecorder | None" = None,
+        eu_mode_check: Any | None = None,
     ):
         self.default_model = default_model
         self.fallback_models = fallback_models or []
@@ -143,6 +144,9 @@ class LiteLLMBroker:
         self._proxy_client = proxy_client
         self._current_purpose: str = "chat"  # Set by callers for tracking
         self._recorder = recorder
+        # Callable returning True when EU mode is on. When set and True, every
+        # completion is restricted to EU-resident providers (fail-closed).
+        self._eu_mode_check = eu_mode_check
 
     def _ensure_prefix(self, model: str) -> str:
         """Ensure model ID has provider prefix (e.g. 'anthropic/claude-...')."""
@@ -174,6 +178,21 @@ class LiteLLMBroker:
             self._ensure_prefix(m) for m in self.fallback_models
             if self._ensure_prefix(m) != chosen_model
         ]
+
+        # EU-mode enforcement: restrict the whole candidate chain (primary +
+        # fallbacks) to EU-resident providers. Fail-closed — if nothing
+        # remains, deny rather than silently send data to a US provider.
+        if self._eu_mode_check is not None and self._eu_mode_check():
+            from mycelos.llm.eu_enforcement import filter_eu_models, EUResidencyError
+            eu_models = filter_eu_models(models_to_try)
+            if not eu_models:
+                raise EUResidencyError(
+                    "EU mode is on but no EU-resident model is configured for "
+                    f"this request (candidates: {models_to_try}). Configure an "
+                    "EU provider (Mistral, Vertex AI europe-*, or Ollama)."
+                )
+            models_to_try = eu_models
+
         last_error: Exception | None = None
 
         for attempt_model in models_to_try:

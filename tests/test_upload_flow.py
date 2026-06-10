@@ -18,7 +18,7 @@ def client():
         from mycelos.app import App
         from mycelos.gateway.server import create_app
         App(Path(tmp)).initialize()
-        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         with TestClient(fastapi_app) as c:
             yield c, Path(tmp)
 

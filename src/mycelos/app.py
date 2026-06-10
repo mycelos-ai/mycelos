@@ -121,8 +121,21 @@ class App:
                 storage=self.storage,
                 proxy_client=self._proxy_client,
                 fallback_models=fallbacks,
+                eu_mode_check=self._eu_mode_enabled,
             )
         return self._llm
+
+    def _eu_mode_enabled(self) -> bool:
+        """Whether EU mode is on for the default user. Used by the broker to
+        restrict every completion to EU-resident providers."""
+        try:
+            from mycelos.llm.eu_mode import get_eu_mode
+            return get_eu_mode(self, "default")
+        except Exception:
+            # Fail-closed for residency would over-block when state is
+            # unreadable; EU mode is opt-in, so default to off here and rely
+            # on the explicit toggle. Errors are logged elsewhere.
+            return False
 
     @property
     def model_registry(self) -> ModelRegistry:

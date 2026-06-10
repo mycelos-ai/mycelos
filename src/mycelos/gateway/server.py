@@ -17,6 +17,17 @@ from mycelos.gateway.routes import setup_routes
 logger = logging.getLogger("mycelos.gateway")
 
 
+class InsecureBindError(RuntimeError):
+    """Raised when the gateway is asked to bind to a non-loopback interface
+    without authentication and without an explicit opt-in. Refusing to start
+    prevents the OpenClaw-style exposed-instance failure mode."""
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True if the bind host is loopback-only (safe to serve unauthenticated)."""
+    return host in ("127.0.0.1", "::1", "localhost", "")
+
+
 def _register_telegram_webhook(
     bot_token: str,
     webhook_url: str,
@@ -362,6 +373,7 @@ def create_app(
     host: str = "127.0.0.1",
     port: int = 9100,
     password: str | None = None,
+    allow_insecure_bind: bool = False,
 ) -> FastAPI:
     """Create and configure the FastAPI gateway application.
 
@@ -373,9 +385,22 @@ def create_app(
         port: Bind port. Used to build absolute origin URLs for the
             CSRF allowlist when bound to 0.0.0.0.
         password: If set, require Basic Auth with user "mycelos" and this password.
+        allow_insecure_bind: Explicitly permit binding to a non-loopback
+            interface without a password. Off by default — the gateway
+            refuses such a bind to avoid exposing an unauthenticated API.
     """
     if data_dir is None:
         data_dir = Path.home() / ".mycelos"
+
+    # Fail-closed: refuse to serve a mutating, unauthenticated API on a
+    # non-loopback interface. This is the OpenClaw exposed-instance failure
+    # mode; it must be opt-in, not opt-out.
+    if not _is_loopback_host(host) and not password and not allow_insecure_bind:
+        raise InsecureBindError(
+            f"Refusing to bind to {host!r} without authentication. Set a "
+            "password (MYCELOS_PASSWORD / --password) or pass "
+            "allow_insecure_bind=True to override (not recommended)."
+        )
 
     api = FastAPI(
         title="Mycelos Gateway",
@@ -447,6 +472,9 @@ def create_app(
         import base64
         import secrets
 
+        from fastapi.responses import JSONResponse
+        from starlette.middleware.base import BaseHTTPMiddleware
+
         class BasicAuthMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request, call_next):
                 # Health endpoint is always public (for Docker health checks)
@@ -470,12 +498,12 @@ def create_app(
         api.add_middleware(BasicAuthMiddleware)
         logger.info("Basic Auth enabled (user: mycelos)")
 
-    # Startup check: warn about unauthenticated public API
-    if host == "0.0.0.0" and not password:
+    # Reaching here on a non-loopback bind means the operator explicitly
+    # opted in (allow_insecure_bind) — make the risk loud.
+    if not _is_loopback_host(host) and not password:
         logger.warning(
-            "Gateway binding to 0.0.0.0 — API endpoints are accessible from "
-            "any network interface WITHOUT authentication. Consider adding "
-            "authentication before exposing to untrusted networks."
+            "Gateway bound to %s WITHOUT authentication via explicit opt-in. "
+            "API endpoints are reachable from any network interface.", host,
         )
 
     # Configure logging

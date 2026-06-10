@@ -48,8 +48,9 @@ DEFAULT_HOST = "127.0.0.1"
 )
 @click.option("--proxy-host", default="127.0.0.1", help="Proxy bind host (role=proxy only)")
 @click.option("--proxy-port", default=9110, type=int, help="Proxy bind port (role=proxy only)")
+@click.option("--allow-insecure-bind", is_flag=True, help="Permit a non-loopback bind without a password (NOT recommended — exposes an unauthenticated API).")
 @click.option("--dry-run", is_flag=True, help="Validate configuration and exit.")
-def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug: bool, show_status: bool, no_scheduler: bool, role: str, proxy_host: str, proxy_port: int, dry_run: bool) -> None:
+def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug: bool, show_status: bool, no_scheduler: bool, role: str, proxy_host: str, proxy_port: int, allow_insecure_bind: bool, dry_run: bool) -> None:
     """Start the Mycelos Gateway (HTTP API).
 
     The gateway exposes the chat, config, and health endpoints
@@ -149,7 +150,15 @@ def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug:
     import uvicorn
     from mycelos.gateway.server import create_app
 
-    app = create_app(data_dir, debug=debug, no_scheduler=no_scheduler, host=host, port=port, password=password)
+    from mycelos.gateway.server import InsecureBindError
+    try:
+        app = create_app(
+            data_dir, debug=debug, no_scheduler=no_scheduler, host=host,
+            port=port, password=password, allow_insecure_bind=allow_insecure_bind,
+        )
+    except InsecureBindError as e:
+        console.print(f"  [red]{e}[/red]")
+        raise SystemExit(1)
     log_level = "debug" if debug else "info"
     uvicorn.run(app, host=host, port=port, log_level=log_level)
 

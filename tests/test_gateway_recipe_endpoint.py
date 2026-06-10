@@ -23,7 +23,7 @@ def client() -> TestClient:
         from mycelos.gateway.server import create_app
         app = App(data_dir)
         app.initialize()
-        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         yield TestClient(fastapi_app)
 
 

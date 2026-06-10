@@ -33,7 +33,7 @@ def app_and_client(tmp_data_dir: Path) -> Iterator[tuple[object, TestClient]]:
 
     app = App(tmp_data_dir)
     app.initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     with TestClient(fastapi_app) as client:
         yield app, client
 

@@ -20,7 +20,7 @@ def _make_gateway(tmp_path, monkeypatch, **env) -> TestClient:
     app = App(tmp_path)
     app.initialize()
 
-    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_path, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     return TestClient(fastapi_app)
 
 
@@ -53,7 +53,7 @@ def test_external_proxy_url_without_token_raises(tmp_path, monkeypatch):
     app.initialize()
 
     with pytest.raises(RuntimeError, match="MYCELOS_PROXY_TOKEN"):
-        create_app(tmp_path, no_scheduler=True, host="0.0.0.0")
+        create_app(tmp_path, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
 
 
 def test_no_proxy_url_uses_local_fork(tmp_path, monkeypatch):
