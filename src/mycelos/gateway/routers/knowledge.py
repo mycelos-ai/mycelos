@@ -97,6 +97,41 @@ async def knowledge_create_note(request: Request) -> Any:
     }
 
 
+@router.post("/api/knowledge/ingest/{source}")
+async def knowledge_ingest(source: str, request: Request) -> dict[str, Any]:
+    """Day-one knowledge: pull recent content from a connected service
+    (e.g. gmail) into the knowledge base. Idempotent via external ids;
+    the organizer classifies the new notes afterwards."""
+    from mycelos.knowledge.connector_ingest import INGEST_SOURCES
+
+    ingest_fn = INGEST_SOURCES.get(source)
+    if ingest_fn is None:
+        return JSONResponse(
+            {"error": f"Unknown ingest source: {source}",
+             "available": sorted(INGEST_SOURCES)},
+            status_code=404,
+        )
+
+    mycelos = request.app.state.mycelos
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    kwargs: dict[str, Any] = {"user_id": resolve_user_id(request)}
+    if body.get("max_items"):
+        kwargs["max_items"] = int(body["max_items"])
+    if body.get("query"):
+        kwargs["query"] = str(body["query"])
+
+    try:
+        result = ingest_fn(mycelos, **kwargs)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if result.get("error"):
+        return JSONResponse(result, status_code=502)
+    return result
+
+
 @router.post("/api/knowledge/enhance")
 async def knowledge_enhance(request: Request) -> dict[str, Any]:
     """AI-enhance a note — expand, improve, or organize content using a cheap model."""

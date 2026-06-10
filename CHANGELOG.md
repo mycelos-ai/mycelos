@@ -50,6 +50,28 @@ deployment on localhost.
   was still reachable at `/out/` from the pre-rename era.
 
 
+## Week 24 (2026) — day-one knowledge (connector ingest)
+
+The onboarding moment: after connecting Gmail, recent mail flows into the
+knowledge base — Mycelos knows you from day one instead of starting with
+an empty Zettelkasten.
+
+- `POST /api/knowledge/ingest/gmail` pulls recent threads (default: last
+  30 days, promotions/social excluded, 25 max) through the MCP layer and
+  creates notes with full provenance: `created_by='import'`,
+  `source = {kind: connector, connector: gmail, external_id: <thread id>}`.
+- **Idempotent**: the external id is the dedup key — re-running an ingest
+  never duplicates notes, even when subjects change.
+- **Fail-closed**: a connector error writes nothing.
+- New notes enter the organizer queue (`organizer_state='pending'`) and
+  the hardened organizer (below) classifies them into topics in batches.
+- Every run emits a `knowledge.ingest.completed` audit event. More
+  sources (GitHub, Calendar) register in `INGEST_SOURCES`.
+
+Unlike the "reads you first" competitors, this runs entirely on the
+user's own infrastructure — OAuth tokens stay in the credential proxy,
+content never transits a vendor cloud.
+
 ## Week 24 (2026) — organizer robustness
 
 Hardens the knowledge organizer so bulk external content (the upcoming
