@@ -6,6 +6,24 @@ import re
 import yaml
 from dataclasses import dataclass, field
 
+# German umlauts/eszett transliterate so "Ernährung" → "ernaehrung", not
+# the unreadable "ern-hrung". Applied before the ASCII slug pass.
+_TRANSLITERATIONS = str.maketrans({
+    "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+    "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
+})
+
+
+def slugify(name: str) -> str:
+    """The ONE slug function for note/topic paths.
+
+    Every place that turns a human name into a path segment must use this —
+    two competing algorithms previously produced parent paths pointing at
+    topics that don't exist (umlaut names).
+    """
+    transliterated = (name or "").translate(_TRANSLITERATIONS).lower()
+    return re.sub(r"[^a-z0-9]+", "-", transliterated).strip("-")
+
 
 @dataclass
 class Note:
@@ -51,8 +69,7 @@ class Note:
             "topic": "topics",
         }
         folder = folders.get(self.type, "notes")
-        slug = re.sub(r"[^a-z0-9]+", "-", self.title.lower()).strip("-")
-        return f"{folder}/{slug}"
+        return f"{folder}/{slugify(self.title)}"
 
 
 def render_note(note: Note) -> str:

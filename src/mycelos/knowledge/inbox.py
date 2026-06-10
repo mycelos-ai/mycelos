@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from mycelos.knowledge.note import slugify
 from mycelos.storage.database import SQLiteStorage
 
 
@@ -100,7 +101,7 @@ class InboxService:
                 key = f"__new__{name}"
                 if key not in topic_groups:
                     topic_groups[key] = {
-                        "topic": f"topics/{name.lower().replace(' ', '-')}",
+                        "topic": f"topics/{slugify(name)}",
                         "topic_name": name,
                         "is_new": True,
                         "notes": [],
@@ -114,7 +115,7 @@ class InboxService:
                             "id": row["id"],
                             "note_path": member,
                             "kind": "move",
-                            "payload": {"target": f"topics/{name.lower().replace(' ', '-')}"},
+                            "payload": {"target": f"topics/{slugify(name)}"},
                             "confidence": row["confidence"],
                             "status": "pending",
                             "_synthetic": True,

@@ -50,6 +50,57 @@ deployment on localhost.
   was still reachable at `/out/` from the pre-rename era.
 
 
+## Week 24 (2026) — day-one knowledge (connector ingest)
+
+The onboarding moment: after connecting Gmail, recent mail flows into the
+knowledge base — Mycelos knows you from day one instead of starting with
+an empty Zettelkasten.
+
+- `POST /api/knowledge/ingest/gmail` pulls recent threads (default: last
+  30 days, promotions/social excluded, 25 max) through the MCP layer and
+  creates notes with full provenance: `created_by='import'`,
+  `source = {kind: connector, connector: gmail, external_id: <thread id>}`.
+- **Idempotent**: the external id is the dedup key — re-running an ingest
+  never duplicates notes, even when subjects change.
+- **Fail-closed**: a connector error writes nothing.
+- New notes enter the organizer queue (`organizer_state='pending'`) and
+  the hardened organizer (below) classifies them into topics in batches.
+- Every run emits a `knowledge.ingest.completed` audit event. More
+  sources (GitHub, Calendar) register in `INGEST_SOURCES`.
+
+Unlike the "reads you first" competitors, this runs entirely on the
+user's own infrastructure — OAuth tokens stay in the credential proxy,
+content never transits a vendor cloud.
+
+## Week 24 (2026) — organizer robustness
+
+Hardens the knowledge organizer so bulk external content (the upcoming
+"day-one knowledge" connector ingest) cannot burn costs, be steered by
+injected text, or misfile notes:
+
+- **Retry cap.** Failed classifications (LLM error, unparseable answer,
+  answer with neither a topic nor a proposed name) increment
+  `organizer_attempts`; after 3 failures the note is parked as
+  `organizer_state='manual'` with an audit event instead of retrying
+  every hour forever. Success resets the counter. Empty-target
+  suggestions (which fed an infinite delete-and-requeue loop) are no
+  longer created at all.
+- **Batch classification.** Up to 10 notes per LLM call — a full 30-note
+  run costs 3 calls instead of 30. Notes missing from a batch answer
+  count as failed attempts (fail-closed, never "file under misc").
+- **Injection hardening.** The classifier receives note *content*
+  (frontmatter stripped) wrapped in `<note-content>` tags with an
+  explicit "data, not instructions" rule — imported emails/web pages
+  cannot steer move/new-topic decisions. Confidence is clamped to [0, 1]
+  and response fields are type-validated.
+- **One `slugify()`.** Topic paths were computed with two different
+  algorithms ("Ernährung" → `ern-hrung` vs `ernährung`), so auto-accepted
+  umlaut topics moved notes under parents that don't exist. A single
+  `slugify()` (German transliteration: ä→ae, ö→oe, ü→ue, ß→ss) now serves
+  path generation, topic rename, the inbox, and auto-accept — which also
+  switched to find-or-create, so it can no longer create duplicate `-2`
+  topics for existing names.
+
 ## Week 24 (2026) — claims enforcement (P1)
 
 Makes the EU-residency and "secure by default" claims true and testable,

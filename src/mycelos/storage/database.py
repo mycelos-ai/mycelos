@@ -107,6 +107,8 @@ class SQLiteStorage:
             # connector, external_id, filename, url).
             ("knowledge_notes", "created_by", "TEXT"),
             ("knowledge_notes", "source", "TEXT"),
+            # Classification retry bookkeeping — see KnowledgeOrganizerHandler.
+            ("knowledge_notes", "organizer_attempts", "INTEGER NOT NULL DEFAULT 0"),
             # Typed graph edges: wikilink | parent | related | merged_from.
             ("knowledge_links", "kind", "TEXT"),
         ]

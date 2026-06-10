@@ -708,7 +708,8 @@ class KnowledgeBase:
 
         Returns the new topic path.
         """
-        new_slug = re.sub(r"[^a-z0-9]+", "-", new_name.lower()).strip("-")
+        from mycelos.knowledge.note import slugify
+        new_slug = slugify(new_name)
         # Keep parent prefix: topics/drinks/kaffee -> topics/drinks/<new_slug>
         parts = path.rsplit("/", 1)
         if len(parts) == 2:
