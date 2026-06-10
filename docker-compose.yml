@@ -31,7 +31,22 @@ services:
       # isolation story is about the CODE path, not the filesystem.
       - ${MYCELOS_DATA_DIR:-./data}:/data
     networks:
+      # mycelos-internal: gateway ↔ proxy only.
       - mycelos-internal
+      # mycelos-mcp: shared bridge so the proxy can reach MCP servers
+      # that run as separate containers on the same host. The gateway
+      # is *not* attached, preserving the Phase-1b isolation story.
+      # Other stacks attach with:
+      #   docker network connect mycelos-mcp <container>
+      # See README → "Local MCP servers on the same host".
+      - mycelos-mcp
+    # Reach non-containerized host services (e.g. an MCP server you
+    # run from npm directly on the host) via host.docker.internal.
+    # For container-to-container reach, prefer mycelos-mcp above —
+    # it avoids Docker's cross-bridge isolation, which silently drops
+    # traffic between separate bridge networks.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9110/healthz"]
@@ -72,4 +87,10 @@ services:
 
 networks:
   mycelos-internal:
+    driver: bridge
+  mycelos-mcp:
+    # Fixed name (no project prefix) so other stacks can attach with a
+    # stable reference: `docker network connect mycelos-mcp <container>`
+    # or by declaring it as `external: true` in their own compose.
+    name: mycelos-mcp
     driver: bridge

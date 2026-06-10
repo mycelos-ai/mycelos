@@ -136,6 +136,22 @@ class ConnectorRegistry:
         if self._notifier:
             self._notifier.notify_change(f"Connector {connector_id} description updated", "connector_update")
 
+    def update_name(self, connector_id: str, name: str) -> None:
+        """Update a connector's display name (the `name` column).
+
+        The `id` stays unchanged — it's the lookup key used everywhere
+        (audit logs, tool prefixes, agent memory). Only the human-
+        readable label changes.
+        """
+        self._storage.execute(
+            """UPDATE connectors SET name = ?,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               WHERE id = ?""",
+            (name, connector_id),
+        )
+        if self._notifier:
+            self._notifier.notify_change(f"Connector {connector_id} name updated", "connector_update")
+
     def remove(self, connector_id: str) -> None:
         """Remove a connector. CASCADE deletes its capabilities."""
         self._storage.execute(

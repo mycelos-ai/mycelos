@@ -214,3 +214,133 @@ def test_reconnect_unknown_connector_raises_clean_error(
 
     with pytest.raises(ValueError, match="Unknown connector"):
         app.mcp_manager.reconnect("not-a-real-thing")
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/connectors/{id} — edit in place
+# ---------------------------------------------------------------------------
+
+
+def _make_patch_client(tmp_data_dir: Path, master_key: str) -> TestClient:
+    from mycelos.app import App
+    from mycelos.gateway.server import create_app
+
+    os.environ["MYCELOS_MASTER_KEY"] = master_key
+    App(tmp_data_dir).initialize()
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    return TestClient(fastapi_app)
+
+
+def test_patch_updates_command(tmp_data_dir: Path) -> None:
+    """Editing the command rewrites the registry description and
+    triggers an MCP restart attempt."""
+    c = _make_patch_client(tmp_data_dir, "patch-cmd-test")
+
+    create = c.post("/api/connectors", json={
+        "name": "yt-summary",
+        "command": "npx -y mcp-remote http://yt-summary:8000/mcp/sse",
+    })
+    assert create.status_code == 200, create.text
+
+    edit = c.patch("/api/connectors/yt-summary", json={
+        "command": (
+            'npx -y mcp-remote http://yt-summary:8000/mcp/sse --allow-http '
+            '--header "Authorization:Bearer yts_new"'
+        ),
+    })
+    assert edit.status_code == 200, edit.text
+    body = edit.json()
+    assert body["status"] == "updated"
+    assert "command" in body["changed"]
+    assert body["restart_attempted"] is True
+
+    listed = c.get("/api/connectors").json()
+    row = next(r for r in listed if r["id"] == "yt-summary")
+    assert row["description"].startswith("MCP: npx -y mcp-remote")
+    assert "--allow-http" in row["description"]
+
+
+def test_patch_updates_display_name_only(tmp_data_dir: Path) -> None:
+    """Display-name edit is metadata-only — no MCP restart."""
+    c = _make_patch_client(tmp_data_dir, "patch-name-test")
+
+    c.post("/api/connectors", json={
+        "name": "myconn",
+        "command": "npx -y some-pkg",
+    })
+
+    edit = c.patch("/api/connectors/myconn", json={
+        "name": "My Pretty Connector",
+    })
+    assert edit.status_code == 200, edit.text
+    body = edit.json()
+    assert "name" in body["changed"]
+    assert body["restart_attempted"] is False
+
+    row = next(r for r in c.get("/api/connectors").json() if r["id"] == "myconn")
+    assert row["name"] == "My Pretty Connector"
+
+
+def test_patch_updates_env_vars_triggers_restart(tmp_data_dir: Path) -> None:
+    """Credential edit rewrites the stored blob and triggers a restart."""
+    c = _make_patch_client(tmp_data_dir, "patch-env-test")
+
+    c.post("/api/connectors", json={
+        "name": "ctx7",
+        "command": "npx -y @upstash/context7-mcp",
+        "env_vars": {"API_KEY": "old"},
+    })
+
+    edit = c.patch("/api/connectors/ctx7", json={
+        "env_vars": {"API_KEY": "rotated", "WORKSPACE": "ws-1"},
+    })
+    assert edit.status_code == 200, edit.text
+    body = edit.json()
+    assert "env_vars" in body["changed"]
+    assert body["restart_attempted"] is True
+
+    from mycelos.app import App
+    app = App(tmp_data_dir)
+    cred = app.credentials.get_credential("ctx7")
+    assert cred is not None
+    assert cred["env_var"] == "__multi__"
+    blob = json.loads(cred["api_key"])
+    assert blob == {"API_KEY": "rotated", "WORKSPACE": "ws-1"}
+
+
+def test_patch_rejects_command_edit_on_recipe_backed(tmp_data_dir: Path) -> None:
+    """Recipe-backed connectors get their command from the recipe;
+    editing it via PATCH would silently diverge from the recipe."""
+    c = _make_patch_client(tmp_data_dir, "patch-recipe-test")
+
+    # `brave-search` is a real recipe — see mcp_recipes.py.
+    c.post("/api/connectors", json={
+        "name": "brave-search",
+        "secret": "BSAabc123",
+    })
+
+    edit = c.patch("/api/connectors/brave-search", json={
+        "command": "npx -y something-else",
+    })
+    assert edit.status_code == 400, edit.text
+    assert "recipe-backed" in edit.json()["error"].lower()
+
+
+def test_patch_unknown_connector_returns_404(tmp_data_dir: Path) -> None:
+    c = _make_patch_client(tmp_data_dir, "patch-404-test")
+    resp = c.patch("/api/connectors/nope", json={"name": "x"})
+    assert resp.status_code == 404
+
+
+def test_patch_empty_body_is_a_noop(tmp_data_dir: Path) -> None:
+    """Nothing in the body → no changes, no restart, still 200."""
+    c = _make_patch_client(tmp_data_dir, "patch-noop-test")
+    c.post("/api/connectors", json={
+        "name": "noop", "command": "npx -y some-pkg",
+    })
+
+    resp = c.patch("/api/connectors/noop", json={})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["changed"] == []
+    assert body["restart_attempted"] is False

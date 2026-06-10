@@ -145,7 +145,40 @@ docker compose pull && docker compose up -d
 
 Your data stays untouched — only the container images are replaced.
 
-Mycelos automatically checks GitHub once per day for new releases. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+Mycelos automatically checks GitHub once per day for new updates. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
+
+On the rolling `:main` Docker image (default), the check compares the build-time commit SHA against the current `main` branch HEAD — so every fresh build CI pushes shows up as an update, matching what `docker compose pull` actually fetches. On pip installs (or images built without the `MYCELOS_BUILD_SHA` build-arg), the check falls back to comparing the local package version against the latest GitHub release tag — coarser, but doesn't require container-build metadata.
+
+### Local MCP servers on the same host
+
+If you run another MCP server as a separate Docker container on the same host (a self-hosted yt-summary, a Pinecone proxy, …), don't try to reach it through its public hostname. Docker's default bridge-isolation rules drop traffic between separate bridge networks, and NAT hairpinning back through your LAN's reverse proxy usually times out from inside the proxy container.
+
+The compose file ships with a `mycelos-mcp` bridge network for exactly this case. The proxy joins it; the gateway does not (preserving the Phase-1b isolation model). Attach the other container to the same network:
+
+```bash
+docker network connect mycelos-mcp <other-container>
+```
+
+Then point the MCP connector at the container by name and its internal port (not the host-published one):
+
+```
+http://<other-container>:<internal-port>/mcp/sse
+```
+
+To make the attachment survive `docker compose down` on the other stack, add the shared network to its compose file:
+
+```yaml
+services:
+  <other-container>:
+    networks:
+      - default
+      - mycelos-mcp
+networks:
+  mycelos-mcp:
+    external: true
+```
+
+For non-containerized host services (e.g. an MCP server you run from npm directly on the host) use `host.docker.internal` — the compose file maps it to `host-gateway` on the proxy service. Container-to-container links should always prefer the shared bridge though; it's more robust.
 
 ### With pip (single-process mode — development only)
 

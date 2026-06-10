@@ -9,6 +9,15 @@
 
 FROM python:3.13-slim
 
+# Git commit SHA the image was built from. CI passes the real value
+# via --build-arg; local builds default to "unknown". The update
+# checker compares this against the latest main-branch SHA on GitHub
+# so users on the rolling :main tag see new builds as updates
+# (release-tag comparison only fires on actual versioned releases,
+# which is too coarse for the rolling deployment model).
+ARG MYCELOS_BUILD_SHA=unknown
+ENV MYCELOS_BUILD_SHA=${MYCELOS_BUILD_SHA}
+
 # Install Node.js 24 via NodeSource (Debian Trixie's default is too old —
 # @n24q02m/better-email-mcp and its @modelcontextprotocol/mcp-core
 # dependency both require Node >= 24.15) + gosu (entrypoint user switch)
