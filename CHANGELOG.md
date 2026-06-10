@@ -49,6 +49,7 @@ deployment on localhost.
 - `cleanup(frontend)` — removed a stale Next.js "Maicel" export that
   was still reachable at `/out/` from the pre-rename era.
 
+
 ## Week 24 (2026) — claims enforcement (P1)
 
 Makes the EU-residency and "secure by default" claims true and testable,
@@ -86,6 +87,42 @@ following the same audit as the P0 data-integrity fixes.
 - ResponseSanitizer now redacts Google OAuth access tokens (`ya29.*`, used
   by Vertex AI), PEM private-key blocks (service accounts), and
   credential-keyword-prefixed high-entropy tokens (e.g. Mistral keys).
+
+
+### Knowledge-layer data-integrity fixes (P0)
+
+A claims-vs-implementation audit surfaced several paths that could
+silently corrupt or lose knowledge data. Fixed:
+
+- **`update()` no longer wipes note metadata.** Editing a note's
+  content, status, or tags previously reset `parent_path`, `reminder`,
+  `remind_via`, and `source_file` to their defaults, because the
+  re-index call did not forward the existing values. This detached
+  notes from their topic, cleared pending reminders (the scheduler
+  reads the DB), and destroyed the `source_file` provenance pointer to
+  the original document. Existing values are now preserved.
+- **Destructive merges are never auto-accepted.** The organizer's
+  stale-suggestion auto-accept (>24h) no longer applies `merge`
+  actions — only non-destructive moves/links/new-topics. Merges
+  archive (and eventually hard-delete) the secondary note and now
+  require explicit user confirmation, matching the mandatory-dry-run
+  principle.
+- **Vector similarity is correctly calibrated.** The vector table now
+  pins `distance_metric=cosine` (sqlite-vec defaulted to L2, so the
+  `similarity = 1 - distance` math was wrong) and the KNN query uses
+  the required `k = ?` constraint (the prior `k > ?` threw and was
+  swallowed, making vector search silently dead). Duplicate detection
+  no longer falls back to keyword search when embeddings are
+  unavailable — it fails closed and returns no candidates, so mere
+  keyword overlap can never trigger a merge.
+
+### Telegram access is fail-closed
+
+- **Removed the first-sender bootstrap.** An empty Telegram allowlist
+  previously auto-trusted the first user who messaged the bot, granting
+  permanent access to whoever found the bot handle first. The allowlist
+  must now be populated at setup; an empty allowlist blocks everyone
+
 
 ## Week 18 (2026)
 
