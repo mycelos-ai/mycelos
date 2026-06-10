@@ -426,12 +426,12 @@ class KnowledgeOrganizerHandler:
                         except Exception:
                             pass
                 elif kind == "merge":
-                    duplicate_path = payload.get("duplicate_path")
-                    if duplicate_path:
-                        self._execute_merge(
-                            kb, storage, row["note_path"], duplicate_path,
-                            payload.get("similarity", 0.0), user_id,
-                        )
+                    # Merge is destructive (archives + eventually hard-deletes
+                    # the secondary note). It is NEVER auto-accepted on
+                    # staleness — it requires explicit user confirmation,
+                    # matching the project's mandatory-dry-run principle. Leave
+                    # the suggestion pending and move on.
+                    continue
 
                 storage.execute(
                     "UPDATE organizer_suggestions SET status='accepted' WHERE id=?",

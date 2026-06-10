@@ -148,6 +148,31 @@ def test_setup_empty_allowlist_blocks_all():
     assert not is_user_allowed(999)
 
 
+def test_empty_allowlist_does_not_auto_trust_first_sender():
+    """Regression for P0-4: an empty allowlist must NOT auto-add the first
+    user who messages the bot. That bootstrap was fail-OPEN — whoever found
+    the bot handle first gained permanent access (Constitution Rule 3).
+    """
+    from mycelos.channels.telegram import (
+        setup_telegram,
+        is_user_allowed,
+        get_allowed_users,
+    )
+
+    mock_app = MagicMock()
+    mock_service = MagicMock()
+    setup_telegram("123456:BOOT-TEST", mock_service, allowed_users=[], app=mock_app)
+
+    # First contact must be rejected and must not mutate the allowlist.
+    assert not is_user_allowed(42)
+    assert get_allowed_users() == set()
+    # A second sender is likewise rejected — no first-mover trust.
+    assert not is_user_allowed(99)
+    assert get_allowed_users() == set()
+    # The bot must never have written an allowlist row from a message.
+    assert not mock_app.storage.execute.called
+
+
 def test_setup_with_webhook_secret():
     """setup_telegram with webhook_secret enables verification."""
     from mycelos.channels.telegram import setup_telegram, verify_webhook_secret

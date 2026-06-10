@@ -231,7 +231,12 @@ def test_lazy_linker_adds_link_suggestions(storage: SQLiteStorage) -> None:
     assert len(inbox.list_pending()["link"]) == 1
 
 
-def test_auto_accept_merge_after_24h(storage: SQLiteStorage, tmp_path: Path) -> None:
+def test_merge_is_never_auto_accepted(storage: SQLiteStorage, tmp_path: Path) -> None:
+    """Regression for P0-2: destructive merges must NOT be auto-accepted on
+    staleness. A false-positive duplicate plus a day of inattention must not
+    silently archive (and eventually hard-delete) real content. Merge requires
+    explicit user confirmation, matching the project's mandatory-dry-run rule.
+    """
     import freezegun
 
     _insert_note(storage, path="notes/old", title="Original",
@@ -241,7 +246,6 @@ def test_auto_accept_merge_after_24h(storage: SQLiteStorage, tmp_path: Path) -> 
                  type="note", status="active", organizer_state="ok",
                  created_at="2026-04-12T10:00:00Z")
 
-    # Create the secondary note file on disk
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir(parents=True)
     (notes_dir / "new.md").write_text(
@@ -249,7 +253,7 @@ def test_auto_accept_merge_after_24h(storage: SQLiteStorage, tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    # Insert a stale merge suggestion (>24h old); SQLite datetime() needs space separator, no Z
+    # Stale merge suggestion (>24h old).
     storage.execute(
         "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence, created_at, status) "
         "VALUES (?, 'merge', ?, 0.95, '2026-04-13 06:00:00', 'pending')",
@@ -257,7 +261,7 @@ def test_auto_accept_merge_after_24h(storage: SQLiteStorage, tmp_path: Path) -> 
     )
 
     kb = _FakeKBWithFiles(topics=[], files={})
-    kb._knowledge_dir = tmp_path  # Point to our temp dir with real files
+    kb._knowledge_dir = tmp_path
 
     broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
                           "related_note_paths": [], "new_topic_name": None})
@@ -267,20 +271,40 @@ def test_auto_accept_merge_after_24h(storage: SQLiteStorage, tmp_path: Path) -> 
         handler = KnowledgeOrganizerHandler(app)
         handler.run("default")
 
-    # Suggestion should be accepted
+    # The merge suggestion must remain pending (awaiting a human).
     row = storage.fetchone("SELECT status FROM organizer_suggestions WHERE kind='merge'")
+    assert row["status"] == "pending"
+    # Nothing was archived, nothing was mutated.
+    assert kb.archived == []
+    assert kb.updated == []
+
+
+def test_non_destructive_suggestions_still_auto_accept(storage: SQLiteStorage) -> None:
+    """The auto-accept of non-destructive 'move' suggestions must keep working
+    so the P0-2 fix narrows behavior to merge only, not all kinds."""
+    import freezegun
+
+    _insert_note(storage, path="notes/stray", title="Stray",
+                 type="note", status="active", organizer_state="suggested",
+                 created_at="2026-04-10T10:00:00Z")
+    storage.execute(
+        "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence, created_at, status) "
+        "VALUES (?, 'move', ?, 0.9, '2026-04-13 06:00:00', 'pending')",
+        ("notes/stray", json.dumps({"target": "topics/misc"})),
+    )
+
+    kb = _FakeKBWithFiles(topics=["topics/misc"])
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+
+    with freezegun.freeze_time("2026-04-14T12:00:00Z"):
+        handler = KnowledgeOrganizerHandler(app)
+        handler.run("default")
+
+    row = storage.fetchone("SELECT status FROM organizer_suggestions WHERE kind='move'")
     assert row["status"] == "accepted"
-
-    # Newer note should be archived
-    assert "notes/new" in kb.archived
-
-    # Primary note should have content appended
-    assert len(kb.updated) >= 1
-    # First update call should be the content append
-    first_update = kb.updated[0]
-    assert first_update[0] == "notes/old"  # path
-    assert "Duplicate content here" in first_update[1]  # content contains secondary text
-    assert first_update[3] is True  # append=True
+    assert ("notes/stray", "topics/misc") in kb.moved
 
 
 def test_sweep_duplicates_finds_pairs(storage: SQLiteStorage) -> None:

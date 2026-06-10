@@ -118,6 +118,63 @@ class TestKnowledgeBaseCRUD:
         result = kb.read(path)
         assert "Important content" in result["content"]
 
+    def test_update_preserves_parent_path(self, kb, app):
+        """Editing content/status must not detach a note from its topic.
+
+        Regression for P0-1: update() dropped parent_path because it never
+        forwarded the existing value to index_note's UPDATE branch.
+        """
+        kb.create_topic("Coffee")
+        path = kb.write("Espresso tuning", "notes on grind", type="note")
+        assert kb.move_to_topic(path, "topics/coffee")
+        before = app.storage.fetchone(
+            "SELECT parent_path FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert before["parent_path"] == "topics/coffee"
+
+        kb.update(path, status="done")
+
+        after = app.storage.fetchone(
+            "SELECT parent_path FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert after["parent_path"] == "topics/coffee"
+
+    def test_update_preserves_reminder(self, kb, app):
+        """Editing a note must not clear a pending reminder (the scheduler
+        reads the DB, so wiping it silently drops the reminder)."""
+        path = kb.write("Call dentist", "ring them", type="task")
+        kb.set_reminder(path, due="2026-07-01", remind_at="2026-07-01T09:00:00Z")
+        before = app.storage.fetchone(
+            "SELECT reminder, remind_at FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert before["reminder"] == 1
+        assert before["remind_at"] == "2026-07-01T09:00:00Z"
+
+        kb.update(path, tags=["health"])
+
+        after = app.storage.fetchone(
+            "SELECT reminder, remind_at FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert after["reminder"] == 1
+        assert after["remind_at"] == "2026-07-01T09:00:00Z"
+
+    def test_update_preserves_source_file(self, kb, app):
+        """Editing a document note must not destroy its source_file pointer
+        (the provenance link to the original document)."""
+        path = kb.store_document(b"%PDF-1.4 fake", "report.pdf",
+                                 title="Report", summary="A summary")
+        before = app.storage.fetchone(
+            "SELECT source_file FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert before["source_file"]
+
+        kb.update(path, content="extra OCR text", append=True)
+
+        after = app.storage.fetchone(
+            "SELECT source_file FROM knowledge_notes WHERE path=?", (path,)
+        )
+        assert after["source_file"] == before["source_file"]
+
     def test_update_append_content(self, kb):
         path = kb.write("My Note", "First line", type="note")
         kb.update(path, content="Second line", append=True)
@@ -246,6 +303,89 @@ class TestEmbeddings:
         conn.execute("CREATE VIRTUAL TABLE test_vec USING vec0(embedding float[3])")
         conn.commit()
         conn.close()
+
+
+class _StubEmbeddingProvider:
+    """Deterministic, normalized embeddings keyed by substring, for testing
+    the distance→similarity math without a real model."""
+    name = "stub"
+    dimension = 3
+
+    def __init__(self, vectors: dict[str, list[float]]):
+        self._vectors = vectors
+
+    def _vec(self, text: str) -> list[float]:
+        for key, v in self._vectors.items():
+            if key in text:
+                return v
+        return [0.0, 0.0, 1.0]
+
+    def compute(self, text: str) -> list[float]:
+        return self._vec(text)
+
+    def compute_batch(self, texts):
+        return [self._vec(t) for t in texts]
+
+
+def _kb_with_stub_embeddings(app, vectors):
+    """Build a KnowledgeBase whose embedding provider is the stub, with the
+    vec table sized to the stub dimension."""
+    from mycelos.knowledge.service import KnowledgeBase
+    kb = KnowledgeBase(app)
+    kb._embedding_provider = _StubEmbeddingProvider(vectors)
+    # Reset the vec table to the stub's dimension.
+    app.storage.execute("DELETE FROM knowledge_config WHERE key='embedding_dimension'")
+    try:
+        app.storage._get_connection().execute("DROP TABLE IF EXISTS knowledge_vec")
+    except Exception:
+        pass
+    kb._ensure_vec_table()
+    return kb
+
+
+class TestVectorSimilarityCalibration:
+    """Regression for P0-3: distance was treated as cosine while sqlite-vec
+    defaults to L2, so near-identical notes scored far apart and duplicate
+    detection was effectively dead."""
+
+    def test_orthogonal_notes_are_not_similar(self, app):
+        # Two orthogonal unit vectors → cosine similarity 0.
+        kb = _kb_with_stub_embeddings(app, {
+            "alpha topic": [1.0, 0.0, 0.0],
+            "beta topic": [0.0, 1.0, 0.0],
+        })
+        kb.write("Alpha", "alpha topic body", type="note")
+        kb.write("Beta", "beta topic body", type="note")
+        results = kb.find_relevant("alpha topic", threshold=0.7)
+        # Beta must not surface as relevant to Alpha at a 0.7 cosine threshold.
+        beta = [r for r in results if "beta" in r.get("path", "")]
+        assert beta == []
+
+    def test_near_identical_notes_are_detected_as_duplicates(self, app):
+        # Two nearly-parallel unit vectors → cosine ≈ 0.999.
+        kb = _kb_with_stub_embeddings(app, {
+            "shopping list one": [1.0, 0.0, 0.0],
+            "shopping list two": [0.9994, 0.0349, 0.0],  # ~2° apart
+        })
+        p1 = kb.write("List one", "shopping list one body", type="note")
+        kb.write("List two", "shopping list two body", type="note")
+        dups = kb.find_duplicates(p1, threshold=0.92)
+        assert any("list-two" in d.get("path", "") for d in dups)
+
+    def test_find_duplicates_returns_empty_without_embeddings(self, app):
+        """The worst-case data-loss path: with no embedding provider,
+        find_duplicates must NOT fall back to keyword search (which ignores
+        the threshold) — it must return []. Otherwise the organizer would
+        propose merges from mere keyword overlap."""
+        from mycelos.knowledge.service import KnowledgeBase
+        from mycelos.knowledge.embeddings import FallbackProvider
+        kb = KnowledgeBase(app)
+        kb._embedding_provider = FallbackProvider()
+        p1 = kb.write("Invoice March", "invoice total 100 eur", type="note")
+        kb.write("Invoice April", "invoice total 200 eur", type="note")
+        # Shared keyword "invoice" would match under FTS, but these are NOT
+        # duplicates.
+        assert kb.find_duplicates(p1, threshold=0.92) == []
 
 
 class TestContextEnrichment:

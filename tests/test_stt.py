@@ -280,7 +280,9 @@ class TestTelegramVoiceHandler:
             telegram._app = MagicMock()
             telegram._app.proxy_client = mock_proxy
             telegram._chat_service = mock_service
-            telegram._allowed_users = set()
+            # The sender must be on the allowlist — empty allowlists block
+            # everyone (fail-closed, no first-sender bootstrap anymore).
+            telegram._allowed_users = {123456}
 
             mock_message = MagicMock()
             mock_message.from_user.id = 123456
