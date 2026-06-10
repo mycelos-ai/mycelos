@@ -22,7 +22,7 @@ def client_with_scheduler() -> TestClient:
 
         from mycelos.gateway.server import create_app
 
-        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         yield TestClient(fastapi_app)
 
 
@@ -52,7 +52,7 @@ def test_create_app_no_scheduler_flag() -> None:
 
         from mycelos.gateway.server import create_app
 
-        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         assert fastapi_app.state.no_scheduler is True
         assert fastapi_app.state.scheduler_running is False
 

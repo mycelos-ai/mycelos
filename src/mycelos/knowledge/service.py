@@ -111,7 +111,13 @@ class KnowledgeBase:
         except Exception:
             pass
         proxy = getattr(self._app, 'proxy_client', None)
-        return get_embedding_provider(openai_key=openai_key, proxy_client=proxy)
+        eu_mode = False
+        try:
+            from mycelos.llm.eu_mode import get_eu_mode
+            eu_mode = get_eu_mode(self._app, "default")
+        except Exception:
+            pass
+        return get_embedding_provider(openai_key=openai_key, proxy_client=proxy, eu_mode=eu_mode)
 
     def _ensure_vec_table(self):
         """Create sqlite-vec virtual table if provider has embeddings.

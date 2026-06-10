@@ -24,7 +24,7 @@ def api_client():
         app_obj.initialize()
         web_init(app_obj, api_key="sk-ant-api03-FAKETESTKEYFORIMP")
 
-        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         client = TestClient(fastapi_app)
         app_obj_from_state = fastapi_app.state.mycelos
         yield client, app_obj_from_state

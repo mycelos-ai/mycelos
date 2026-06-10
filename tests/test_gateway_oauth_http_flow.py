@@ -44,7 +44,7 @@ def client_with_mock_proxy():
             user_id="default",
         )
         app._proxy_client = mock
-        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         fastapi_app.state.mycelos._proxy_client = mock
         yield TestClient(fastapi_app), mock, fastapi_app
 

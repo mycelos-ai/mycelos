@@ -49,6 +49,44 @@ deployment on localhost.
 - `cleanup(frontend)` — removed a stale Next.js "Maicel" export that
   was still reachable at `/out/` from the pre-rename era.
 
+## Week 24 (2026) — claims enforcement (P1)
+
+Makes the EU-residency and "secure by default" claims true and testable,
+following the same audit as the P0 data-integrity fixes.
+
+### EU mode is now enforced, not just a UI filter
+
+- **Server-side EU-mode state.** EU mode is persisted (system memory scope)
+  and every toggle emits an audit event, so it survives a browser change and
+  a GDPR-bound user can demonstrate when it was enabled.
+- **Broker enforcement (fail-closed).** With EU mode on, the LLM broker
+  restricts the entire candidate chain — primary *and* fallbacks — to
+  EU-resident providers. A rate-limited EU primary no longer fails over to a
+  US provider (previously the fallback deliberately preferred a different
+  provider, silently exfiltrating the full conversation). If no EU model is
+  configured, the request is denied rather than sent to the US.
+- **Egress gates.** Voice transcription refuses cloud STT backends (OpenAI
+  Whisper, Google) under EU mode, allowing only local/openai_compatible.
+  Knowledge embeddings never select the OpenAI provider under EU mode.
+  Vertex AI credentials must be pinned to a `europe-*` region — a non-EU
+  region is rejected at setup.
+
+### Secure by default on the network
+
+- **The gateway refuses to start unauthenticated on a non-loopback bind.**
+  Binding to `0.0.0.0` (or any non-loopback host) without a password now
+  raises `InsecureBindError` instead of merely logging a warning — this is
+  the OpenClaw exposed-instance failure mode, now opt-in
+  (`--allow-insecure-bind`) rather than opt-out. Also fixed a latent
+  `NameError` in the Basic-Auth middleware path (missing imports) that the
+  new test exposed.
+
+### Credential sanitizer covers EU-provider formats
+
+- ResponseSanitizer now redacts Google OAuth access tokens (`ya29.*`, used
+  by Vertex AI), PEM private-key blocks (service accounts), and
+  credential-keyword-prefixed high-entropy tokens (e.g. Mistral keys).
+
 ## Week 18 (2026)
 
 ### Session attachments — Multi-Part LLM content replaces marker pipeline

@@ -165,12 +165,15 @@ def register_builtin_connectors(app: App) -> None:
 
 
 def _validate_multi_field_credentials(
-    provider: ProviderConfig, credentials: dict[str, Any]
+    provider: ProviderConfig, credentials: dict[str, Any], eu_mode: bool = False
 ) -> dict[str, Any]:
     """Check that all required fields for a multi-field provider were supplied.
 
     Strips whitespace, raises SetupError naming the first missing field.
     Returns a clean dict that is safe to encrypt-and-store.
+
+    When ``eu_mode`` is on, a Vertex AI region must be in the EU (europe-*) —
+    otherwise the EU-badged provider would route prompts to a US region.
     """
     if not provider.credential_fields:
         return credentials
@@ -197,6 +200,15 @@ def _validate_multi_field_credentials(
                     "Service Account JSON is not valid JSON: "
                     f"{e.msg} at line {e.lineno}."
                 )
+    # EU-mode region pinning: a Vertex region must be EU-resident.
+    if eu_mode and provider.id == "vertex_ai":
+        from mycelos.llm.eu_enforcement import vertex_region_is_eu
+        region = cleaned.get("vertex_location")
+        if not vertex_region_is_eu(region):
+            raise SetupError(
+                f"EU mode is on: Vertex AI region '{region}' is not in the EU. "
+                "Choose a europe-* region (e.g. europe-west4)."
+            )
     return cleaned
 
 

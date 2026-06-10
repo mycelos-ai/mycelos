@@ -425,6 +425,27 @@ def list_eu_providers() -> list[str]:
     return [pid for pid, cfg in PROVIDERS.items() if cfg.eu_residency]
 
 
+def _guess_provider_for_eu(model: str) -> str:
+    """Guess the provider id from a bare (unprefixed) model name.
+
+    Used by EU enforcement to classify a model with no provider prefix.
+    Returns "" when the provider can't be determined — callers treat that
+    as non-EU (fail-closed).
+    """
+    lower = model.lower()
+    if "claude" in lower:
+        return "anthropic"
+    if "gpt" in lower or lower.startswith(("o1", "o3", "o4")):
+        return "openai"
+    if "mistral" in lower or "mixtral" in lower or "codestral" in lower or "pixtral" in lower:
+        return "mistral"
+    if "gemini" in lower:
+        # Bare Gemini name maps to AI Studio (non-EU). Vertex requires the
+        # explicit vertex_ai/ prefix to be treated as EU.
+        return "gemini"
+    return ""
+
+
 def is_legacy_model(model_id: str, provider: str) -> bool:
     """Return True if this model is from a previous generation.
 

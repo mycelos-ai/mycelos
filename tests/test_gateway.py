@@ -28,7 +28,7 @@ def client() -> TestClient:
         # credentials + models) is satisfied in tests.
         web_init(app, api_key="sk-ant-api03-FAKETESTKEYFORGATEWAYTESTS")
 
-        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         yield TestClient(fastapi_app)
 
 

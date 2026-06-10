@@ -69,9 +69,14 @@ class FallbackProvider(EmbeddingProvider):
 
 
 def get_embedding_provider(openai_key: str | None = None,
-                            proxy_client: Any = None) -> EmbeddingProvider:
-    """Get the best available embedding provider."""
-    if openai_key and proxy_client:
+                            proxy_client: Any = None,
+                            eu_mode: bool = False) -> EmbeddingProvider:
+    """Get the best available embedding provider.
+
+    When ``eu_mode`` is on, the OpenAI provider (which POSTs note text to
+    api.openai.com) is never selected — local embeddings or FTS5-only.
+    """
+    if openai_key and proxy_client and not eu_mode:
         return OpenAIEmbeddingProvider(proxy_client)
     try:
         provider = LocalEmbeddingProvider()

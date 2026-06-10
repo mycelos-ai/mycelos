@@ -18,7 +18,7 @@ def client() -> TestClient:
         from mycelos.app import App
         from mycelos.gateway.server import create_app
         App(Path(tmp)).initialize()
-        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0")
+        fastapi_app = create_app(Path(tmp), no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
         yield TestClient(fastapi_app)
 
 
@@ -40,7 +40,7 @@ def test_post_with_env_vars_writes_multi_sentinel(tmp_data_dir: Path) -> None:
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-direct-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={
@@ -65,7 +65,7 @@ def test_post_with_legacy_secret_still_works(tmp_data_dir: Path) -> None:
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-legacy-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={
@@ -90,7 +90,7 @@ def test_post_env_vars_wins_over_secret(tmp_data_dir: Path) -> None:
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-precedence-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={
@@ -115,7 +115,7 @@ def test_post_env_vars_filters_empty_keys(tmp_data_dir: Path) -> None:
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-filter-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={
@@ -139,7 +139,7 @@ def test_post_no_creds_at_all_still_registers(tmp_data_dir: Path) -> None:
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-nocred-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={
@@ -170,7 +170,7 @@ def test_reconnect_custom_mcp_uses_registry_not_recipe(
 
     os.environ["MYCELOS_MASTER_KEY"] = "custom-mcp-reconnect-test"
     App(tmp_data_dir).initialize()
-    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0")
+    fastapi_app = create_app(tmp_data_dir, no_scheduler=True, host="0.0.0.0", allow_insecure_bind=True)
     c = TestClient(fastapi_app)
 
     resp = c.post("/api/connectors", json={

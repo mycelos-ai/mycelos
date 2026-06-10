@@ -22,6 +22,7 @@ CREDENTIAL_PATTERNS: list[tuple[str, str]] = [
     (r"AKIA[0-9A-Z]{16}", "[REDACTED]"),                   # AWS Access Key
     (r"ASIA[0-9A-Z]{16}", "[REDACTED]"),                   # AWS Session Key
     (r"1//[0-9A-Za-z\-_]{40,}", "[REDACTED]"),             # Google Refresh Token
+    (r"ya29\.[0-9A-Za-z\-_]{20,}", "[REDACTED]"),          # Google OAuth Access Token (Vertex AI/ADC)
     (r"xox[baprs]-[a-zA-Z0-9-]{10,}", "[REDACTED]"),      # Slack Token
     (r"AIza[0-9A-Za-z\-_]{35}", "[REDACTED]"),             # Google API Key
     (r"sk-or-v1-[a-zA-Z0-9]{48,}", "[REDACTED]"),         # OpenRouter
@@ -30,8 +31,19 @@ CREDENTIAL_PATTERNS: list[tuple[str, str]] = [
     (r"sk_live_[a-zA-Z0-9]{24,}", "[REDACTED]"),           # Stripe Live Key
     (r"Bearer\s+[a-zA-Z0-9\-_.~+/]+=*", "Bearer [REDACTED]"),
     (r"(?:api[_-]?key|apikey|api_secret|secret_key)\s*[=:]\s*\S{10,}", "[REDACTED]"),
+    # Credential-shaped tokens with no distinctive prefix (e.g. Mistral API
+    # keys, 32+ alnum chars). Only redacted when a credential keyword sits
+    # right before them, to avoid eating commit hashes / ordinary words.
+    (r"\b(?:key|token|secret|auth|api[_-]?key|bearer)\b[\s=:]+[A-Za-z0-9]{24,}",
+     "[REDACTED]"),
     # URL inline credentials: https://user:pass@host -> https://[REDACTED]@host
     (r"(https?://)[^/\s:@]+:[^/\s@]+@", r"\1[REDACTED]@"),
+]
+
+# Multi-line credential blocks redacted as a whole (need DOTALL).
+CREDENTIAL_BLOCK_PATTERNS: list[tuple[str, str]] = [
+    (r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+     "[REDACTED_PRIVATE_KEY]"),
 ]
 
 SENSITIVE_PATH_PATTERNS: list[tuple[str, str]] = [
@@ -76,6 +88,11 @@ class ResponseSanitizer:
     def sanitize_text(self, text: str) -> str:
         """Sanitize outbound text -- redact credentials, tokens, sensitive paths."""
         result = text
+
+        # Multi-line blocks first (PEM private keys etc.), before single-line
+        # patterns can fragment them.
+        for pattern, replacement in CREDENTIAL_BLOCK_PATTERNS:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE | re.DOTALL)
 
         for pattern, replacement in CREDENTIAL_PATTERNS:
             result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
