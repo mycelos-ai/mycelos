@@ -22,6 +22,12 @@ accents. Visual changes only — no behavioral rewrites.
 - Sidebar active state: glow pill with luminous left indicator instead
   of a hard right border.
 
+### Layout shell
+- Sidebar is now a glass panel (`.sidebar-shell`): translucent blurred
+  surface with a soft luminous right edge instead of a hard border.
+- Brand mark gets a radial cyan halo (`.sidebar-brand-mark`) and the
+  wordmark a subtle text glow.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user
