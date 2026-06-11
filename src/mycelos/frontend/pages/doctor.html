@@ -75,7 +75,7 @@
           <div class="card px-4 py-3">
             <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
                  x-text="t('doctor.summary.ok')">Healthy</div>
-            <div class="text-2xl font-headline font-bold text-[#48c78e]" x-text="countBy('ok')"></div>
+            <div class="text-2xl font-headline font-bold text-[var(--success)]" x-text="countBy('ok')"></div>
           </div>
           <div class="card px-4 py-3">
             <div class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)] mb-1"
@@ -192,7 +192,7 @@
           <!-- Empty state when suspicious and no hits -->
           <div x-show="activityLevel === 'suspicious' && !activityLoading && activityEvents.length === 0"
                class="card text-center py-8 border-[#48c78e]/30">
-            <span class="material-symbols-outlined text-[#48c78e] text-3xl mb-2">shield</span>
+            <span class="material-symbols-outlined text-[var(--success)] text-3xl mb-2">shield</span>
             <p class="font-headline text-sm font-semibold">Clean.</p>
             <p class="text-xs text-[var(--on-surface-variant)] mt-1">No security-relevant events in this window.</p>
           </div>
@@ -394,7 +394,7 @@
 
         statusIconClass(status) {
           const map = {
-            ok: 'text-[#48c78e]',
+            ok: 'text-[var(--success)]',
             warn: 'text-[var(--warning)]',
             error: 'text-[var(--error)]',
             'not configured': 'text-[var(--on-surface-variant)]',
@@ -405,7 +405,7 @@
 
         statusBadgeClass(status) {
           const map = {
-            ok: 'bg-[#48c78e]/10 text-[#48c78e]',
+            ok: 'bg-[#48c78e]/10 text-[var(--success)]',
             warn: 'bg-[var(--warning)]/10 text-[var(--warning)]',
             error: 'bg-[var(--error)]/10 text-[var(--error)]',
             'not configured': 'bg-[var(--surface-container)] text-[var(--on-surface-variant)]',
@@ -416,7 +416,7 @@
 
         statusBorderClass(status) {
           const map = {
-            ok: 'border-l-[#48c78e]',
+            ok: 'border-l-[var(--success)]',
             warn: 'border-l-[var(--warning)]',
             error: 'border-l-[var(--error)]',
           };

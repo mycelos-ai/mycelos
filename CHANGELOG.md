@@ -57,6 +57,13 @@ accents. Visual changes only — no behavioral rewrites.
 - Input bar: rounder glass container with backdrop blur, matching the
   ambient glow wrapper.
 
+### Consistency sweep
+- All plain `#48c78e` success-green hardcodes across about, agents,
+  connectors, docs, doctor, settings, and workflows now use
+  `var(--success)` (alpha-modified Tailwind hex values intentionally
+  kept — the CDN build cannot alpha-modify CSS variables). Brand colors
+  (Telegram blue, Slack red) are deliberately untouched.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user

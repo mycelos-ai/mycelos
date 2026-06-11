@@ -753,7 +753,7 @@
             </div>
             <div x-show="refreshResult &amp;&amp; (!refreshResult.added || refreshResult.added.length === 0) &amp;&amp; !refreshResult.error"
                  class="card py-2 px-3 flex items-center gap-2 text-[11px] text-[var(--on-surface-variant)]">
-              <span class="material-symbols-outlined text-[#48c78e] text-sm">check_circle</span>
+              <span class="material-symbols-outlined text-[var(--success)] text-sm">check_circle</span>
               <span>Registry is up to date.</span>
               <span class="opacity-60">No new models for</span>
               <template x-for="p in (refreshResult?.providers_checked || [])" :key="p">
@@ -829,7 +829,7 @@
                     <div class="font-headline text-xs font-semibold" x-text="p.name"></div>
                     <div class="text-[10px] text-[var(--on-surface-variant)]">
                       <span x-show="!hasCredentialFor(p.id)" x-text="providerTileMeta(p.id).hint"></span>
-                      <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1 text-[#48c78e]">
+                      <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1 text-[var(--success)]">
                         <span class="material-symbols-outlined text-[11px]">check_circle</span>
                         <span>Connected · click to replace</span>
                       </span>
@@ -920,7 +920,7 @@
                 </button>
                 <button class="btn-secondary text-xs" @click="cancelConnect()">Cancel</button>
                 <span x-show="connectResult && connectResult.ok"
-                      class="text-[11px] text-[#48c78e] inline-flex items-center gap-1">
+                      class="text-[11px] text-[var(--success)] inline-flex items-center gap-1">
                   <span class="material-symbols-outlined text-sm">check_circle</span>
                   <span x-text="'Saved — ' + (connectResult?.models || []).length + ' model' + ((connectResult?.models || []).length === 1 ? '' : 's') + ' available'"></span>
                 </span>
@@ -932,15 +932,15 @@
           <!-- Migration banner (newer version available)   -->
           <!-- ============================================= -->
           <template x-for="up in upgrades" :key="up.old_id">
-            <div class="card mb-4 border-l-2 border-l-[#48c78e] bg-[#48c78e]/5">
+            <div class="card mb-4 border-l-2 border-l-[var(--success)] bg-[#48c78e]/5">
               <div class="flex items-start gap-3">
-                <span class="material-symbols-outlined text-[#48c78e] mt-0.5">auto_fix_high</span>
+                <span class="material-symbols-outlined text-[var(--success)] mt-0.5">auto_fix_high</span>
                 <div class="flex-1 min-w-0">
                   <div class="font-headline text-sm font-semibold">
                     Newer version available:
                     <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--surface-container)]" x-text="up.old_id"></span>
                     <span class="mx-1 text-[var(--on-surface-variant)]">→</span>
-                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[#48c78e]/15 text-[#48c78e]" x-text="up.new_id"></span>
+                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[#48c78e]/15 text-[var(--success)]" x-text="up.new_id"></span>
                   </div>
                   <div class="text-[11px] text-[var(--on-surface-variant)] mt-1">
                     <span x-text="(up.assignments?.length || 0) + ' place' + ((up.assignments?.length || 0) === 1 ? '' : 's') + ' use ' + up.old_id + '. Update which?'"></span>
@@ -972,7 +972,7 @@
                       <span x-show="upgradeBusy[up.old_id]">Updating…</span>
                       <span x-show="upgradeDone[up.old_id] === 'ok'">Updated</span>
                     </button>
-                    <span x-show="upgradeDone[up.old_id] === 'ok'" class="text-[11px] text-[#48c78e] inline-flex items-center gap-1">
+                    <span x-show="upgradeDone[up.old_id] === 'ok'" class="text-[11px] text-[var(--success)] inline-flex items-center gap-1">
                       <span class="material-symbols-outlined text-sm">check_circle</span>
                       Migrated
                     </span>

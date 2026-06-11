@@ -43,7 +43,7 @@
     /* Creator badge colors */
     .creator-badge--system {
       background: rgba(72, 199, 142, 0.12);
-      color: #48c78e;
+      color: var(--success);
     }
     .creator-badge--planner {
       background: rgba(135, 157, 255, 0.12);
@@ -666,7 +666,7 @@
                               <div class="flex flex-wrap gap-1.5">
                                 <template x-for="(step, idx) in (_runDetail?.completed_steps || [])" :key="idx">
                                   <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-label font-medium
-                                              bg-[#48c78e]/10 text-[#48c78e]">
+                                              bg-[#48c78e]/10 text-[var(--success)]">
                                     <span class="material-symbols-outlined text-xs">check</span>
                                     <span x-text="step"></span>
                                   </span>
@@ -1076,7 +1076,7 @@
          */
         runStatusColor(status) {
           const colors = {
-            completed: 'text-[#48c78e] bg-[#48c78e]/10',
+            completed: 'text-[var(--success)] bg-[#48c78e]/10',
             failed: 'text-[var(--error)] bg-[var(--error)]/10',
             running: 'text-[var(--primary)] bg-[var(--primary)]/10',
             waiting_input: 'text-[var(--warning)] bg-[var(--warning)]/10',
