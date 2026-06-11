@@ -1,39 +1,43 @@
 # Changelog
 
-## Week 24 (2026) — automatic agent routing
+## Week 24 (2026) — morning briefing & living knowledge
 
-The primary chat agent now routes conversations to registered
-custom/persona agents on its own — the multi-agent system is visible
-without explicit handoff commands.
+The strategic answer to "subconscious loop" assistants: the knowledge
+base keeps itself current and the user gets a proactive daily synthesis.
 
-- **Agent roster in the system prompt.** Mycelos's prompt includes a
-  compact roster of user-facing custom agents (name, description,
-  when-to-use), generated fresh from the agent registry at session
-  start. When no custom agents exist, the section is omitted entirely.
-  System agents (builder, doctor, workflow-agent, evaluator, auditor)
-  are never auto-routing targets; builder/doctor keep their dedicated
-  routing rules.
-- **Fail-soft routing guardrails.** The roster instructs the model to
-  route ONLY on clear matches and to stay with Mycelos when unsure.
-  All routing decisions are LLM judgment via the existing `handoff`
-  tool — no keyword/regex classification anywhere.
-- **Sticky, visible handoffs.** Auto-handoffs persist in
-  `session_agents` so the specialist keeps the conversation across
-  messages. The user sees a short i18n transition line
-  ("Connecting you with {agent}…" / "You're back with {agent}.").
-- **Explicit return path.** Every routed (non-mycelos) agent gets a
-  `return_to_mycelos` tool; persona prompts explain when to call it.
-  The decision is the LLM's — never message keyword matching.
-- **Capability safety (Constitution Rule 5).** Persona agents with a
-  registered `allowed_tools` list now only see those tools in their
-  session toolset (plus the return path; no `discover_tools` escape
-  hatch), and tool execution enforces the allowlist fail-closed:
-  unknown agents and unparseable allowlists are denied and audited
-  as `tool.blocked`.
-- **Fixes along the way:** the dynamic handoff tool (with its valid-
-  target enum) no longer loses to the generic registry schema in the
-  Mycelos toolset, and handoff to `doctor` is accepted by the handoff
-  tool validator like the other system agents.
+- **Scheduled auto-ingest** (`auto_ingest_check` in `scheduler/jobs.py`):
+  an hourly Huey job runs every registered `INGEST_SOURCES` connector —
+  but only when the user opted in (memory key `auto_ingest_enabled`,
+  default OFF) and the connector is active in the registry. Idempotent
+  via external-id dedup; per-run audit event
+  (`knowledge.auto_ingest.run`); a failing connector never crashes the
+  scheduler loop.
+- **Briefing builder** (`knowledge/briefing.py`): gathers deterministic
+  facts first — overdue tasks, tasks due today, reminders firing today,
+  notes created in the last 24h (with connector provenance), topics
+  touched — then makes ONE LLM call on the cheapest model to synthesize
+  a short friendly briefing (~200 words, user's language). User content
+  is framed as data-not-instructions (same injection hardening as the
+  organizer). Fail-soft: if the LLM is down, the deterministic sections
+  still go out. Built once per day, cached in memory scope.
+- **Daily delivery** (`briefing_tick`): a 5-minute Huey tick sends the
+  briefing once per day after the user-configured time (memory key
+  `briefing_time`, default 07:30; `briefing_enabled` default OFF;
+  `briefing_last_sent` prevents double sends). Delivery rides the
+  reminder channel path — Telegram when configured, otherwise skip with
+  a log. Audit event `briefing.sent`.
+- **API**: `GET /api/briefing/today` (cached-for-the-day, else freshly
+  built), `GET/POST /api/briefing/settings` (enabled / time /
+  auto_ingest_enabled, validated HH:MM, audited as
+  `briefing.settings.updated`). All settings live in memory scope —
+  content state, no config generation required (Constitution Rule 2).
+- **Dashboard**: a Morning Briefing card on the dashboard page, loaded
+  independently so it never blocks the rest of the dashboard. New i18n
+  keys in `en.yaml` + `de.yaml`.
+- Tests: `tests/test_briefing.py` (builder, fail-soft, per-day cache,
+  time-window logic, no-double-send, settings API, audit events) and
+  `tests/test_scheduled_ingest.py` (off-by-default gating, active-
+  connector gating, error isolation, idempotency, audit).
 
 ## v0.3.0 — 2026-04-21
 

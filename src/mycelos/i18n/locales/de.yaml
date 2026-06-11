@@ -518,6 +518,9 @@ web:
     no_connectors: "Keine Konnektoren"
     no_workflows: "Keine Workflows"
     no_schedules: "Keine geplanten Aufgaben"
+    briefing: "Morgen-Briefing"
+    briefing_loading: "Briefing wird erstellt..."
+    briefing_unavailable: "Briefing nicht verfuegbar"
   agents:
     title: "Agenten"
     build_new: "Neuen Agent erstellen"
