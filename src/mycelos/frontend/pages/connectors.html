@@ -27,7 +27,7 @@
       width: 0.5rem;
       height: 0.5rem;
       border-radius: 50%;
-      background: #48c78e;
+      background: var(--success);
       animation: pulse-dot 2s ease-in-out infinite;
     }
     .dot-disconnected {
@@ -115,7 +115,7 @@
   <div id="quick-capture"></div>
 
   <!-- Main content area -->
-  <main class="flex-1 flex flex-col md:pl-64 min-w-0 bg-[var(--surface)]"
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0"
         x-data="connectorsApp()" x-init="init()">
 
     <!-- Header container (loaded by layout.js) -->
@@ -198,7 +198,7 @@
                 <span class="material-symbols-outlined text-sm">error</span>
                 <span x-text="pasteJson.error"></span>
               </p>
-              <p x-show="!pasteJson.error && pasteJson.applied" class="text-xs text-[#48c78e] flex items-center gap-1.5">
+              <p x-show="!pasteJson.error && pasteJson.applied" class="text-xs text-[var(--success)] flex items-center gap-1.5">
                 <span class="material-symbols-outlined text-sm">check_circle</span>
                 Applied — review the fields below
               </p>
@@ -392,7 +392,7 @@
                        class="input-field w-full text-sm font-mono mb-1 resize-none"
                        rows="3"
                        placeholder="Paste the BotFather message or just the token..."></textarea>
-                <div x-show="wizard.data.token" class="flex items-center gap-1.5 text-xs text-[#48c78e] mb-1">
+                <div x-show="wizard.data.token" class="flex items-center gap-1.5 text-xs text-[var(--success)] mb-1">
                   <span class="material-symbols-outlined text-sm">check_circle</span>
                   Token detected: <code class="font-mono" x-text="wizard.data.token.substring(0, 10) + '...'"></code>
                 </div>
@@ -413,7 +413,7 @@
               <!-- Step 2: Confirm Chat ID + Verify -->
               <div x-show="wizard.step === 2">
                 <!-- Bot validated indicator -->
-                <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[#48c78e] mb-4">
+                <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[var(--success)] mb-4">
                   <span class="material-symbols-outlined text-sm">check_circle</span>
                   Token valid — bot: <strong x-text="wizard.data.botName"></strong>
                   <span x-show="wizard.data.botUsername" class="text-on-surface-variant/50">@<span x-text="wizard.data.botUsername"></span></span>
@@ -484,7 +484,7 @@
                   <span x-text="wizard.checking ? 'Sending test message...' : 'Send Test Message'"></span>
                 </button>
 
-                <p x-show="wizard.data.verified" class="text-sm text-[#48c78e] mt-3 flex items-center gap-1.5">
+                <p x-show="wizard.data.verified" class="text-sm text-[var(--success)] mt-3 flex items-center gap-1.5">
                   <span class="material-symbols-outlined text-sm">check_circle</span>
                   Test message sent! Check your Telegram.
                 </p>
@@ -498,7 +498,7 @@
               <!-- Step 3: Done -->
               <div x-show="wizard.step === 3">
                 <div class="text-center py-4">
-                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
+                  <span class="material-symbols-outlined text-4xl text-[var(--success)] mb-3">check_circle</span>
                   <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Telegram Connected!</h3>
                   <p class="text-sm text-on-surface-variant mb-4">
                     Your bot is ready. Mycelos will respond to messages from Chat ID
@@ -532,11 +532,11 @@
                        @input="wizardAutoDetectEmail()"
                        class="input-field w-full text-sm mb-3"
                        placeholder="you@gmail.com">
-                <div x-show="wizard.data.imapServer" class="text-xs text-[#48c78e] flex items-center gap-1.5 mb-1">
+                <div x-show="wizard.data.imapServer" class="text-xs text-[var(--success)] flex items-center gap-1.5 mb-1">
                   <span class="material-symbols-outlined text-sm">check</span>
                   IMAP: <span x-text="wizard.data.imapServer"></span>
                 </div>
-                <div x-show="wizard.data.smtpServer" class="text-xs text-[#48c78e] flex items-center gap-1.5">
+                <div x-show="wizard.data.smtpServer" class="text-xs text-[var(--success)] flex items-center gap-1.5">
                   <span class="material-symbols-outlined text-sm">check</span>
                   SMTP: <span x-text="wizard.data.smtpServer"></span>
                 </div>
@@ -577,7 +577,7 @@
                   </button>
                 </div>
                 <div x-show="wizard.data.testDone" class="text-center py-4">
-                  <span class="material-symbols-outlined text-4xl text-[#48c78e] mb-3">check_circle</span>
+                  <span class="material-symbols-outlined text-4xl text-[var(--success)] mb-3">check_circle</span>
                   <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Email Connected!</h3>
                   <p class="text-sm text-on-surface-variant">
                     <strong x-text="wizard.data.email"></strong> is ready.
@@ -609,7 +609,7 @@
             </button>
             <button @click="wizardFinish()"
                     x-show="wizard.step === wizard.totalSteps"
-                    class="px-5 py-2 rounded-xl text-sm font-medium bg-[#48c78e] text-white
+                    class="px-5 py-2 rounded-xl text-sm font-medium bg-[var(--success)] text-white
                            hover:bg-[#48c78e]/80 transition-colors">
               Done
             </button>
@@ -680,7 +680,7 @@
                                  : connector.status === 'error' ? 'dot-error'
                                  : 'dot-disconnected'"></div>
                       <span class="text-[10px] font-label uppercase tracking-widest"
-                            :class="connector.status === 'connected' ? 'text-[#48c78e]'
+                            :class="connector.status === 'connected' ? 'text-[var(--success)]'
                                   : connector.status === 'error' ? 'text-error'
                                   : 'text-on-surface-variant/50'"
                             x-text="connector.status || 'disconnected'"></span>
@@ -702,7 +702,7 @@
                   <!-- Derived operational state: setup_incomplete / ready / healthy / failing -->
                   <span x-show="connector.operational_state"
                         class="text-[10px] font-label font-bold px-2 py-0.5 rounded-full"
-                        :class="connector.operational_state === 'healthy' ? 'bg-[#48c78e]/15 text-[#48c78e]'
+                        :class="connector.operational_state === 'healthy' ? 'bg-[#48c78e]/15 text-[var(--success)]'
                               : connector.operational_state === 'failing' ? 'bg-error/15 text-error'
                               : connector.operational_state === 'setup_incomplete' ? 'bg-warning/15 text-warning'
                               : 'bg-surface-container-low text-on-surface-variant'"
@@ -745,7 +745,7 @@
                 <!-- Test result (transient) -->
                 <div x-show="connector._test_result" x-transition
                      class="text-[11px] rounded-lg px-2 py-1 mt-2"
-                     :class="connector._test_result?.ok === true ? 'bg-[#48c78e]/10 text-[#48c78e]'
+                     :class="connector._test_result?.ok === true ? 'bg-[#48c78e]/10 text-[var(--success)]'
                            : connector._test_result?.ok === false ? 'bg-error/10 text-error'
                            : 'bg-surface-container-low text-on-surface-variant'"
                      x-text="connector._test_result?.detail"></div>
@@ -875,7 +875,7 @@
         <div x-show="toast.show" x-transition
              class="fixed bottom-8 right-8 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg toast-enter"
              :class="toast.type === 'success'
-               ? 'bg-[#48c78e]/15 text-[#48c78e] border border-[#48c78e]/30'
+               ? 'bg-[#48c78e]/15 text-[var(--success)] border border-[#48c78e]/30'
                : 'bg-error/15 text-error border border-error/30'"
              style="backdrop-filter: blur(12px);">
           <span class="material-symbols-outlined text-sm"
@@ -1079,7 +1079,7 @@
                         class="input-field font-mono text-xs w-full"></textarea>
               <div x-show="oauthDialog.keysValid && oauthDialog.keysValid.ok"
                    class="text-sm mt-2 inline-flex items-center gap-1"
-                   style="color: #48c78e">
+                   style="color: var(--success)">
                 <span class="material-symbols-outlined text-base">check_circle</span>
                 Valid desktop-app credential.
               </div>
@@ -1135,9 +1135,9 @@
             </div>
 
             <!-- Stage 3: Done -->
-            <div x-show="oauthDialog.done" class="card border-l-2 border-l-[#48c78e]">
+            <div x-show="oauthDialog.done" class="card border-l-2 border-l-[var(--success)]">
               <p class="text-sm text-[var(--on-surface)]">
-                <span class="material-symbols-outlined align-middle" style="color: #48c78e">check_circle</span>
+                <span class="material-symbols-outlined align-middle" style="color: var(--success)">check_circle</span>
                 Connected!
                 <span x-text="oauthDialog.recipe?.name || oauthDialog.recipeId"></span>
                 is ready to use.

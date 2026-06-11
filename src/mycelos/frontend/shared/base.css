@@ -76,6 +76,17 @@
   --on-error: #490006;
   --on-error-container: #ffa8a3;
 
+  /* Success / Warning (semantic states) */
+  --success: #48c78e;
+  --success-dim: #2e9d6d;
+  --warning: #ffd166;
+  --warning-dim: #e0ae3a;
+
+  /* Glow (Neural Mycelium ambient accents) */
+  --glow-primary: rgba(106, 214, 255, 0.4);
+  --glow-primary-soft: rgba(106, 214, 255, 0.15);
+  --glow-tertiary-soft: rgba(135, 157, 255, 0.12);
+
   /* Typography */
   --font-headline: 'Space Grotesk', sans-serif;
   --font-body: 'Manrope', sans-serif;
@@ -102,6 +113,26 @@
   --transition-fast: 150ms ease;
   --transition-normal: 300ms ease-in-out;
   --transition-slow: 500ms ease-in-out;
+}
+
+
+/* --------------------------------------------------------------------------
+   1b. Ambient Mycelium Backdrop
+   --------------------------------------------------------------------------
+   Two soft radial glows (cyan top-left, violet bottom-right) behind every
+   page. Rendered on a fixed pseudo-element at z-index -1 so it never
+   intercepts clicks and always paints behind page content (the body
+   background propagates to the root canvas, so the glow stays visible). */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 45% at 12% 0%, var(--glow-primary-soft), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 95% 100%, var(--glow-tertiary-soft), transparent 70%);
 }
 
 
@@ -212,23 +243,50 @@
    6. Cards
    -------------------------------------------------------------------------- */
 
+/* No-border philosophy: depth comes from layered surfaces, a faint inset
+   top highlight, and shadow — not from outlines. */
 .card {
-  background: var(--surface-container);
-  border: 1px solid rgba(70, 72, 77, 0.15);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 30%), var(--surface-container);
+  border: 1px solid transparent;
   border-radius: var(--radius-xl);
   padding: var(--space-6);
-  transition: border-color var(--transition-normal);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.25);
+  transition: box-shadow var(--transition-normal), border-color var(--transition-normal);
 }
 
 .card:hover {
-  border-color: rgba(70, 72, 77, 0.3);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 28px rgba(0, 0, 0, 0.3), 0 0 24px var(--glow-primary-soft);
 }
 
 .card-low {
   background: var(--surface-container-low);
-  border: 1px solid rgba(70, 72, 77, 0.1);
+  border: 1px solid transparent;
   border-radius: var(--radius-xl);
   padding: var(--space-4);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+}
+
+/* Hero panel — glass over the ambient backdrop with a cyan aura.
+   Used for page-level hero sections (dashboard greeting, etc.). */
+.hero-panel {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(106, 214, 255, 0.07), rgba(35, 38, 44, 0.5) 45%, rgba(135, 157, 255, 0.05));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.hero-panel::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  right: -10%;
+  width: 50%;
+  height: 120%;
+  background: radial-gradient(ellipse, var(--glow-primary-soft), transparent 70%);
+  pointer-events: none;
 }
 
 
@@ -266,7 +324,7 @@
 
 .status-badge--success {
   background: rgba(72, 199, 142, 0.1);
-  color: #48c78e;
+  color: var(--success);
 }
 
 .status-badge--success::before {
@@ -274,7 +332,7 @@
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: #48c78e;
+  background: var(--success);
 }
 
 .status-badge--paused {
@@ -361,6 +419,20 @@ input::placeholder, textarea::placeholder {
    9. Sidebar Navigation
    -------------------------------------------------------------------------- */
 
+/* Glass navigation panel: translucent surface with blur and a soft
+   luminous right edge instead of a hard border. */
+.sidebar-shell {
+  background: linear-gradient(180deg, rgba(17, 19, 24, 0.85), rgba(12, 14, 18, 0.75));
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: -1px 0 0 rgba(106, 214, 255, 0.06) inset, 8px 0 32px rgba(0, 0, 0, 0.25);
+}
+
+.sidebar-brand-mark {
+  background: radial-gradient(circle at 30% 30%, rgba(106, 214, 255, 0.18), rgba(23, 26, 31, 0.9) 70%);
+  box-shadow: 0 0 16px rgba(106, 214, 255, 0.12);
+}
+
 .sidebar-nav-link {
   display: flex;
   align-items: center;
@@ -379,11 +451,26 @@ input::placeholder, textarea::placeholder {
   color: var(--primary);
 }
 
+/* Active state: cyan glow pill with a luminous left indicator instead of a
+   hard border (no-border philosophy). */
 .sidebar-nav-link.active {
+  position: relative;
   color: var(--primary);
-  background: var(--surface-container);
-  border-right: 2px solid var(--primary);
-  border-radius: 0;
+  background: linear-gradient(90deg, rgba(106, 214, 255, 0.12), rgba(106, 214, 255, 0.03));
+  box-shadow: 0 0 16px rgba(106, 214, 255, 0.06) inset;
+}
+
+.sidebar-nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  box-shadow: 0 0 8px var(--glow-primary);
 }
 
 
@@ -522,4 +609,113 @@ input::placeholder, textarea::placeholder {
   max-height: 100%;
   width: auto;
   height: auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Themes — presets selected via <html data-theme="...">.
+   A theme is ONLY a set of variable overrides on top of the Neural
+   Mycelium defaults above; components never reference theme names.
+   Keep preset ids in sync with THEME_PRESETS in gateway/routers/ui_theme.py.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Mycelium Light — bright surfaces, deepened cyan for contrast. */
+[data-theme="mycelium-light"] {
+  --surface: #f4f6f9;
+  --surface-dim: #e9edf2;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #eef1f5;
+  --surface-container: #e6eaef;
+  --surface-container-high: #dde2e9;
+  --surface-container-highest: #d4dae2;
+  --surface-bright: #ffffff;
+  --surface-variant: #dde2e9;
+
+  --primary: #0077a3;
+  --primary-dim: #00688f;
+  --primary-container: #bfeaff;
+  --primary-fixed: #bfeaff;
+  --primary-fixed-dim: #8fdcff;
+  --on-primary: #ffffff;
+  --on-primary-fixed: #00303f;
+  --on-primary-fixed-variant: #00485b;
+  --on-primary-container: #00303f;
+  --inverse-primary: #6ad6ff;
+
+  --secondary: #00679a;
+  --secondary-dim: #005a87;
+  --secondary-container: #cce7ff;
+  --on-secondary: #ffffff;
+  --on-secondary-container: #00263d;
+
+  --tertiary: #4a5fd9;
+  --tertiary-dim: #3d51c4;
+  --tertiary-container: #dfe2ff;
+  --on-tertiary: #ffffff;
+  --on-tertiary-container: #0a1a66;
+
+  --on-surface: #171a1f;
+  --on-surface-variant: #4b4f55;
+  --on-background: #171a1f;
+  --inverse-surface: #2b2e33;
+  --inverse-on-surface: #eef1f5;
+
+  --outline: #8a8d92;
+  --outline-variant: #c6cad0;
+
+  --error: #c2362f;
+  --error-dim: #a32722;
+  --error-container: #ffdad6;
+  --on-error: #ffffff;
+  --on-error-container: #410002;
+
+  --success: #1d9e68;
+  --warning: #b07a00;
+}
+[data-theme="mycelium-light"] body::before {
+  opacity: 0.35;
+}
+
+/* Graphite Dark — the dark shell with a calm, neutral accent. */
+[data-theme="graphite-dark"] {
+  --primary: #c9ced6;
+  --primary-dim: #aab1bb;
+  --primary-container: #3a4049;
+  --primary-fixed: #c9ced6;
+  --primary-fixed-dim: #aab1bb;
+  --on-primary: #14171c;
+  --on-primary-fixed: #14171c;
+  --on-primary-fixed-variant: #2a2f36;
+  --on-primary-container: #e8ebef;
+  --inverse-primary: #4a505a;
+  --surface-tint: #c9ced6;
+
+  --secondary: #9aa3ad;
+  --secondary-dim: #848d98;
+  --secondary-container: #343a42;
+  --on-secondary: #14171c;
+  --on-secondary-container: #e8ebef;
+
+  --tertiary: #8b93a3;
+  --tertiary-dim: #767e8e;
+  --tertiary-container: #303641;
+  --on-tertiary: #14171c;
+  --on-tertiary-container: #e4e8ef;
+}
+[data-theme="graphite-dark"] body::before {
+  opacity: 0.4;
+}
+
+/* Custom accent — set by layout.js as an inline --primary override on
+   <html data-custom-accent>. Derived tones come from color-mix so a single
+   hex value re-tints the whole system coherently. */
+:root[data-custom-accent] {
+  --primary-dim: color-mix(in srgb, var(--primary) 82%, #000000);
+  --primary-container: color-mix(in srgb, var(--primary) 60%, #000000);
+  --primary-fixed: var(--primary);
+  --primary-fixed-dim: color-mix(in srgb, var(--primary) 82%, #000000);
+  --on-primary: color-mix(in srgb, var(--primary) 18%, #000000);
+  --on-primary-container: color-mix(in srgb, var(--primary) 25%, #ffffff);
+  --surface-tint: var(--primary);
+  --secondary: color-mix(in srgb, var(--primary) 75%, #5a6f8a);
+  --secondary-dim: color-mix(in srgb, var(--primary) 60%, #3a4a5e);
 }

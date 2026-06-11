@@ -1,5 +1,85 @@
 # Changelog
 
+## Week 24 (2026) — Neural Mycelium UI
+
+Full visual identity pass over the web UI ("Neural Mycelium" design
+system): ambient backdrop, glass surfaces, no-border depth, cyan glow
+accents. Visual changes only — no behavioral rewrites.
+
+### User-customizable themes
+
+Because the design system is pure CSS custom properties, a theme is just
+a variable set — so it is now user-configurable:
+
+- **Three presets**: Mycelium Dark (default), Mycelium Light, Graphite —
+  selected via `data-theme` variable overrides in `shared/base.css`.
+- **Custom accent color**: a single `--primary` override; derived tones
+  (dim, container, on-primary, secondary) fan out via CSS `color-mix()`,
+  so one hex value re-tints the whole system coherently.
+- **Settings → Appearance**: preset cards + color picker (i18n en/de).
+- **Follows the user across devices**: persisted server-side via
+  `GET/POST /api/ui/theme` (system memory scope, audited
+  `ui.theme.updated`), applied flash-free on load from a localStorage
+  mirror, then reconciled with the server value.
+
+### Design tokens (`shared/base.css`)
+- Ambient mycelium backdrop: fixed dual radial glow (cyan top-left,
+  violet bottom-right) behind every page; opaque `<main>` backgrounds
+  removed so the glow shows through.
+- New semantic tokens: `--success`, `--success-dim`, `--warning`,
+  `--warning-dim` (the warning token was referenced by five pages but
+  never defined), plus `--glow-primary` / `--glow-primary-soft` /
+  `--glow-tertiary-soft`.
+- No-border philosophy for `.card` / `.card-low`: depth now comes from
+  layered gradients, inset top highlight, and shadow instead of
+  outlines; hover adds a faint cyan aura.
+- New `.hero-panel` utility: glass hero surface with cyan aura, used
+  for page-level hero sections.
+- Sidebar active state: glow pill with luminous left indicator instead
+  of a hard right border.
+
+### Layout shell
+- Sidebar is now a glass panel (`.sidebar-shell`): translucent blurred
+  surface with a soft luminous right edge instead of a hard border.
+- Brand mark gets a radial cyan halo (`.sidebar-brand-mark`) and the
+  wordmark a subtle text glow.
+
+### Dashboard hero
+- New hero panel: time-of-day greeting with the user's name, tagline,
+  and live system pulse badges (gateway, scheduler, agent count).
+- Knowledge graph teaser: a live mini force-directed render of the
+  knowledge graph (glowing nodes, cyan filaments) inside the hero,
+  linking to the full graph view.
+- `knowledge.html` accepts `?view=graph` to deep-link straight into
+  the graph view (used by the teaser).
+- New i18n keys under `web.dashboard` in `en.yaml` and `de.yaml`
+  (greetings, hero subtitle, graph teaser labels).
+
+### Knowledge graph
+- Nodes now render with a soft neon glow per type; the hovered node
+  flares brighter and its connecting filaments light up cyan.
+- Edges are drawn as cyan mycelium filaments (related links stay
+  neutral dotted).
+- Legend dots glow in their node color; legend labels, stats line, and
+  the empty state are now i18n'd (`web.knowledge.legend_*`,
+  `graph_notes`, `graph_links`, `graph_empty` in en/de).
+- Empty state redesigned: glowing hub mark instead of bare text.
+
+### Chat
+- User bubbles get a deep-blue gradient and soft shadow instead of a
+  flat fill.
+- Empty-state suggestion chips are now glass pills with a faint cyan
+  ring.
+- Input bar: rounder glass container with backdrop blur, matching the
+  ambient glow wrapper.
+
+### Consistency sweep
+- All plain `#48c78e` success-green hardcodes across about, agents,
+  connectors, docs, doctor, settings, and workflows now use
+  `var(--success)` (alpha-modified Tailwind hex values intentionally
+  kept — the CDN build cannot alpha-modify CSS variables). Brand colors
+  (Telegram blue, Slack red) are deliberately untouched.
+
 ## Week 24 (2026) — morning briefing & living knowledge
 
 The strategic answer to "subconscious loop" assistants: the knowledge

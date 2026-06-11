@@ -1,16 +1,16 @@
 <aside
-  class="fixed left-0 h-full w-64 border-r border-[var(--outline-variant)]/15 bg-[var(--surface)] flex flex-col py-4 px-3 z-40 hidden md:flex overflow-y-auto"
+  class="sidebar-shell fixed left-0 h-full w-64 flex flex-col py-4 px-3 z-40 hidden md:flex overflow-y-auto"
   x-data="sidebarData()"
   x-init="loadSidebar()"
 >
   <!-- Brand (links to chat) -->
   <a href="/pages/chat.html" class="block mb-4 px-2 no-underline">
     <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-lg bg-[var(--surface-container)] flex items-center justify-center overflow-hidden">
+      <div class="sidebar-brand-mark w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
         <img alt="Mycelos Logo" class="w-8 h-8 object-contain" src="/assets/logo-transparent.svg">
       </div>
       <div>
-        <h1 class="text-[var(--primary)] font-headline font-bold text-lg leading-tight">Mycelos</h1>
+        <h1 class="text-[var(--primary)] font-headline font-bold text-lg leading-tight glow-text-subtle">Mycelos</h1>
         <p class="text-[var(--on-surface-variant)] text-[10px] font-label uppercase tracking-widest opacity-60" x-text="t('sidebar.tagline')">Neural Mycelium</p>
       </div>
     </div>

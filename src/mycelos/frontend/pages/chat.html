@@ -291,7 +291,7 @@
   <div id="quick-capture"></div>
 
   <!-- Main content area -->
-  <main class="flex-1 flex flex-col md:pl-64 md:pr-72 min-w-0 bg-[var(--surface)]"
+  <main class="flex-1 flex flex-col md:pl-64 md:pr-72 min-w-0"
         x-data="chatApp()" x-init="initChat()"
         @new-session.window="newSession()"
         @run-command.window="handleClickedCommand($event.detail.command)"
@@ -395,16 +395,19 @@
              x-text="t('chat.empty_description')"></p>
           <div class="flex flex-wrap justify-center gap-3 mt-8 max-w-lg">
             <button @click="input = t('chat.suggestion_capabilities'); sendMessage()"
-                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
-                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
+                           hover:text-primary transition-colors"
+                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
                     x-text="t('chat.suggestion_capabilities')"></button>
             <button @click="input = t('chat.suggestion_create_agent'); sendMessage()"
-                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
-                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
+                           hover:text-primary transition-colors"
+                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
                     x-text="t('chat.suggestion_create_agent')"></button>
             <button @click="input = t('chat.suggestion_show_workflows'); sendMessage()"
-                    class="px-4 py-2 rounded-lg bg-surface-container text-on-surface-variant text-sm
-                           hover:text-primary hover:bg-surface-container-high transition-colors"
+                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
+                           hover:text-primary transition-colors"
+                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
                     x-text="t('chat.suggestion_show_workflows')"></button>
           </div>
         </div>
@@ -415,7 +418,8 @@
 
             <!-- User message -->
             <div x-show="msg.role === 'user'" class="flex justify-end w-full">
-              <div class="max-w-[80%] bg-secondary-container text-on-secondary-container px-6 py-4 rounded-xl rounded-tr-sm">
+              <div class="max-w-[80%] text-on-secondary-container px-6 py-4 rounded-xl rounded-tr-sm shadow-lg shadow-black/20"
+                   style="background: linear-gradient(135deg, var(--secondary-container), var(--on-secondary-fixed-variant));">
                 <!-- Image preview: shown inline at adaptive size, click → lightbox -->
                 <template x-if="msg.attachment && msg.attachment.kind === 'image'">
                   <div class="mb-2">
@@ -650,7 +654,7 @@
           <!-- Ambient glow behind input -->
           <div class="absolute -inset-1 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-25 group-focus-within:opacity-50 transition duration-500"></div>
           <!-- Input container -->
-          <div class="relative bg-surface-container rounded-xl flex items-end p-2 transition-colors"
+          <div class="relative bg-surface-container/90 backdrop-blur-xl rounded-2xl flex items-end p-2 transition-colors"
                style="border: 1px solid rgba(70, 72, 77, 0.2);"
                :style="{ borderColor: sending ? 'rgba(70, 72, 77, 0.2)' : undefined }"
                @focus-within="$el.style.borderColor = 'rgba(106, 214, 255, 0.4)'"
