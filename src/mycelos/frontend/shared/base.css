@@ -610,3 +610,112 @@ input::placeholder, textarea::placeholder {
   width: auto;
   height: auto;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Themes — presets selected via <html data-theme="...">.
+   A theme is ONLY a set of variable overrides on top of the Neural
+   Mycelium defaults above; components never reference theme names.
+   Keep preset ids in sync with THEME_PRESETS in gateway/routers/ui_theme.py.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Mycelium Light — bright surfaces, deepened cyan for contrast. */
+[data-theme="mycelium-light"] {
+  --surface: #f4f6f9;
+  --surface-dim: #e9edf2;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #eef1f5;
+  --surface-container: #e6eaef;
+  --surface-container-high: #dde2e9;
+  --surface-container-highest: #d4dae2;
+  --surface-bright: #ffffff;
+  --surface-variant: #dde2e9;
+
+  --primary: #0077a3;
+  --primary-dim: #00688f;
+  --primary-container: #bfeaff;
+  --primary-fixed: #bfeaff;
+  --primary-fixed-dim: #8fdcff;
+  --on-primary: #ffffff;
+  --on-primary-fixed: #00303f;
+  --on-primary-fixed-variant: #00485b;
+  --on-primary-container: #00303f;
+  --inverse-primary: #6ad6ff;
+
+  --secondary: #00679a;
+  --secondary-dim: #005a87;
+  --secondary-container: #cce7ff;
+  --on-secondary: #ffffff;
+  --on-secondary-container: #00263d;
+
+  --tertiary: #4a5fd9;
+  --tertiary-dim: #3d51c4;
+  --tertiary-container: #dfe2ff;
+  --on-tertiary: #ffffff;
+  --on-tertiary-container: #0a1a66;
+
+  --on-surface: #171a1f;
+  --on-surface-variant: #4b4f55;
+  --on-background: #171a1f;
+  --inverse-surface: #2b2e33;
+  --inverse-on-surface: #eef1f5;
+
+  --outline: #8a8d92;
+  --outline-variant: #c6cad0;
+
+  --error: #c2362f;
+  --error-dim: #a32722;
+  --error-container: #ffdad6;
+  --on-error: #ffffff;
+  --on-error-container: #410002;
+
+  --success: #1d9e68;
+  --warning: #b07a00;
+}
+[data-theme="mycelium-light"] body::before {
+  opacity: 0.35;
+}
+
+/* Graphite Dark — the dark shell with a calm, neutral accent. */
+[data-theme="graphite-dark"] {
+  --primary: #c9ced6;
+  --primary-dim: #aab1bb;
+  --primary-container: #3a4049;
+  --primary-fixed: #c9ced6;
+  --primary-fixed-dim: #aab1bb;
+  --on-primary: #14171c;
+  --on-primary-fixed: #14171c;
+  --on-primary-fixed-variant: #2a2f36;
+  --on-primary-container: #e8ebef;
+  --inverse-primary: #4a505a;
+  --surface-tint: #c9ced6;
+
+  --secondary: #9aa3ad;
+  --secondary-dim: #848d98;
+  --secondary-container: #343a42;
+  --on-secondary: #14171c;
+  --on-secondary-container: #e8ebef;
+
+  --tertiary: #8b93a3;
+  --tertiary-dim: #767e8e;
+  --tertiary-container: #303641;
+  --on-tertiary: #14171c;
+  --on-tertiary-container: #e4e8ef;
+}
+[data-theme="graphite-dark"] body::before {
+  opacity: 0.4;
+}
+
+/* Custom accent — set by layout.js as an inline --primary override on
+   <html data-custom-accent>. Derived tones come from color-mix so a single
+   hex value re-tints the whole system coherently. */
+:root[data-custom-accent] {
+  --primary-dim: color-mix(in srgb, var(--primary) 82%, #000000);
+  --primary-container: color-mix(in srgb, var(--primary) 60%, #000000);
+  --primary-fixed: var(--primary);
+  --primary-fixed-dim: color-mix(in srgb, var(--primary) 82%, #000000);
+  --on-primary: color-mix(in srgb, var(--primary) 18%, #000000);
+  --on-primary-container: color-mix(in srgb, var(--primary) 25%, #ffffff);
+  --surface-tint: var(--primary);
+  --secondary: color-mix(in srgb, var(--primary) 75%, #5a6f8a);
+  --secondary-dim: color-mix(in srgb, var(--primary) 60%, #3a4a5e);
+}

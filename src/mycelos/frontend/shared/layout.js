@@ -11,6 +11,45 @@
  * Maps /pages/chat.html -> "chat", /pages/dashboard.html -> "dashboard", etc.
  * Falls back to "chat" for the root or unknown paths.
  */
+/* ── Theme bootstrap ────────────────────────────────────────────────
+   Applies the user's theme (preset + accent) as early as possible:
+   localStorage first (no flash of default theme), then the server value
+   (system memory scope — follows the user across devices) reconciles it.
+   Presets are pure CSS variable sets in base.css; the accent is a single
+   --primary override that color-mix() fans out into derived tones. */
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme && theme.preset && theme.preset !== 'mycelium-dark') {
+    root.setAttribute('data-theme', theme.preset);
+  } else {
+    root.removeAttribute('data-theme');
+  }
+  if (theme && theme.accent) {
+    root.style.setProperty('--primary', theme.accent);
+    root.setAttribute('data-custom-accent', '');
+  } else {
+    root.style.removeProperty('--primary');
+    root.removeAttribute('data-custom-accent');
+  }
+}
+
+(function bootstrapTheme() {
+  try {
+    const cached = JSON.parse(localStorage.getItem('mycelos-theme') || 'null');
+    if (cached) applyTheme(cached);
+  } catch (e) { /* corrupt cache — server value below wins */ }
+  fetch('/api/ui/theme')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((theme) => {
+      if (!theme) return;
+      applyTheme(theme);
+      localStorage.setItem('mycelos-theme',
+        JSON.stringify({ preset: theme.preset, accent: theme.accent }));
+    })
+    .catch(() => { /* offline — cached/default theme stands */ });
+})();
+
 function detectActivePage() {
   const path = window.location.pathname;
   const match = path.match(/\/pages\/(\w+)\.html/);

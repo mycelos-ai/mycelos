@@ -171,6 +171,9 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.cost import router as cost_router
     api.include_router(cost_router)
 
+    from mycelos.gateway.routers.ui_theme import router as ui_theme_router
+    api.include_router(ui_theme_router)
+
     from mycelos.gateway.routers.telegram_webhook import router as telegram_webhook_router
     api.include_router(telegram_webhook_router)
 

@@ -631,6 +631,17 @@ web:
     save: "Speichern"
     language: "Sprache"
     theme: "Design"
+    appearance:
+      title: "Erscheinungsbild"
+      subtitle: "Design & Akzent"
+      preset: "Design"
+      preset_dark: "Mycelium Dunkel"
+      preset_light: "Mycelium Hell"
+      preset_graphite: "Graphit"
+      accent: "Akzentfarbe"
+      accent_default: "Standard (Cyan)"
+      accent_reset: "Zurücksetzen"
+      hint: "Dein Design wird im Konto gespeichert und gilt auf allen Geräten."
   panel:
     agent_status: "Agent-Status"
     session_activity: "Sitzungsaktivitaet"

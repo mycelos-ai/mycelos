@@ -6,6 +6,22 @@ Full visual identity pass over the web UI ("Neural Mycelium" design
 system): ambient backdrop, glass surfaces, no-border depth, cyan glow
 accents. Visual changes only — no behavioral rewrites.
 
+### User-customizable themes
+
+Because the design system is pure CSS custom properties, a theme is just
+a variable set — so it is now user-configurable:
+
+- **Three presets**: Mycelium Dark (default), Mycelium Light, Graphite —
+  selected via `data-theme` variable overrides in `shared/base.css`.
+- **Custom accent color**: a single `--primary` override; derived tones
+  (dim, container, on-primary, secondary) fan out via CSS `color-mix()`,
+  so one hex value re-tints the whole system coherently.
+- **Settings → Appearance**: preset cards + color picker (i18n en/de).
+- **Follows the user across devices**: persisted server-side via
+  `GET/POST /api/ui/theme` (system memory scope, audited
+  `ui.theme.updated`), applied flash-free on load from a localStorage
+  mirror, then reconciled with the server value.
+
 ### Design tokens (`shared/base.css`)
 - Ambient mycelium backdrop: fixed dual radial glow (cyan top-left,
   violet bottom-right) behind every page; opaque `<main>` backgrounds

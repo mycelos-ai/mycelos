@@ -644,6 +644,17 @@ web:
     save: "Save"
     language: "Language"
     theme: "Theme"
+    appearance:
+      title: "Appearance"
+      subtitle: "Theme & Accent"
+      preset: "Theme"
+      preset_dark: "Mycelium Dark"
+      preset_light: "Mycelium Light"
+      preset_graphite: "Graphite"
+      accent: "Accent color"
+      accent_default: "Default (Cyan)"
+      accent_reset: "Reset"
+      hint: "Your theme is saved to your account and follows you across devices."
   panel:
     agent_status: "Agent Status"
     session_activity: "Session Activity"
