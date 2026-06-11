@@ -127,10 +127,14 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
         )
         routing_text, _ = _build_custom_agents_context(app)
         paused = _build_paused_agents_context(app)
-        variables["available_agents"] = (
-            "## Custom Agents\n" + routing_text + paused
-            if routing_text else ""
-        )
+        # Roster is omitted entirely when no custom agents exist —
+        # routing_text is "" in that case.
+        sections = []
+        if routing_text:
+            sections.append("## Custom Agents\n" + routing_text)
+        if paused:
+            sections.append(paused.strip())
+        variables["available_agents"] = "\n\n".join(sections)
     except Exception:
         variables["available_agents"] = ""
 
@@ -178,11 +182,12 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
     try:
         from mycelos.agents.handlers.mycelos_handler import (
             _HANDOFF_RULES_BASE,
+            _NO_CUSTOM_AGENTS_NOTE,
             _build_custom_agents_context,
         )
         routing_text, _ = _build_custom_agents_context(app)
         variables["handoff_rules"] = _HANDOFF_RULES_BASE.format(
-            custom_agent_routing=routing_text
+            custom_agent_routing=routing_text or _NO_CUSTOM_AGENTS_NOTE
         )
     except Exception:
         variables["handoff_rules"] = ""

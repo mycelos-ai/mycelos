@@ -167,6 +167,8 @@ chat:
   step_status: "Step '{step_id}' {status}"
   unknown_error: "Unknown error"
   attachment_ready: "📎 _{filename}_ is attached. Ask me anything about it."
+  handoff_transition: "Connecting you with {agent}…"
+  handoff_return: "You're back with {agent}."
 
 # --- Config ---
 config:

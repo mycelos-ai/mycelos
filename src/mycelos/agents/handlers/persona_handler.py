@@ -51,7 +51,10 @@ class PersonaHandler(AgentHandler):
                 "- If a tool call fails or a capability is missing, ASK the user "
                 "if you should request it — don't just say you can't do it.\n"
                 "- If you need a connector that isn't installed, suggest the setup command.\n"
-                "- Be helpful and proactive, not apologetic."
+                "- Be helpful and proactive, not apologetic.\n"
+                "- If the user asks for Mycelos (the primary assistant) or the "
+                "request is clearly outside your specialty, call the "
+                "`return_to_mycelos` tool to hand the conversation back."
             )
 
         # Add user context (name, language, memory)
