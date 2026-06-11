@@ -115,7 +115,7 @@
 
           const nodes = this.graphData.nodes.slice(0, 36).map(n => {
             let hsh = 0;
-            for (const ch of n.id) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0;
+            for (const ch of String(n.id || '')) hsh = (hsh * 31 + ch.charCodeAt(0)) >>> 0;
             return { ...n, x: (hsh % 1000) / 1000, y: ((hsh >> 10) % 1000) / 1000, vx: 0, vy: 0 };
           });
           const idx = {};
