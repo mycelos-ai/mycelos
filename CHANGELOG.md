@@ -1,5 +1,27 @@
 # Changelog
 
+## Week 24 (2026) — Neural Mycelium UI
+
+Full visual identity pass over the web UI ("Neural Mycelium" design
+system): ambient backdrop, glass surfaces, no-border depth, cyan glow
+accents. Visual changes only — no behavioral rewrites.
+
+### Design tokens (`shared/base.css`)
+- Ambient mycelium backdrop: fixed dual radial glow (cyan top-left,
+  violet bottom-right) behind every page; opaque `<main>` backgrounds
+  removed so the glow shows through.
+- New semantic tokens: `--success`, `--success-dim`, `--warning`,
+  `--warning-dim` (the warning token was referenced by five pages but
+  never defined), plus `--glow-primary` / `--glow-primary-soft` /
+  `--glow-tertiary-soft`.
+- No-border philosophy for `.card` / `.card-low`: depth now comes from
+  layered gradients, inset top highlight, and shadow instead of
+  outlines; hover adds a faint cyan aura.
+- New `.hero-panel` utility: glass hero surface with cyan aura, used
+  for page-level hero sections.
+- Sidebar active state: glow pill with luminous left indicator instead
+  of a hard right border.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user

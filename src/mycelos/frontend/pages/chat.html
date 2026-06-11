@@ -291,7 +291,7 @@
   <div id="quick-capture"></div>
 
   <!-- Main content area -->
-  <main class="flex-1 flex flex-col md:pl-64 md:pr-72 min-w-0 bg-[var(--surface)]"
+  <main class="flex-1 flex flex-col md:pl-64 md:pr-72 min-w-0"
         x-data="chatApp()" x-init="initChat()"
         @new-session.window="newSession()"
         @run-command.window="handleClickedCommand($event.detail.command)"

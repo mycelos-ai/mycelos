@@ -76,6 +76,17 @@
   --on-error: #490006;
   --on-error-container: #ffa8a3;
 
+  /* Success / Warning (semantic states) */
+  --success: #48c78e;
+  --success-dim: #2e9d6d;
+  --warning: #ffd166;
+  --warning-dim: #e0ae3a;
+
+  /* Glow (Neural Mycelium ambient accents) */
+  --glow-primary: rgba(106, 214, 255, 0.4);
+  --glow-primary-soft: rgba(106, 214, 255, 0.15);
+  --glow-tertiary-soft: rgba(135, 157, 255, 0.12);
+
   /* Typography */
   --font-headline: 'Space Grotesk', sans-serif;
   --font-body: 'Manrope', sans-serif;
@@ -102,6 +113,26 @@
   --transition-fast: 150ms ease;
   --transition-normal: 300ms ease-in-out;
   --transition-slow: 500ms ease-in-out;
+}
+
+
+/* --------------------------------------------------------------------------
+   1b. Ambient Mycelium Backdrop
+   --------------------------------------------------------------------------
+   Two soft radial glows (cyan top-left, violet bottom-right) behind every
+   page. Rendered on a fixed pseudo-element at z-index -1 so it never
+   intercepts clicks and always paints behind page content (the body
+   background propagates to the root canvas, so the glow stays visible). */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 45% at 12% 0%, var(--glow-primary-soft), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 95% 100%, var(--glow-tertiary-soft), transparent 70%);
 }
 
 
@@ -212,23 +243,50 @@
    6. Cards
    -------------------------------------------------------------------------- */
 
+/* No-border philosophy: depth comes from layered surfaces, a faint inset
+   top highlight, and shadow — not from outlines. */
 .card {
-  background: var(--surface-container);
-  border: 1px solid rgba(70, 72, 77, 0.15);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 30%), var(--surface-container);
+  border: 1px solid transparent;
   border-radius: var(--radius-xl);
   padding: var(--space-6);
-  transition: border-color var(--transition-normal);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.25);
+  transition: box-shadow var(--transition-normal), border-color var(--transition-normal);
 }
 
 .card:hover {
-  border-color: rgba(70, 72, 77, 0.3);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 28px rgba(0, 0, 0, 0.3), 0 0 24px var(--glow-primary-soft);
 }
 
 .card-low {
   background: var(--surface-container-low);
-  border: 1px solid rgba(70, 72, 77, 0.1);
+  border: 1px solid transparent;
   border-radius: var(--radius-xl);
   padding: var(--space-4);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+}
+
+/* Hero panel — glass over the ambient backdrop with a cyan aura.
+   Used for page-level hero sections (dashboard greeting, etc.). */
+.hero-panel {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(106, 214, 255, 0.07), rgba(35, 38, 44, 0.5) 45%, rgba(135, 157, 255, 0.05));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.hero-panel::after {
+  content: '';
+  position: absolute;
+  top: -40%;
+  right: -10%;
+  width: 50%;
+  height: 120%;
+  background: radial-gradient(ellipse, var(--glow-primary-soft), transparent 70%);
+  pointer-events: none;
 }
 
 
@@ -266,7 +324,7 @@
 
 .status-badge--success {
   background: rgba(72, 199, 142, 0.1);
-  color: #48c78e;
+  color: var(--success);
 }
 
 .status-badge--success::before {
@@ -274,7 +332,7 @@
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: #48c78e;
+  background: var(--success);
 }
 
 .status-badge--paused {
@@ -379,11 +437,26 @@ input::placeholder, textarea::placeholder {
   color: var(--primary);
 }
 
+/* Active state: cyan glow pill with a luminous left indicator instead of a
+   hard border (no-border philosophy). */
 .sidebar-nav-link.active {
+  position: relative;
   color: var(--primary);
-  background: var(--surface-container);
-  border-right: 2px solid var(--primary);
-  border-radius: 0;
+  background: linear-gradient(90deg, rgba(106, 214, 255, 0.12), rgba(106, 214, 255, 0.03));
+  box-shadow: 0 0 16px rgba(106, 214, 255, 0.06) inset;
+}
+
+.sidebar-nav-link.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  box-shadow: 0 0 8px var(--glow-primary);
 }
 
 
