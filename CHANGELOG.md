@@ -49,6 +49,14 @@ accents. Visual changes only — no behavioral rewrites.
   `graph_notes`, `graph_links`, `graph_empty` in en/de).
 - Empty state redesigned: glowing hub mark instead of bare text.
 
+### Chat
+- User bubbles get a deep-blue gradient and soft shadow instead of a
+  flat fill.
+- Empty-state suggestion chips are now glass pills with a faint cyan
+  ring.
+- Input bar: rounder glass container with backdrop blur, matching the
+  ambient glow wrapper.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user
