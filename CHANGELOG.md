@@ -28,6 +28,17 @@ accents. Visual changes only — no behavioral rewrites.
 - Brand mark gets a radial cyan halo (`.sidebar-brand-mark`) and the
   wordmark a subtle text glow.
 
+### Dashboard hero
+- New hero panel: time-of-day greeting with the user's name, tagline,
+  and live system pulse badges (gateway, scheduler, agent count).
+- Knowledge graph teaser: a live mini force-directed render of the
+  knowledge graph (glowing nodes, cyan filaments) inside the hero,
+  linking to the full graph view.
+- `knowledge.html` accepts `?view=graph` to deep-link straight into
+  the graph view (used by the teaser).
+- New i18n keys under `web.dashboard` in `en.yaml` and `de.yaml`
+  (greetings, hero subtitle, graph teaser labels).
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user

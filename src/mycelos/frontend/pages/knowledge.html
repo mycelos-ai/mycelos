@@ -1355,6 +1355,15 @@
             await this.navigateToNote(encodeURIComponent(noteParam));
           }
 
+          // Deep-link into the graph view (?view=graph, used by the
+          // dashboard hero teaser).
+          const viewParam = new URLSearchParams(window.location.search).get('view');
+          if (viewParam === 'graph' && !noteParam) {
+            this.viewMode = 'graph';
+            this.filteredNotes = this.notes;
+            this.$dispatch('load-graph');
+          }
+
           // Handle browser Back/Forward buttons
           window.addEventListener('popstate', (e) => {
             if (e.state && e.state.note) {
