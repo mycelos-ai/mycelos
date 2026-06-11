@@ -39,6 +39,16 @@ accents. Visual changes only — no behavioral rewrites.
 - New i18n keys under `web.dashboard` in `en.yaml` and `de.yaml`
   (greetings, hero subtitle, graph teaser labels).
 
+### Knowledge graph
+- Nodes now render with a soft neon glow per type; the hovered node
+  flares brighter and its connecting filaments light up cyan.
+- Edges are drawn as cyan mycelium filaments (related links stay
+  neutral dotted).
+- Legend dots glow in their node color; legend labels, stats line, and
+  the empty state are now i18n'd (`web.knowledge.legend_*`,
+  `graph_notes`, `graph_links`, `graph_empty` in en/de).
+- Empty state redesigned: glowing hub mark instead of bare text.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user

@@ -577,6 +577,13 @@ web:
     search_placeholder: "Search notes..."
     pending: "Pending"
     empty_state: "Press ⌘K to write your first note"
+    legend_topic: "Topic"
+    legend_task: "Task"
+    legend_document: "Document"
+    legend_note: "Note"
+    graph_notes: "notes"
+    graph_links: "links"
+    graph_empty: "No notes yet — the graph grows as your knowledge does."
   quick_capture:
     placeholder: "Capture a thought, task, or reminder…"
     hint_footer: "⌘K · Quick Capture"

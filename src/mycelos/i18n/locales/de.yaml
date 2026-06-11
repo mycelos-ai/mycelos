@@ -564,6 +564,13 @@ web:
     search_placeholder: "Notizen durchsuchen..."
     pending: "Offen"
     empty_state: "Drücke ⌘K für deine erste Notiz"
+    legend_topic: "Thema"
+    legend_task: "Aufgabe"
+    legend_document: "Dokument"
+    legend_note: "Notiz"
+    graph_notes: "Notizen"
+    graph_links: "Verknuepfungen"
+    graph_empty: "Noch keine Notizen — der Graph waechst mit deinem Wissen."
   quick_capture:
     placeholder: "Gedanke, Aufgabe oder Erinnerung festhalten…"
     hint_footer: "⌘K · Quick Capture"
