@@ -1,5 +1,40 @@
 # Changelog
 
+## Week 24 (2026) — automatic agent routing
+
+The primary chat agent now routes conversations to registered
+custom/persona agents on its own — the multi-agent system is visible
+without explicit handoff commands.
+
+- **Agent roster in the system prompt.** Mycelos's prompt includes a
+  compact roster of user-facing custom agents (name, description,
+  when-to-use), generated fresh from the agent registry at session
+  start. When no custom agents exist, the section is omitted entirely.
+  System agents (builder, doctor, workflow-agent, evaluator, auditor)
+  are never auto-routing targets; builder/doctor keep their dedicated
+  routing rules.
+- **Fail-soft routing guardrails.** The roster instructs the model to
+  route ONLY on clear matches and to stay with Mycelos when unsure.
+  All routing decisions are LLM judgment via the existing `handoff`
+  tool — no keyword/regex classification anywhere.
+- **Sticky, visible handoffs.** Auto-handoffs persist in
+  `session_agents` so the specialist keeps the conversation across
+  messages. The user sees a short i18n transition line
+  ("Connecting you with {agent}…" / "You're back with {agent}.").
+- **Explicit return path.** Every routed (non-mycelos) agent gets a
+  `return_to_mycelos` tool; persona prompts explain when to call it.
+  The decision is the LLM's — never message keyword matching.
+- **Capability safety (Constitution Rule 5).** Persona agents with a
+  registered `allowed_tools` list now only see those tools in their
+  session toolset (plus the return path; no `discover_tools` escape
+  hatch), and tool execution enforces the allowlist fail-closed:
+  unknown agents and unparseable allowlists are denied and audited
+  as `tool.blocked`.
+- **Fixes along the way:** the dynamic handoff tool (with its valid-
+  target enum) no longer loses to the generic registry schema in the
+  Mycelos toolset, and handoff to `doctor` is accepted by the handoff
+  tool validator like the other system agents.
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user
