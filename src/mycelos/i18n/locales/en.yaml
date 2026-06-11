@@ -529,6 +529,9 @@ web:
     no_connectors: "No connectors configured"
     no_workflows: "No workflows defined"
     no_schedules: "No scheduled tasks"
+    briefing: "Morning Briefing"
+    briefing_loading: "Building your briefing..."
+    briefing_unavailable: "Briefing not available"
   agents:
     title: "Agents"
     build_new: "Build New Agent"

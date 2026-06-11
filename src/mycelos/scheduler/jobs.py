@@ -37,6 +37,97 @@ def reminder_tick_check(app: Any) -> dict[str, int]:
     return result
 
 
+def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
+    """Run one pass of the living-knowledge auto-ingest.
+
+    Runs every registered INGEST_SOURCES connector IF the user opted in
+    (memory key ``auto_ingest_enabled``, default OFF) and the connector
+    is active in the registry. Errors in one connector never crash the
+    loop — they are recorded and the next connector still runs.
+    """
+    from mycelos.knowledge.connector_ingest import INGEST_SOURCES
+
+    summary: dict[str, Any] = {
+        "enabled": False, "ran": {}, "skipped": [], "errors": {},
+    }
+    try:
+        enabled = app.memory.get(user_id, "system", "auto_ingest_enabled")
+    except Exception as e:
+        logger.error("auto_ingest_check: memory read failed: %s", e)
+        return summary
+    if not enabled:
+        return summary
+    summary["enabled"] = True
+
+    for name, ingest_fn in INGEST_SOURCES.items():
+        try:
+            connector = app.connector_registry.get(name)
+        except Exception as e:
+            logger.warning("auto-ingest: registry lookup for %s failed: %s", name, e)
+            connector = None
+        if not connector or connector.get("status") != "active":
+            summary["skipped"].append(name)
+            continue
+        try:
+            result = ingest_fn(app, user_id=user_id)
+            if result.get("error"):
+                summary["errors"][name] = str(result["error"])
+            else:
+                summary["ran"][name] = {
+                    "created": result.get("created", 0),
+                    "skipped_existing": result.get("skipped_existing", 0),
+                }
+        except Exception as e:
+            logger.error("auto-ingest for %s FAILED: %s", name, e, exc_info=True)
+            summary["errors"][name] = str(e)
+
+    try:
+        app.audit.log("knowledge.auto_ingest.run", user_id=user_id,
+                      details=summary)
+    except Exception:
+        pass
+    return summary
+
+
+def briefing_tick(
+    app: Any,
+    user_id: str = "default",
+    now: "datetime | None" = None,
+    reminder_service: Any = None,
+) -> dict[str, Any]:
+    """Deliver the morning briefing once per day at the configured time.
+
+    Called every 5 minutes by the scheduler. Sends when all of:
+    ``briefing_enabled`` is set (default OFF), the local time has passed
+    ``briefing_time`` (default 07:30), and ``briefing_last_sent`` is not
+    today. Must never raise — the scheduler loop stays alive.
+    """
+    from mycelos.knowledge.briefing import (
+        DEFAULT_BRIEFING_TIME,
+        deliver_briefing,
+        is_briefing_due,
+    )
+
+    try:
+        if not app.memory.get(user_id, "system", "briefing_enabled"):
+            return {"enabled": False, "sent": False}
+
+        now = now or datetime.now()  # local time — briefing_time is local
+        briefing_time = (
+            app.memory.get(user_id, "system", "briefing_time")
+            or DEFAULT_BRIEFING_TIME
+        )
+        last_sent = app.memory.get(user_id, "system", "briefing_last_sent")
+        if not is_briefing_due(now, briefing_time, last_sent):
+            return {"enabled": True, "sent": False, "reason": "not_due"}
+
+        result = deliver_briefing(app, user_id, reminder_service=reminder_service)
+        return {"enabled": True, **result}
+    except Exception as e:
+        logger.error("briefing_tick FAILED: %s", e, exc_info=True)
+        return {"sent": False, "error": str(e)}
+
+
 def sweep_orphaned_workflow_runs(app: Any) -> int:
     """Mark workflow_runs stuck in 'running' as failed (e.g., after crash)."""
     try:
@@ -110,6 +201,20 @@ def register_periodic_jobs(huey: Any, app: Any) -> None:
                 )
         except Exception as e:
             logger.error("Model update check FAILED: %s", e, exc_info=True)
+
+    @huey.periodic_task(crontab(minute="0"))  # Hourly
+    def auto_ingest_periodic() -> None:
+        """Living knowledge: pull fresh content from connected services.
+
+        No-op unless the user enabled auto-ingest (memory key
+        ``auto_ingest_enabled``) — the check is a single memory read.
+        """
+        auto_ingest_check(app)
+
+    @huey.periodic_task(crontab(minute="*/5"))  # Every 5 minutes
+    def briefing_periodic() -> None:
+        """Deliver the morning briefing when its time window opens."""
+        briefing_tick(app)
 
     @huey.periodic_task(crontab(minute="*/5"))  # Every 5 minutes
     def knowledge_organizer_periodic() -> None:
