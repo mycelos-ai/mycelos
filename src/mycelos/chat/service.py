@@ -167,6 +167,10 @@ def _get_chat_agent_tools(
             continue
         if name in excluded_gated:
             continue
+        # The return path is only for routed (non-mycelos) agents —
+        # ChatService._get_session_tools appends it per-agent.
+        if name == "return_to_mycelos":
+            continue
         result.append(t)
     return result
 
@@ -219,6 +223,19 @@ _BLOCKED_ACTION_PREFIXES = [
     "schedule delete",
     "workflow delete",
 ]
+
+# Tools that control agent routing — always available to routed agents
+# regardless of their allowed_tools scoping, so a specialist can always
+# hand the conversation back to Mycelos.
+_ROUTING_CONTROL_TOOLS = {"handoff", "return_to_mycelos"}
+
+# Agent IDs that are exempt from the persona tool-allowlist check —
+# system agents have their own handlers and tool scoping.
+_SYSTEM_AGENT_IDS = frozenset({
+    "mycelos", "builder", "doctor", "creator", "planner",
+    "workflow-agent", "evaluator-agent", "auditor-agent",
+    "knowledge-organizer", "model-updater",
+})
 
 # Maximum tool-call rounds to prevent infinite loops
 MAX_TOOL_ROUNDS = 5
@@ -348,12 +365,68 @@ class ChatService:
                 if name not in base_names:
                     base.append(t)
                     base_names.add(name)
+            # Constitution Rule 5: persona agents with an explicit tool
+            # allowlist only see their registered tools. Routing-control
+            # tools stay so the agent can always hand back.
+            if getattr(handler, "_is_persona", False):
+                allowed = self._get_agent_allowed_tools(agent_id)
+                if allowed is not None:
+                    permitted = allowed | _ROUTING_CONTROL_TOOLS
+                    base = [
+                        t for t in base
+                        if t.get("function", {}).get("name") in permitted
+                    ]
+            # Every non-mycelos agent gets the explicit return path
+            if agent_id != "mycelos":
+                self._append_return_tool(base)
             return base
         else:
             try:
-                return handler.get_tools(channel=channel)
+                tools = handler.get_tools(channel=channel)
             except TypeError:
-                return handler.get_tools()
+                tools = handler.get_tools()
+            if agent_id != "mycelos":
+                tools = list(tools)
+                self._append_return_tool(tools)
+            return tools
+
+    @staticmethod
+    def _append_return_tool(tools: list[dict]) -> None:
+        """Append the return_to_mycelos schema if it isn't there yet."""
+        names = {t.get("function", {}).get("name") for t in tools}
+        if "return_to_mycelos" not in names:
+            schema = ToolRegistry.get_schema("return_to_mycelos")
+            if schema:
+                tools.append(schema)
+
+    def _get_agent_allowed_tools(self, agent_id: str) -> set[str] | None:
+        """Return the explicit tool allowlist for *agent_id*.
+
+        ``None`` means unrestricted (system agents, personas registered
+        with an empty allowed_tools list). Fail-closed (Constitution
+        Rule 3): unknown agents and lookup/parse errors return an empty
+        set, which denies everything except the routing-control tools.
+        """
+        if not agent_id or agent_id in _SYSTEM_AGENT_IDS:
+            return None
+        try:
+            agent = self._app.agent_registry.get(agent_id)
+        except Exception:
+            return set()  # lookup error = denied (fail-closed)
+        if agent is None:
+            return set()  # unknown agent = denied (fail-closed)
+        raw = agent.get("allowed_tools")
+        if raw in (None, ""):
+            return None
+        try:
+            names = json.loads(raw) if isinstance(raw, str) else raw
+        except (json.JSONDecodeError, TypeError):
+            return set()  # unparseable allowlist = denied (fail-closed)
+        if not isinstance(names, list):
+            return set()
+        if not names:
+            return None  # empty list = "all tools" (persona semantics)
+        return {str(n) for n in names}
 
     def create_session(self, user_id: str = "default") -> str:
         """Create a new chat session."""
@@ -995,7 +1068,7 @@ class ChatService:
                 guard.track_tool_calls(response.tool_calls)
 
                 # Execute tool calls — parallel for concurrent-safe batches
-                _special_tools = {"handoff", "request_action", "session_set"}
+                _special_tools = {"handoff", "return_to_mycelos", "request_action", "session_set"}
                 batches = _partition_tool_calls(response.tool_calls)
                 for batch in batches:
                   # Parallel execution for multi-tool concurrent-safe batches
@@ -1164,14 +1237,12 @@ class ChatService:
                         events.append(done_event())
                         return events
 
-                    # If handoff tool was called, switch agent and continue
-                    # in the SAME conversation with the new agent's prompt
+                    # If a routing tool (handoff / return_to_mycelos) was
+                    # called, switch agent and continue in the SAME
+                    # conversation with the new agent's prompt
                     if (isinstance(result, dict)
                             and result.get("status") == "handoff"
-                            and tool_name == "handoff"):
-                        handoff_msg = result.get("message", "")
-                        events.append(system_response_event(handoff_msg))
-
+                            and tool_name in _ROUTING_CONTROL_TOOLS):
                         new_agent_id = self._get_active_agent(session_id)
                         new_handlers = self._app.get_agent_handlers()
                         new_handler = new_handlers.get(new_agent_id)
@@ -1186,6 +1257,20 @@ class ChatService:
                                     )
                             except Exception:
                                 _log.debug("No handler or registry entry for %s", new_agent_id)
+
+                        # Friendly transition line — i18n UI string, the
+                        # routed agent's own reply stays LLM-generated.
+                        from mycelos.i18n import t as _t
+                        if new_handler:
+                            transition_key = (
+                                "chat.handoff_return" if new_agent_id == "mycelos"
+                                else "chat.handoff_transition"
+                            )
+                            events.append(system_response_event(
+                                _t(transition_key, agent=new_handler.display_name)
+                            ))
+                        else:
+                            events.append(system_response_event(result.get("message", "")))
 
                         if new_handler:
                             events.append(agent_event(new_handler.display_name))
@@ -1703,6 +1788,28 @@ class ChatService:
         import logging
         _log = logging.getLogger("mycelos.chat.tools")
 
+        # Layer 0: Agent tool allowlist (Constitution Rule 5).
+        # Routed persona/custom agents only use tools from their
+        # registered allowlist; routing-control tools are always allowed
+        # so the agent can hand back. Fail-closed on unknown agents.
+        acting_agent = agent_id or self._get_active_agent(
+            session_id or self._current_session_id
+        )
+        if tool_name not in _ROUTING_CONTROL_TOOLS:
+            allowed_for_agent = self._get_agent_allowed_tools(acting_agent)
+            if allowed_for_agent is not None and tool_name not in allowed_for_agent:
+                self._app.audit.log("tool.blocked", details={
+                    "tool": tool_name, "reason": "agent_allowlist",
+                    "agent_id": acting_agent, "user_id": user_id,
+                })
+                return {
+                    "error": (
+                        f"Tool '{tool_name}' is not available to agent "
+                        f"'{acting_agent}'. Use one of your registered tools "
+                        f"or call return_to_mycelos."
+                    )
+                }
+
         # Layer 1: Policy check
         # In chat context, the user is directly present — default is "always" (not "confirm").
         # Only explicitly set policies ("never", "confirm") override the default.
@@ -1823,8 +1930,8 @@ class ChatService:
             if context.get("_pending_events"):
                 self._pending_events = context["_pending_events"]
 
-            # Update active_agents_cache after handoff
-            if tool_name == "handoff" and isinstance(result, dict) and result.get("status") == "handoff":
+            # Update active_agents_cache after handoff / return_to_mycelos
+            if tool_name in _ROUTING_CONTROL_TOOLS and isinstance(result, dict) and result.get("status") == "handoff":
                 target = result.get("target_agent", args.get("target_agent"))
                 session_id = self._current_session_id
                 if target and session_id:

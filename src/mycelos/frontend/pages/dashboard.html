@@ -43,10 +43,18 @@
         workflowList: [],
         scheduleList: [],
         graphData: { nodes: [], edges: [] },
+        briefing: null,
+        briefingLoading: true,
         loading: true,
         error: null,
 
         async init() {
+          // Briefing loads independently — it may trigger a (cached-per-day)
+          // LLM build and must not block the dashboard.
+          MycelosAPI.get('/api/briefing/today')
+            .then(b => { this.briefing = b; })
+            .catch(() => {})
+            .finally(() => { this.briefingLoading = false; });
           try {
             const [today, week, month, sessions, agents, health, audit, connectorList, workflowList, scheduleList] = await Promise.all([
               MycelosAPI.get('/api/cost?period=today'),
@@ -325,6 +333,29 @@
               </span>
             </div>
           </a>
+        </div>
+
+        <!-- Section: Morning Briefing -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-4" x-text="t('dashboard.briefing')">Morning Briefing</h2>
+          <div class="card">
+            <template x-if="briefingLoading">
+              <p class="text-sm text-[var(--on-surface-variant)] py-2" x-text="t('dashboard.briefing_loading')">Building your briefing...</p>
+            </template>
+            <template x-if="!briefingLoading && !briefing">
+              <p class="text-sm text-[var(--on-surface-variant)] py-2" x-text="t('dashboard.briefing_unavailable')">Briefing not available</p>
+            </template>
+            <template x-if="!briefingLoading && briefing">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-tighter font-label" x-text="briefing.date"></span>
+                  <span class="material-symbols-outlined text-[var(--primary)] text-lg">wb_sunny</span>
+                </div>
+                <p class="text-sm text-[var(--on-surface)] whitespace-pre-wrap mb-3" x-show="briefing.synthesis" x-text="briefing.synthesis"></p>
+                <p class="text-xs text-[var(--on-surface-variant)] whitespace-pre-wrap" x-text="briefing.sections"></p>
+              </div>
+            </template>
+          </div>
         </div>
 
         <!-- Section: Cost Overview -->

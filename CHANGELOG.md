@@ -80,6 +80,45 @@ a variable set — so it is now user-configurable:
   kept — the CDN build cannot alpha-modify CSS variables). Brand colors
   (Telegram blue, Slack red) are deliberately untouched.
 
+## Week 24 (2026) — morning briefing & living knowledge
+
+The strategic answer to "subconscious loop" assistants: the knowledge
+base keeps itself current and the user gets a proactive daily synthesis.
+
+- **Scheduled auto-ingest** (`auto_ingest_check` in `scheduler/jobs.py`):
+  an hourly Huey job runs every registered `INGEST_SOURCES` connector —
+  but only when the user opted in (memory key `auto_ingest_enabled`,
+  default OFF) and the connector is active in the registry. Idempotent
+  via external-id dedup; per-run audit event
+  (`knowledge.auto_ingest.run`); a failing connector never crashes the
+  scheduler loop.
+- **Briefing builder** (`knowledge/briefing.py`): gathers deterministic
+  facts first — overdue tasks, tasks due today, reminders firing today,
+  notes created in the last 24h (with connector provenance), topics
+  touched — then makes ONE LLM call on the cheapest model to synthesize
+  a short friendly briefing (~200 words, user's language). User content
+  is framed as data-not-instructions (same injection hardening as the
+  organizer). Fail-soft: if the LLM is down, the deterministic sections
+  still go out. Built once per day, cached in memory scope.
+- **Daily delivery** (`briefing_tick`): a 5-minute Huey tick sends the
+  briefing once per day after the user-configured time (memory key
+  `briefing_time`, default 07:30; `briefing_enabled` default OFF;
+  `briefing_last_sent` prevents double sends). Delivery rides the
+  reminder channel path — Telegram when configured, otherwise skip with
+  a log. Audit event `briefing.sent`.
+- **API**: `GET /api/briefing/today` (cached-for-the-day, else freshly
+  built), `GET/POST /api/briefing/settings` (enabled / time /
+  auto_ingest_enabled, validated HH:MM, audited as
+  `briefing.settings.updated`). All settings live in memory scope —
+  content state, no config generation required (Constitution Rule 2).
+- **Dashboard**: a Morning Briefing card on the dashboard page, loaded
+  independently so it never blocks the rest of the dashboard. New i18n
+  keys in `en.yaml` + `de.yaml`.
+- Tests: `tests/test_briefing.py` (builder, fail-soft, per-day cache,
+  time-window logic, no-double-send, settings API, audit events) and
+  `tests/test_scheduled_ingest.py` (off-by-default gating, active-
+  connector gating, error isolation, idempotency, audit).
+
 ## v0.3.0 — 2026-04-21
 
 First tagged public release. Baseline for self-hosted single-user

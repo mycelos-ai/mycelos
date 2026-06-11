@@ -162,6 +162,8 @@ chat:
   step_status: "Schritt '{step_id}' {status}"
   unknown_error: "Unbekannter Fehler"
   attachment_ready: "📎 _{filename}_ ist angehängt. Frag mich, was du darüber wissen willst."
+  handoff_transition: "Ich verbinde dich mit {agent}…"
+  handoff_return: "Du sprichst wieder mit {agent}."
 
 config:
   title: "Config-Generationen"
@@ -526,6 +528,9 @@ web:
     no_connectors: "Keine Konnektoren"
     no_workflows: "Keine Workflows"
     no_schedules: "Keine geplanten Aufgaben"
+    briefing: "Morgen-Briefing"
+    briefing_loading: "Briefing wird erstellt..."
+    briefing_unavailable: "Briefing nicht verfuegbar"
   agents:
     title: "Agenten"
     build_new: "Neuen Agent erstellen"

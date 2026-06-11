@@ -19,6 +19,36 @@ if TYPE_CHECKING:
 # Fallback list of user-facing agent IDs if the registry cannot be queried
 _FALLBACK_USER_FACING_AGENTS = ["builder", "doctor"]
 
+# System agents are never auto-routing targets in the custom-agent roster.
+# Builder and doctor have their own dedicated routing rules; the rest are
+# internal and must not be offered to the user at all.
+_SYSTEM_AGENT_IDS = {
+    "mycelos", "builder", "doctor", "creator", "planner",
+    "workflow-agent", "evaluator-agent", "auditor-agent",
+    "knowledge-organizer", "model-updater",
+}
+
+# Shown in the handoff rules when no custom agents are registered yet.
+_NO_CUSTOM_AGENTS_NOTE = (
+    "No custom agents registered yet. If the user wants a specialist, "
+    "hand off to builder to create one."
+)
+
+# Routing-quality guardrails appended to the roster. The model decides —
+# never keyword matching — and fails soft to the generalist when unsure.
+_ROUTING_GUARDRAILS = """
+Routing rules:
+- Route ONLY when the user's request clearly matches an agent's specialty.
+- When unsure, do NOT hand off — handle the request yourself. You are the
+  default; a wrong route is worse than answering directly.
+- To route: briefly tell the user you're connecting them, then call the
+  `handoff` tool with the agent ID.
+- Routing is sticky: the specialist keeps the conversation until it calls
+  `return_to_mycelos` or the user asks for you again.
+- The user may ask for a persona by name (e.g., 'talk to Stella').
+- Build and diagnostic requests follow the builder/doctor rules above —
+  system agents are not part of this roster."""
+
 _HANDOFF_RULES_BASE = """
 ## Handoff Rules (Agent Routing)
 
@@ -114,32 +144,37 @@ def _get_user_facing_agents(app: Any) -> list[str]:
 
 
 def _build_custom_agents_context(app: Any) -> tuple[str, list[dict]]:
-    """Build routing context for custom agents and personas.
+    """Build the auto-routing roster for custom agents and personas.
+
+    Generated fresh from the registry — name, description, and a
+    when-to-use hint per agent, plus fail-soft routing guardrails.
 
     Returns:
-        Tuple of (routing_rules_text, list_of_agent_info_dicts)
+        Tuple of (roster_text, list_of_agent_info_dicts). The roster text
+        is EMPTY when no custom agents exist, so callers can omit the
+        section entirely.
     """
     try:
         all_agents = app.agent_registry.list_agents(status="active")
     except Exception:
-        return ("No custom agents available.", [])
+        return ("", [])
 
     # System agents are not routable custom agents
-    system_ids = {"mycelos", "builder", "doctor", "workflow-agent", "evaluator-agent", "auditor-agent"}
-    custom = [a for a in all_agents if a["id"] not in system_ids]
+    custom = [a for a in all_agents if a["id"] not in _SYSTEM_AGENT_IDS]
 
     if not custom:
-        return ("No custom agents available yet. If the user wants one, hand off to builder.", [])
+        return ("", [])
 
     lines = []
     agent_infos = []
     for agent in custom:
         agent_id = agent["id"]
-        name = agent.get("name", agent_id)
+        name = agent.get("display_name") or agent.get("name", agent_id)
         prompt = agent.get("system_prompt", "")
         caps = agent.get("capabilities", [])
         created_by = agent.get("created_by", "")
         is_persona = bool(prompt) and created_by != "creator-agent"
+        user_facing = bool(agent.get("user_facing"))
 
         # Build a short description from the prompt or capabilities
         if prompt:
@@ -151,18 +186,17 @@ def _build_custom_agents_context(app: Any) -> tuple[str, list[dict]]:
             desc = name
 
         agent_type = "persona" if is_persona else "specialist"
-        lines.append(f"- **{name}** (`{agent_id}`) — {agent_type}: {desc}")
+        lines.append(
+            f"- **{name}** (`{agent_id}`) — {agent_type}. When to use: {desc}."
+        )
 
         agent_infos.append({
             "id": agent_id, "name": name, "type": agent_type,
             "description": desc, "is_persona": is_persona,
+            "user_facing": user_facing,
         })
 
-    routing = "\n".join(lines)
-    routing += "\n\n**IMPORTANT: Always prefer custom agents over your built-in tools.**"
-    routing += "\nIf a specialist agent exists for a task (e.g., PDF extraction), hand off to it"
-    routing += "\ninstead of using your own tools. The specialist was built specifically for this."
-    routing += "\nFor persona agents: the user may ask by name (e.g., 'talk to Stella')."
+    routing = "\n".join(lines) + "\n" + _ROUTING_GUARDRAILS
 
     return (routing, agent_infos)
 
@@ -328,15 +362,22 @@ class MycelosHandler:
 
         for info in custom_infos:
             if info["is_persona"]:
-                # Persona → handoff target
-                if info["id"] not in target_agents:
+                # User-facing persona → handoff target (non-user-facing
+                # personas are rejected by the handoff validator anyway)
+                if info.get("user_facing") and info["id"] not in target_agents:
                     target_agents.append(info["id"])
             else:
                 # Code agent → direct tool
                 tools.append(_build_agent_tool(info))
 
         handoff_tool = _build_handoff_tool(target_agents)
-        return _get_chat_agent_tools(self._app, channel=channel) + tools + [handoff_tool]
+        # Drop the registry's generic handoff schema (no target enum) —
+        # the dynamic one with the valid-targets enum replaces it.
+        base = [
+            t for t in _get_chat_agent_tools(self._app, channel=channel)
+            if t.get("function", {}).get("name") != "handoff"
+        ]
+        return base + tools + [handoff_tool]
 
 
 def _build_agent_tool(agent_info: dict) -> dict:

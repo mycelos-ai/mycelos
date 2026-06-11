@@ -115,6 +115,37 @@ HANDOFF_SCHEMA = {
 }
 
 
+RETURN_TO_MYCELOS_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "return_to_mycelos",
+        "description": (
+            "Return the conversation to Mycelos, the primary assistant. "
+            "Use when the user asks to talk to Mycelos again, when the "
+            "request is clearly outside your specialty, or when your task "
+            "is complete and the user moves on to something else."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why control is returned to Mycelos.",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "Short summary of what you did so far (1-3 sentences) "
+                        "so Mycelos can continue seamlessly."
+                    ),
+                },
+            },
+            "required": ["reason"],
+        },
+    },
+}
+
+
 # --- Dependency Checking ---
 
 def _check_missing_packages(packages: list[str]) -> list[str]:
@@ -307,7 +338,7 @@ def execute_handoff(args: dict, context: dict) -> Any:
     summary = args.get("context", args.get("summary", ""))
 
     # Validate: system agents are always valid
-    system_agents = {"mycelos", "builder", "creator", "planner"}
+    system_agents = {"mycelos", "builder", "doctor", "creator", "planner"}
     if target not in system_agents:
         agent = app.agent_registry.get(target)
         if not agent or not agent.get("user_facing"):
@@ -343,9 +374,29 @@ def execute_handoff(args: dict, context: dict) -> Any:
     }
 
 
+def execute_return_to_mycelos(args: dict, context: dict) -> Any:
+    """Hand the conversation back to Mycelos — the explicit return path.
+
+    Routed persona/custom agents always get this tool so the user can
+    return to the generalist at any time. The decision to call it is the
+    LLM's (prompted judgment), never keyword matching on the message.
+    """
+    return execute_handoff(
+        {
+            "target_agent": "mycelos",
+            "reason": args.get("reason", "Returning control to Mycelos"),
+            "summary": args.get("summary", ""),
+        },
+        context,
+    )
+
+
 # --- Registration ---
 
 def register(registry: type) -> None:
     """Register all agent tools."""
     registry.register("create_agent", CREATE_AGENT_SCHEMA, execute_create_agent, ToolPermission.BUILDER, category="system")
     registry.register("handoff", HANDOFF_SCHEMA, execute_handoff, ToolPermission.SYSTEM, category="core")
+    # ChatService excludes this from the mycelos toolset and appends it
+    # explicitly for every non-mycelos active agent (the return path).
+    registry.register("return_to_mycelos", RETURN_TO_MYCELOS_SCHEMA, execute_return_to_mycelos, ToolPermission.SYSTEM, category="core")
