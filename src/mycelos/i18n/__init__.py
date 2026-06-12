@@ -9,6 +9,12 @@ Usage:
     console.print(t("init.provider_prompt", count=3))
 """
 
-from mycelos.i18n.loader import t, set_language, get_language, get_web_translations
+from mycelos.i18n.loader import (
+    t, set_language, get_language, get_web_translations, bind_app,
+    LANGUAGE_MEMORY_KEY,
+)
 
-__all__ = ["t", "set_language", "get_language", "get_web_translations"]
+__all__ = [
+    "t", "set_language", "get_language", "get_web_translations", "bind_app",
+    "LANGUAGE_MEMORY_KEY",
+]

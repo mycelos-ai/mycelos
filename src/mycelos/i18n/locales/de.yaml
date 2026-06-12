@@ -641,6 +641,7 @@ web:
     save: "Speichern"
     language: "Sprache"
     theme: "Design"
+    language_hint: "Gilt fuer die Oberflaeche, LLM-Antworten und die Spracherkennung. Seite neu laden, um die uebersetzte Oberflaeche zu sehen."
     appearance:
       title: "Erscheinungsbild"
       subtitle: "Design & Akzent"
@@ -705,6 +706,7 @@ web:
     too_large: "Datei zu gross (max. 50 MB)."
     upload_error: "Upload-Fehler: {error}"
   common:
+    saved: "Gespeichert"
     loading: "Wird geladen..."
     error: "Fehler"
     retry: "Wiederholen"

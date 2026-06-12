@@ -1,5 +1,27 @@
 # Changelog
 
+## Week 24 (2026) — language setting actually works
+
+Fixes a three-bug chain that made the UI language setting (and the voice
+transcription hint that depends on it) silently ineffective:
+
+- **Writer/reader key mismatch.** The settings selector wrote
+  `user.preference.language` via a chat slash command, but startup read
+  `user.language` — so the choice was stored and never read. There is now
+  one canonical key (`user.language`) and a dedicated
+  `GET/POST /api/language` endpoint (validated, audited as
+  `language.changed`) instead of the slash-command round-trip.
+- **`get_language()` was a process-global set once at boot.** It now
+  reads the live value from the app's memory (via `bind_app`), so a
+  language change in the running server takes effect immediately — for
+  translations AND the STT transcription hint — without a restart. This
+  was the direct cause of voice notes still transcribing in the old
+  language after switching to German.
+- **Settings UI** now loads the persisted language into the selector
+  (was hardcoded to 'en'), saves via the new endpoint with a "Saved"
+  confirmation, and explains that the change covers interface, LLM
+  responses, and voice transcription (reload to see the UI translated).
+
 ## Week 24 (2026) — voice fixes
 
 - **Transcription speaks your language.** Whisper's auto-detection

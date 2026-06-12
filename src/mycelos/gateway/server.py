@@ -521,12 +521,16 @@ def create_app(
     except Exception:
         logging.getLogger("mycelos.gateway").exception("Failed to seed built-in workflows")
 
-    # Set language from env or user preference
-    from mycelos.i18n import set_language
+    # Set language from env or user preference. bind_app lets get_language()
+    # read the live DB value afterwards, so a change in the running server
+    # (Settings -> Language) takes effect without a restart — for both
+    # translations and the STT transcription hint.
+    from mycelos.i18n import set_language, bind_app, LANGUAGE_MEMORY_KEY
+    bind_app(mycelos)
     lang = os.environ.get("MYCELOS_LANG")
     if not lang:
         try:
-            lang = mycelos.memory.get("default", "system", "user.language")
+            lang = mycelos.memory.get("default", "system", LANGUAGE_MEMORY_KEY)
         except Exception:
             pass
     set_language(lang or "en")

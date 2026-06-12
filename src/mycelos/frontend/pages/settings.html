@@ -81,7 +81,7 @@
           // Load each section independently so one failure doesn't block all
           const safe = async (fn) => { try { return await fn(); } catch { return null; } };
 
-          const [modelsData, creds, configData, genData, updateData, upgData, winData, provData] = await Promise.all([
+          const [modelsData, creds, configData, genData, updateData, upgData, winData, provData, langData] = await Promise.all([
             safe(() => MycelosAPI.get('/api/models')),
             safe(() => MycelosAPI.get('/api/credentials')),
             safe(() => MycelosAPI.get('/api/config')),
@@ -90,7 +90,10 @@
             safe(() => MycelosAPI.get('/api/models/upgrades')),
             safe(() => MycelosAPI.get('/api/models/winners')),
             safe(() => MycelosAPI.get('/api/setup/providers')),
+            safe(() => MycelosAPI.get('/api/language')),
           ]);
+          // Reflect the persisted language so the selector isn't stuck on 'en'.
+          if (langData && langData.language) this.language = langData.language;
           if (updateData) this.updateStatus = updateData;
           if (provData) this.providerCatalog = provData.providers || [];
           // Restore EU-mode preference. localStorage survives reloads but is
@@ -1300,22 +1303,22 @@
           <h2 class="font-headline text-lg font-bold tracking-tight mb-1" x-text="t('settings.language')">Language</h2>
           <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Interface Language</p>
 
-          <div class="card max-w-sm">
+          <div class="card max-w-sm" x-data="{ langSaved: false }">
             <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Preferred Language</label>
             <select
               class="input-field"
               x-model="language"
               @change="
-                MycelosAPI.post('/api/chat', {
-                  message: '/memory set language=' + language,
-                  user_id: 'default',
-                }).catch(() => {})
+                MycelosAPI.post('/api/language', { language: language })
+                  .then(() => { langSaved = true; setTimeout(() => langSaved = false, 2500); })
+                  .catch(() => {})
               "
             >
               <option value="en">English</option>
               <option value="de">Deutsch</option>
             </select>
-            <p class="text-[10px] text-[var(--on-surface-variant)] mt-2">LLM responses will adapt to this language. The interface stays in English.</p>
+            <p class="text-[10px] text-[var(--on-surface-variant)] mt-2" x-text="t('settings.language_hint')">Applies to the interface, LLM responses, and voice transcription. Reload to see the interface translated.</p>
+            <p x-show="langSaved" class="text-[10px] text-[var(--primary)] mt-1" x-text="t('common.saved')">Saved</p>
           </div>
         </div>
 
