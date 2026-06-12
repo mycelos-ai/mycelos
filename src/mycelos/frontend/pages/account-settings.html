@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Preferences</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Preferences content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="{
+        language: 'en',
+        loading: true,
+        error: null,
+
+        async init() {
+          // Load each section independently so one failure doesn't block all
+          const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+
+          const [langData] = await Promise.all([
+            safe(() => MycelosAPI.get('/api/language')),
+          ]);
+          // Reflect the persisted language so the selector isn't stuck on 'en'.
+          if (langData && langData.language) this.language = langData.language;
+          this.loading = false;
+        },
+      }"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error && !loading" class="card max-w-md mx-auto mt-12 text-center">
+        <span class="material-symbols-outlined text-[var(--error)] text-3xl mb-3">error_outline</span>
+        <p class="text-sm text-[var(--on-surface-variant)]" x-text="'Connection failed: ' + error"></p>
+        <button class="btn-secondary mt-4" @click="loading = true; error = null; init()" x-text="t('common.retry')">Retry</button>
+      </div>
+
+      <!-- Preferences sections -->
+      <div x-show="!loading && !error" class="animate-fade-in max-w-5xl mx-auto space-y-10">
+
+        <!-- Page heading -->
+        <div>
+          <h1 class="font-headline text-2xl font-bold tracking-tight" x-text="t('preferences.title')">Preferences</h1>
+          <p class="text-[11px] text-[var(--on-surface-variant)] mt-1" x-text="t('preferences.subtitle')">Language and appearance for your account</p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section: Language -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1" x-text="t('settings.language')">Language</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Interface Language</p>
+
+          <div class="card max-w-sm" x-data="{ langSaved: false }">
+            <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Preferred Language</label>
+            <select
+              class="input-field"
+              x-model="language"
+              @change="
+                MycelosAPI.post('/api/language', { language: language })
+                  .then(() => { langSaved = true; setTimeout(() => langSaved = false, 2500); })
+                  .catch(() => {})
+              "
+            >
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+            </select>
+            <p class="text-[10px] text-[var(--on-surface-variant)] mt-2" x-text="t('settings.language_hint')">Applies to the interface, LLM responses, and voice transcription. Reload to see the interface translated.</p>
+            <p x-show="langSaved" class="text-[10px] text-[var(--primary)] mt-1" x-text="t('common.saved')">Saved</p>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section: Appearance (theme presets + accent color) -->
+        <!-- ============================================================ -->
+        <div x-data="appearanceSettings()" x-init="load()">
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1" x-text="t('settings.appearance.title')">Appearance</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4" x-text="t('settings.appearance.subtitle')">Theme &amp; Accent</p>
+
+          <div class="card max-w-xl">
+            <!-- Preset cards -->
+            <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-2" x-text="t('settings.appearance.preset')">Theme</label>
+            <div class="grid grid-cols-3 gap-3 mb-5">
+              <template x-for="p in presets" :key="p.id">
+                <button @click="setPreset(p.id)"
+                        class="rounded-xl p-3 text-left transition-all"
+                        :class="theme.preset === p.id
+                          ? 'ring-2 ring-[var(--primary)] bg-[var(--surface-container-high)]'
+                          : 'bg-[var(--surface-container-low)] hover:bg-[var(--surface-container)]'">
+                  <span class="flex gap-1 mb-2">
+                    <span class="w-4 h-4 rounded-full" :style="'background:' + p.swatch[0]"></span>
+                    <span class="w-4 h-4 rounded-full" :style="'background:' + p.swatch[1]"></span>
+                    <span class="w-4 h-4 rounded-full" :style="'background:' + p.swatch[2]"></span>
+                  </span>
+                  <span class="text-xs font-medium block" x-text="t('settings.appearance.preset_' + p.key)"></span>
+                </button>
+              </template>
+            </div>
+
+            <!-- Accent color -->
+            <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5" x-text="t('settings.appearance.accent')">Accent color</label>
+            <div class="flex items-center gap-3">
+              <input type="color"
+                     :value="theme.accent || '#6ad6ff'"
+                     @change="setAccent($event.target.value)"
+                     class="w-10 h-10 rounded-lg cursor-pointer bg-transparent border-none p-0">
+              <code class="text-xs text-[var(--on-surface-variant)]" x-text="theme.accent || t('settings.appearance.accent_default')"></code>
+              <button x-show="theme.accent" @click="setAccent(null)"
+                      class="text-xs px-2 py-1 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors"
+                      x-text="t('settings.appearance.accent_reset')">Reset</button>
+            </div>
+            <p class="text-[10px] text-[var(--on-surface-variant)] mt-3" x-text="t('settings.appearance.hint')">Your theme follows you across devices.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+  <script>
+    /**
+     * Appearance settings — theme preset + accent color.
+     * Persists server-side via /api/ui/theme (follows the user across
+     * devices); applies instantly via applyTheme() from layout.js and
+     * mirrors into localStorage for flash-free loads.
+     */
+    function appearanceSettings() {
+      return {
+        theme: { preset: 'mycelium-dark', accent: null },
+        presets: [
+          { id: 'mycelium-dark', key: 'dark', swatch: ['#0c0e12', '#6ad6ff', '#879dff'] },
+          { id: 'mycelium-light', key: 'light', swatch: ['#f4f6f9', '#0077a3', '#4a5fd9'] },
+          { id: 'graphite-dark', key: 'graphite', swatch: ['#0c0e12', '#c9ced6', '#8b93a3'] },
+        ],
+
+        async load() {
+          try {
+            const data = await MycelosAPI.get('/api/ui/theme');
+            this.theme = { preset: data.preset, accent: data.accent };
+          } catch (e) { /* defaults stand */ }
+        },
+
+        async setPreset(preset) {
+          this.theme.preset = preset;
+          await this._save({ preset });
+        },
+
+        async setAccent(accent) {
+          this.theme.accent = accent;
+          await this._save({ accent });
+        },
+
+        async _save(patch) {
+          this._apply();
+          try {
+            const data = await MycelosAPI.post('/api/ui/theme', patch);
+            this.theme = { preset: data.preset, accent: data.accent };
+            this._apply();
+          } catch (e) {
+            console.warn('Theme save failed:', e.message);
+          }
+        },
+
+        _apply() {
+          applyTheme(this.theme);
+          try {
+            localStorage.setItem('mycelos-theme', JSON.stringify(this.theme));
+          } catch (e) { /* private mode */ }
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>
