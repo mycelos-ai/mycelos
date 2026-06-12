@@ -277,7 +277,8 @@ def is_briefing_due(
 
 
 def deliver_briefing(
-    app: Any, user_id: str = "default", reminder_service: Any = None
+    app: Any, user_id: str = "default", reminder_service: Any = None,
+    now: "datetime | None" = None,
 ) -> dict:
     """Build today's briefing and push it down the reminder delivery path.
 
@@ -286,6 +287,12 @@ def deliver_briefing(
     is not configured we skip with a log and deliberately do NOT mark the
     day as sent — a Telegram channel configured later the same day still
     gets the briefing.
+
+    ``now`` is the scheduler's tick time. The dedup marker
+    ``briefing_last_sent`` is derived from it — ``is_briefing_due``
+    compares against ``now.date()``, so writing the wall-clock date here
+    instead would break the once-per-day guarantee whenever the two
+    dates differ (tick across midnight, frozen-clock tests).
     """
     if reminder_service is None:
         from mycelos.knowledge.reminder import ReminderService
@@ -296,6 +303,7 @@ def deliver_briefing(
         logger.info("briefing skipped: no Telegram channel configured")
         return {"sent": False, "reason": "telegram_not_configured"}
 
+    sent_date = (now or datetime.now()).date().isoformat()
     briefing = get_or_build_briefing(app, user_id)
     sent = reminder_service.dispatch("telegram", briefing["markdown"])
     if not sent:
@@ -303,16 +311,16 @@ def deliver_briefing(
         return {"sent": False, "reason": "dispatch_failed"}
 
     app.memory.set(
-        user_id, "system", "briefing_last_sent", briefing["date"],
+        user_id, "system", "briefing_last_sent", sent_date,
         created_by="briefing",
     )
     try:
         app.audit.log(
             "briefing.sent",
             user_id=user_id,
-            details={"date": briefing["date"], "channel": "telegram",
+            details={"date": sent_date, "channel": "telegram",
                      **briefing["counts"]},
         )
     except Exception:
         logger.debug("audit log failed for briefing.sent", exc_info=True)
-    return {"sent": True, "date": briefing["date"]}
+    return {"sent": True, "date": sent_date}
