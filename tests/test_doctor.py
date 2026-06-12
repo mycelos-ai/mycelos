@@ -159,6 +159,49 @@ class TestHealthCheck:
         assert result["status"] == "ok"
         assert "1 allowed user" in result["details"]
 
+    def _configure_telegram_ok(self, app):
+        app.storage.execute(
+            """INSERT INTO channels (id, channel_type, mode, status, config, allowed_users)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("telegram", "telegram", "polling", "active", "{}", "[42]"),
+        )
+        app.credentials.store_credential("telegram", {
+            "api_key": "123:ABC", "provider": "telegram",
+        })
+        app.memory.set("default", "system", "telegram_chat_id", "42")
+
+    def test_telegram_flags_materialize_window_closed(self, app):
+        """The exact Pi failure: outbound works (briefing arrives) but the
+        bootstrap window closed before the token was materialized, so
+        inbound polling never started. Doctor must catch this and point at
+        MYCELOS_BOOTSTRAP_WINDOW / a restart — otherwise it silently reads
+        'ok' from config alone."""
+        from mycelos.doctor.checks import check_telegram
+        self._configure_telegram_ok(app)
+        # The proxy writes this audit event when the gateway asks for the
+        # token too late in the boot sequence.
+        app.audit.log("proxy.materialize_denied",
+                      details={"service": "telegram", "reason": "window_closed",
+                               "elapsed": 72.0})
+        result = check_telegram(app)
+        assert result["status"] in ("warning", "error")
+        details = result["details"].lower()
+        assert "polling" in details or "inbound" in details
+        assert "bootstrap_window" in details or "restart" in details
+
+    def test_telegram_ok_ignores_stale_materialize_denial(self, app):
+        """A materialize denial from a PREVIOUS boot must not flag a
+        currently-healthy channel. Only denials since the latest
+        gateway.started count."""
+        from mycelos.doctor.checks import check_telegram
+        self._configure_telegram_ok(app)
+        # Old denial, then a successful (re)start afterwards.
+        app.audit.log("proxy.materialize_denied",
+                      details={"service": "telegram", "reason": "window_closed"})
+        app.audit.log("gateway.started", details={"debug": False})
+        result = check_telegram(app)
+        assert result["status"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # --why mode (LLM diagnosis)

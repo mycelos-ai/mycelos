@@ -115,6 +115,44 @@ def check_telegram(app: "App") -> dict[str, Any]:
             "status": status,
             "details": f"Configured but: {', '.join(issues)}",
         }
+
+    # Inbound-polling health: the proxy writes 'proxy.materialize_denied'
+    # with reason 'window_closed' when the gateway asked for the Telegram
+    # token too late in the boot sequence. When that happens the polling
+    # thread never starts — outbound sends still work (briefing arrives),
+    # but inbound messages are silently dropped. Catch the exact case the
+    # config-only check above would report as "ok". Only count a denial
+    # since the most recent gateway start, so a stale failure from an
+    # earlier boot doesn't flag a now-healthy channel.
+    last_start = app.storage.fetchone(
+        "SELECT created_at FROM audit_events WHERE event_type='gateway.started' "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
+    denial_sql = (
+        "SELECT created_at FROM audit_events "
+        "WHERE event_type='proxy.materialize_denied' "
+        "AND details LIKE '%telegram%' AND details LIKE '%window_closed%' "
+    )
+    params: tuple = ()
+    if last_start:
+        denial_sql += "AND created_at > ? "
+        params = (last_start["created_at"],)
+    denial_sql += "ORDER BY created_at DESC LIMIT 1"
+    denial = app.storage.fetchone(denial_sql, params)
+    if denial:
+        return {
+            "category": "telegram",
+            "status": "warning",
+            "details": (
+                "Configured, but inbound polling did not start — the proxy "
+                "credential bootstrap window closed before the bot token was "
+                "materialized (outbound sends still work, which is why the "
+                "briefing arrives but replies do not). Fix: restart the stack "
+                "(docker compose down && up -d), or raise the window with "
+                "MYCELOS_BOOTSTRAP_WINDOW (seconds) on a slow host."
+            ),
+        }
+
     return {
         "category": "telegram",
         "status": "ok",
