@@ -1,5 +1,30 @@
 # Changelog
 
+## Week 24 (2026) — settings restructure
+
+Splits the single 1563-line Settings page into three focused pages. Behavior
+and API calls are unchanged — only the information architecture moved.
+
+- **`/pages/account-settings.html` (Preferences).** User-level Language +
+  Appearance, reachable as a top-level "Preferences" sidebar entry *outside*
+  the Admin group. Calls `/api/language` and `/api/ui/theme` only.
+- **`/pages/ai-providers.html` (AI Providers).** The heavy AI configuration —
+  Models (provider connect, EU mode, refresh, winners/migration banners),
+  Credentials, and Agent/System model assignments. Lives under Admin. Calls
+  `/api/models`, `/api/credentials`, `/api/models/upgrades`,
+  `/api/models/winners`, `/api/setup/providers`, plus the assignment/migration
+  endpoints — all relocated intact from the old page.
+- **`/pages/settings.html` (renamed to "System Settings").** Now hosts only
+  Config Generations, Updates, and Data Management. Calls `/api/config`,
+  `/api/config/generations`, and `/api/system/update-status`.
+- **Sidebar** gains a "Preferences" link (top-level) and an "AI Providers"
+  entry under Admin; the old "Settings" entry is relabeled "System Settings".
+- **`ui_open_page`** `settings_models` target now points at
+  `/pages/ai-providers.html#models` (the Models UI moved there).
+- New i18n keys (`web.preferences.*`, `web.ai_providers.*`,
+  `web.system_settings.*`, `web.sidebar.preferences`,
+  `web.sidebar.admin_ai_providers`) added to both `en.yaml` and `de.yaml`.
+
 ## Week 24 (2026) — knowledge mobile navigation
 
 The Knowledge page was built for the desktop 3-pane layout and collapsed

@@ -15,7 +15,9 @@ PAGES = [
     ("/pages/sessions.html", "Sessions", None),
     ("/pages/doctor.html", "System Doctor", None),
     ("/pages/connectors.html", "Connectors", None),
-    ("/pages/settings.html", "Settings", None),
+    ("/pages/ai-providers.html", "AI Providers", None),
+    ("/pages/account-settings.html", "Preferences", None),
+    ("/pages/settings.html", "System Settings", None),
     ("/pages/docs.html", "Documentation", None),
     ("/pages/about.html", "Mycelos", None),
 ]

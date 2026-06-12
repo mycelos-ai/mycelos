@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - AI Providers</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-64 min-w-0">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- AI Providers content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="{
+        models: [],
+        agents: [],
+        assignments: [],
+        credentials: [],
+        loading: true,
+        error: null,
+
+        showAddCredential: false,
+        newCred: { service: '', label: 'default', secret: '', description: '' },
+        credSaving: false,
+        credError: null,
+
+        confirmDeleteCred: null,
+
+        // ── Migration banner + Winners ──
+        upgrades: [],
+        upgradeSel: {},       // {old_id: Set(key)}  selected assignments per upgrade
+        upgradeBusy: {},      // {old_id: bool}
+        upgradeDone: {},      // {old_id: 'ok' | string}  post-migration result
+        winners: {},          // {provider_id: [model,...]}
+        providerPill: 'all',  // active filter pill
+        showFullTable: false, // show full table (opposite of winners-only view)
+
+        // ── EU mode (data-residency) ──
+        // When on, the provider grid is filtered to providers flagged
+        // eu_residency=true on the backend (Vertex AI, Mistral, Ollama).
+        // Persisted in localStorage; backend providers don't change behavior
+        // based on this flag — actual residency is determined by which
+        // provider+region the user picks.
+        euMode: false,
+        // Provider catalog from /api/setup/providers (id, name, eu_residency,
+        // credential_fields). Drives the tile grid and the extended modal.
+        providerCatalog: [],
+        // Multi-field credential entry state (Vertex AI: JSON + project + region).
+        extendedFields: null,    // [{key, label, type, options, default, ...}] or null
+        extendedValues: {},      // { vertex_credentials: '...', vertex_project: '...', ... }
+
+        async init() {
+          // Load each section independently so one failure doesn't block all
+          const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+
+          const [modelsData, creds, upgData, winData, provData] = await Promise.all([
+            safe(() => MycelosAPI.get('/api/models')),
+            safe(() => MycelosAPI.get('/api/credentials')),
+            safe(() => MycelosAPI.get('/api/models/upgrades')),
+            safe(() => MycelosAPI.get('/api/models/winners')),
+            safe(() => MycelosAPI.get('/api/setup/providers')),
+          ]);
+          if (provData) this.providerCatalog = provData.providers || [];
+          // Restore EU-mode preference. localStorage survives reloads but is
+          // per-browser; that's acceptable for a UI filter.
+          try {
+            this.euMode = localStorage.getItem('mycelos.euMode') === '1';
+          } catch (_) { /* private mode / disabled storage */ }
+
+          if (modelsData) {
+            this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
+            this.assignments = modelsData.assignments || [];
+          }
+          if (upgData) {
+            this.upgrades = upgData.upgrades || [];
+            // Pre-select every assignment by default — user opts out per row.
+            for (const u of this.upgrades) {
+              this.upgradeSel[u.old_id] = new Set((u.assignments || []).map(a => a.key));
+            }
+          }
+          if (winData) {
+            this.winners = winData.providers || {};
+            // Default pill: first *credentialed* provider that has winners.
+            // (providersWithWinners() already filters to credentialed ones.)
+            const provs = this.providersWithWinners();
+            if (provs.length > 0) this.providerPill = provs[0];
+          }
+          if (creds) {
+            this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+          }
+          this.loading = false;
+        },
+
+        async addCredential() {
+          if (!this.newCred.service || !this.newCred.secret) return;
+          this.credSaving = true;
+          this.credError = null;
+          try {
+            await MycelosAPI.post('/api/credentials', this.newCred);
+            this.showAddCredential = false;
+            this.newCred = { service: '', label: 'default', secret: '', description: '' };
+            // Refresh
+            this.credentials = await MycelosAPI.get('/api/credentials');
+          } catch (e) {
+            this.credError = e.message;
+          } finally {
+            this.credSaving = false;
+          }
+        },
+
+        async deleteCredential(service, label) {
+          try {
+            await MycelosAPI.delete('/api/credentials/' + encodeURIComponent(service) + '?label=' + encodeURIComponent(label || 'default'));
+            this.confirmDeleteCred = null;
+            this.credentials = await MycelosAPI.get('/api/credentials');
+          } catch (e) {
+            alert('Delete failed: ' + e.message);
+            this.confirmDeleteCred = null;
+          }
+        },
+
+        formatDate(ts) {
+          if (!ts) return '';
+          const d = new Date(ts);
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+
+        // ── Agent-Model Assignments ──
+        // Local edit buffer keyed by `${agent_id}:${purpose}`
+        assignmentEdits: {},
+
+        // Server-assignments bucketed by `${agent_id}:${purpose}`.
+        _assignmentsByKey() {
+          const byKey = {};
+          for (const a of this.assignments) {
+            const agent_id = a.agent_id;  // may be null for system defaults
+            const purpose = a.purpose || 'execution';
+            const key = (agent_id || '__system__') + ':' + purpose;
+            if (!byKey[key]) byKey[key] = [];
+            byKey[key].push(a.model_id);
+          }
+          return byKey;
+        },
+
+        _buildGroup(agent_id, agent_name, purpose, server_model_ids, label) {
+          const key = (agent_id || '__system__') + ':' + purpose;
+          const edit = this.assignmentEdits[key];
+          const model_ids = edit ? edit.model_ids : server_model_ids.slice();
+          return {
+            key,
+            agent_id,
+            agent_name,
+            purpose,
+            label,
+            model_ids,
+            inherited: !edit && server_model_ids.length === 0,
+            dirty: edit ? edit.dirty : false,
+            saving: edit ? !!edit.saving : false,
+            error: edit ? edit.error : null,
+          };
+        },
+
+        // Per-agent groups: one row per registered agent, for execution only.
+        // Agents without an explicit assignment get an inherited row so the
+        // user can optionally override.
+        agentGroups() {
+          const byKey = this._assignmentsByKey();
+          const groups = [];
+          for (const agent of this.agents) {
+            const key = agent.id + ':execution';
+            const server_model_ids = byKey[key] || [];
+            groups.push(this._buildGroup(
+              agent.id,
+              agent.name || agent.id,
+              'execution',
+              server_model_ids,
+              null,
+            ));
+          }
+          return groups;
+        },
+
+        // System-default groups: one entry per purpose (execution + classification).
+        systemGroups() {
+          const byKey = this._assignmentsByKey();
+          const PURPOSES = [
+            {purpose: 'execution', label: 'Default execution chain', hint: 'Fallback for agents without their own assignment.'},
+            {purpose: 'classification', label: 'Background tasks', hint: 'Cheapest model — knowledge classification, reminders, session summaries.'},
+          ];
+          const groups = [];
+          for (const {purpose, label, hint} of PURPOSES) {
+            const key = '__system__:' + purpose;
+            const server_model_ids = byKey[key] || [];
+            if (server_model_ids.length === 0 && !this.assignmentEdits[key]) {
+              // Don't show an empty system default the user hasn't configured.
+              continue;
+            }
+            const g = this._buildGroup(null, label, purpose, server_model_ids, label);
+            g.hint = hint;
+            groups.push(g);
+          }
+          return groups;
+        },
+
+        _edit(group) {
+          const existing = this.assignmentEdits[group.key];
+          if (existing) return existing;
+          const fresh = {
+            model_ids: group.model_ids.slice(),
+            dirty: false,
+            saving: false,
+            error: null,
+          };
+          this.assignmentEdits[group.key] = fresh;
+          return fresh;
+        },
+
+        setModelAt(group, idx, model_id) {
+          const edit = this._edit(group);
+          edit.model_ids[idx] = model_id;
+          edit.dirty = true;
+        },
+
+        moveModel(group, idx, delta) {
+          const edit = this._edit(group);
+          const next = idx + delta;
+          if (next &lt; 0 || next &gt;= edit.model_ids.length) return;
+          const tmp = edit.model_ids[idx];
+          edit.model_ids[idx] = edit.model_ids[next];
+          edit.model_ids[next] = tmp;
+          edit.dirty = true;
+        },
+
+        removeModel(group, idx) {
+          const edit = this._edit(group);
+          if (edit.model_ids.length &lt;= 1) return;
+          edit.model_ids.splice(idx, 1);
+          edit.dirty = true;
+        },
+
+        addModel(group) {
+          const edit = this._edit(group);
+          const firstModel = this.models[0];
+          if (!firstModel) return;
+          edit.model_ids.push(firstModel.id);
+          edit.dirty = true;
+        },
+
+        resetAgentModels(agent_id, purpose) {
+          const key = (agent_id || '__system__') + ':' + purpose;
+          delete this.assignmentEdits[key];
+        },
+
+        // ── Model refresh ──
+        refreshingModels: false,
+        refreshResult: null,
+
+        async refreshModels() {
+          this.refreshingModels = true;
+          this.refreshResult = null;
+          try {
+            const result = await MycelosAPI.post('/api/models/refresh', {});
+            this.refreshResult = result;
+            // Reload the models list so any additions show up.
+            const modelsData = await MycelosAPI.get('/api/models');
+            this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
+            this.assignments = modelsData.assignments || [];
+            // A fresh catalog may have introduced new upgrade suggestions.
+            const [upgData, winData] = await Promise.all([
+              MycelosAPI.get('/api/models/upgrades').catch(() => null),
+              MycelosAPI.get('/api/models/winners').catch(() => null),
+            ]);
+            if (upgData) {
+              this.upgrades = upgData.upgrades || [];
+              for (const u of this.upgrades) {
+                if (!this.upgradeSel[u.old_id]) {
+                  this.upgradeSel[u.old_id] = new Set((u.assignments || []).map(a => a.key));
+                }
+              }
+            }
+            if (winData) this.winners = winData.providers || {};
+          } catch (e) {
+            this.refreshResult = { error: e.message || 'Refresh failed' };
+          } finally {
+            this.refreshingModels = false;
+          }
+        },
+
+        // ── Migration banner actions ──
+        isUpgradeKeyChecked(old_id, key) {
+          const s = this.upgradeSel[old_id];
+          return !!(s && s.has(key));
+        },
+        toggleUpgradeKey(old_id, key) {
+          const s = this.upgradeSel[old_id] || new Set();
+          if (s.has(key)) s.delete(key); else s.add(key);
+          this.upgradeSel[old_id] = new Set(s);  // trigger Alpine reactivity
+        },
+        selectedCount(old_id) {
+          const s = this.upgradeSel[old_id];
+          return s ? s.size : 0;
+        },
+        async migrateUpgrade(up) {
+          const keys = Array.from(this.upgradeSel[up.old_id] || []);
+          if (keys.length === 0) return;
+          this.upgradeBusy[up.old_id] = true;
+          try {
+            await MycelosAPI.post('/api/models/migrate', {
+              old_id: up.old_id,
+              new_id: up.new_id,
+              keys,
+            });
+            this.upgradeDone[up.old_id] = 'ok';
+            // Re-fetch models + upgrades + assignments so the rest of the
+            // page reflects the migration (the old entry may vanish now).
+            const [modelsData, upgData] = await Promise.all([
+              MycelosAPI.get('/api/models'),
+              MycelosAPI.get('/api/models/upgrades'),
+            ]);
+            if (modelsData) {
+              this.models = modelsData.models || [];
+              this.agents = modelsData.agents || [];
+              this.assignments = modelsData.assignments || [];
+            }
+            if (upgData) {
+              this.upgrades = upgData.upgrades || [];
+            }
+          } catch (e) {
+            this.upgradeDone[up.old_id] = e.message || 'Migration failed';
+          } finally {
+            this.upgradeBusy[up.old_id] = false;
+          }
+        },
+        dismissUpgrade(old_id) {
+          this.upgrades = this.upgrades.filter(u => u.old_id !== old_id);
+        },
+
+        // ── Winners pills + filter ──
+        hasCredentialFor(provider) {
+          // Ollama and custom are credential-free (local URL, manual setup).
+          if (provider === 'custom') return true;
+          if (provider === 'ollama') {
+            // Consider Ollama 'connected' once we have any ollama model registered
+            // — this is how setup signals that the user wired up an Ollama URL.
+            return (this.models || []).some(m => (m.provider || '') === 'ollama');
+          }
+          const list = Array.isArray(this.credentials) ? this.credentials : [];
+          return list.some(c => (c.service || '').toLowerCase() === provider);
+        },
+
+        // ── Connect-provider UX (bootstrap from the Models page) ──
+        connectProvider: null,   // 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'ollama'
+        connectInput: '',         // API key or Ollama URL depending on provider
+        connectBusy: false,
+        connectError: null,
+        connectResult: null,
+
+        // Tiles that should appear in the connect-provider grid. When
+        // EU mode is on we show only providers flagged eu_residency=true
+        // by the backend; otherwise everything in the catalog is shown.
+        eligibleProviders() {
+          const cat = this.providerCatalog || [];
+          if (cat.length === 0) {
+            // Catalog still loading — fall back to legacy hardcoded list so the
+            // UI doesn't go blank during the first paint.
+            return [
+              { id: 'anthropic', name: 'Anthropic', eu_residency: false, credential_fields: null },
+              { id: 'openai',    name: 'OpenAI',    eu_residency: false, credential_fields: null },
+              { id: 'gemini',    name: 'Gemini',    eu_residency: false, credential_fields: null },
+              { id: 'openrouter',name: 'OpenRouter',eu_residency: false, credential_fields: null },
+              { id: 'ollama',    name: 'Ollama',    eu_residency: true,  credential_fields: null },
+            ].filter(p => !this.euMode || p.eu_residency);
+          }
+          return cat.filter(p => !this.euMode || p.eu_residency);
+        },
+
+        // Static icon/hint mapping. Kept client-side because it's a UI
+        // concern; backend doesn't need to ship Material Symbol names.
+        providerTileMeta(id) {
+          const meta = {
+            anthropic:  { icon: 'psychology',    hint: 'API key' },
+            openai:     { icon: 'smart_toy',     hint: 'API key' },
+            gemini:     { icon: 'auto_awesome',  hint: 'API key' },
+            openrouter: { icon: 'alt_route',     hint: 'API key' },
+            ollama:     { icon: 'hub',           hint: 'Local URL' },
+            vertex_ai:  { icon: 'cloud',         hint: 'GCP service account · EU' },
+            mistral:    { icon: 'flag',          hint: 'API key · EU' },
+          };
+          return meta[id] || { icon: 'extension', hint: 'API key' };
+        },
+
+        toggleEuMode() {
+          this.euMode = !this.euMode;
+          try { localStorage.setItem('mycelos.euMode', this.euMode ? '1' : '0'); } catch (_) {}
+          // If the currently-open connect form belongs to a non-EU provider
+          // and we just turned EU mode on, drop it.
+          if (this.euMode && this.connectProvider) {
+            const cur = (this.providerCatalog || []).find(p => p.id === this.connectProvider);
+            if (cur && !cur.eu_residency) this.cancelConnect();
+          }
+        },
+
+        openConnect(provider) {
+          this.connectProvider = provider;
+          this.connectInput = provider === 'ollama' ? 'http://localhost:11434' : '';
+          this.connectError = null;
+          this.connectResult = null;
+          // If this provider needs more than an API key, populate the
+          // multi-field form with sensible defaults from the catalog.
+          const cfg = (this.providerCatalog || []).find(p => p.id === provider);
+          if (cfg && cfg.credential_fields && cfg.credential_fields.length > 0) {
+            this.extendedFields = cfg.credential_fields;
+            const vals = {};
+            for (const f of cfg.credential_fields) {
+              vals[f.key] = f.default || '';
+            }
+            this.extendedValues = vals;
+          } else {
+            this.extendedFields = null;
+            this.extendedValues = {};
+          }
+        },
+
+        async removeProviderCredential(provider) {
+          // Ollama has no credential row — the URL lives in memory, not the
+          // credential store. Treat 'remove' there as a no-op with a hint.
+          if (provider === 'ollama') {
+            alert('Ollama has no API key — to disconnect, just stop the Ollama server or change the URL on the next Connect.');
+            return;
+          }
+          try {
+            await MycelosAPI.delete('/api/credentials/' + encodeURIComponent(provider) + '?label=default');
+            // Refresh credential list so the tile flips back to unconnected.
+            const creds = await MycelosAPI.get('/api/credentials').catch(() => null);
+            if (creds) {
+              this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+            }
+            // Winners/upgrades don't change because registered models stay put.
+            // But if the active pill is the one we just removed, drop back to 'all'.
+            if (!this.hasCredentialFor(this.providerPill)) {
+              const fallback = this.providersWithWinners();
+              this.providerPill = fallback[0] || 'all';
+            }
+          } catch (e) {
+            alert('Remove failed: ' + (e?.message || 'unknown error'));
+          }
+        },
+
+        cancelConnect() {
+          this.connectProvider = null;
+          this.connectInput = '';
+          this.connectError = null;
+          this.connectBusy = false;
+          this.extendedFields = null;
+          this.extendedValues = {};
+        },
+        // True iff every required field in extendedFields has a non-empty value.
+        extendedFormReady() {
+          if (!this.extendedFields) return false;
+          for (const f of this.extendedFields) {
+            if (f.required !== false && !(this.extendedValues[f.key] || '').trim()) {
+              return false;
+            }
+          }
+          return true;
+        },
+        async submitConnect() {
+          if (!this.connectProvider) return;
+          // Pick the right shape for /api/setup based on the provider's
+          // credential schema. Three shapes:
+          //   1. Ollama       → { ollama_url }
+          //   2. Multi-field  → { credentials: {...}, provider_id }
+          //   3. Single key   → { api_key, provider_id }
+          let body;
+          if (this.extendedFields) {
+            if (!this.extendedFormReady()) return;
+            const cleaned = {};
+            for (const f of this.extendedFields) {
+              const v = (this.extendedValues[f.key] || '').trim();
+              if (v) cleaned[f.key] = v;
+            }
+            body = { credentials: cleaned, provider_id: this.connectProvider };
+          } else if (this.connectProvider === 'ollama') {
+            if (!this.connectInput) return;
+            body = { ollama_url: this.connectInput.trim() };
+          } else {
+            if (!this.connectInput) return;
+            body = { api_key: this.connectInput.trim(), provider_id: this.connectProvider };
+          }
+          this.connectBusy = true;
+          this.connectError = null;
+          try {
+            const res = await MycelosAPI.post('/api/setup', body);
+            this.connectResult = res;
+            // Refresh everything the Models section depends on.
+            const [modelsData, creds, upgData, winData] = await Promise.all([
+              MycelosAPI.get('/api/models').catch(() => null),
+              MycelosAPI.get('/api/credentials').catch(() => null),
+              MycelosAPI.get('/api/models/upgrades').catch(() => null),
+              MycelosAPI.get('/api/models/winners').catch(() => null),
+            ]);
+            if (modelsData) {
+              this.models = modelsData.models || [];
+              this.agents = modelsData.agents || [];
+              this.assignments = modelsData.assignments || [];
+            }
+            if (creds) {
+              this.credentials = Array.isArray(creds) ? creds : (creds.credentials || []);
+            }
+            if (upgData) this.upgrades = upgData.upgrades || [];
+            if (winData) {
+              this.winners = winData.providers || {};
+              // Jump the filter onto the provider we just connected.
+              if (this.hasCredentialFor(this.connectProvider)) {
+                this.providerPill = this.connectProvider;
+              }
+            }
+            // Close the form.
+            this.connectProvider = null;
+            this.connectInput = '';
+            this.extendedFields = null;
+            this.extendedValues = {};
+          } catch (e) {
+            // FastAPI wraps SetupError in HTTPException(400) — prefer body.detail.
+            this.connectError = (e && e.message) || 'Connection failed';
+          } finally {
+            this.connectBusy = false;
+          }
+        },
+
+        providersWithWinners() {
+          // Only show providers that (a) have winner models AND (b) are credentialed.
+          // Without a key the user can't actually use the model, so showing it is noise.
+          const order = ['anthropic', 'openai', 'gemini', 'openrouter', 'vertex_ai', 'mistral', 'ollama', 'custom'];
+          return order.filter(p =>
+            (this.winners[p] || []).length > 0 && this.hasCredentialFor(p)
+          );
+        },
+        providerLabel(pid) {
+          const labels = {
+            anthropic: 'Anthropic',
+            openai: 'OpenAI',
+            gemini: 'Gemini',
+            openrouter: 'OpenRouter',
+            vertex_ai: 'Vertex AI',
+            mistral: 'Mistral',
+            ollama: 'Ollama',
+            custom: 'Custom',
+          };
+          return labels[pid] || pid;
+        },
+        visibleWinners() {
+          const credentialed = this.providersWithWinners();
+          if (this.providerPill === 'all') {
+            const all = [];
+            for (const pid of credentialed) {
+              for (const m of (this.winners[pid] || [])) all.push(m);
+            }
+            return all;
+          }
+          // If the selected pill lost its credential (deleted mid-session),
+          // show nothing rather than stale winners.
+          if (!credentialed.includes(this.providerPill)) return [];
+          return this.winners[this.providerPill] || [];
+        },
+
+        startOverride(group) {
+          // Seed the edit buffer from the current system-default chain so the
+          // user starts with a sensible list of models instead of an empty one.
+          const sysDefault = this.assignments
+            .filter(a => a.agent_id === null && a.purpose === group.purpose)
+            .sort((a, b) => a.priority - b.priority)
+            .map(a => a.model_id);
+          const seed = sysDefault.length ? sysDefault : (this.models[0] ? [this.models[0].id] : []);
+          this.assignmentEdits[group.key] = {
+            model_ids: seed,
+            dirty: true,
+            saving: false,
+            error: null,
+          };
+        },
+
+        async saveAgentModels(agent_id, purpose) {
+          const key = (agent_id || '__system__') + ':' + purpose;
+          const edit = this.assignmentEdits[key];
+          if (!edit) return;
+          edit.saving = true;
+          edit.error = null;
+          try {
+            if (agent_id === null) {
+              await MycelosAPI.put('/api/models/system-defaults', {
+                purpose,
+                model_ids: edit.model_ids,
+              });
+            } else {
+              await MycelosAPI.put('/api/models/assignments/' + encodeURIComponent(agent_id), {
+                purpose,
+                model_ids: edit.model_ids,
+              });
+            }
+            // Reload assignments from server so the table reflects committed state.
+            const modelsData = await MycelosAPI.get('/api/models');
+            this.models = modelsData.models || [];
+            this.agents = modelsData.agents || [];
+            this.assignments = modelsData.assignments || [];
+            delete this.assignmentEdits[key];
+          } catch (e) {
+            edit.error = e.message || 'Save failed';
+          } finally {
+            if (this.assignmentEdits[key]) this.assignmentEdits[key].saving = false;
+          }
+        },
+      }"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error && !loading" class="card max-w-md mx-auto mt-12 text-center">
+        <span class="material-symbols-outlined text-[var(--error)] text-3xl mb-3">error_outline</span>
+        <p class="text-sm text-[var(--on-surface-variant)]" x-text="'Connection failed: ' + error"></p>
+        <button class="btn-secondary mt-4" @click="loading = true; error = null; init()" x-text="t('common.retry')">Retry</button>
+      </div>
+
+      <!-- AI Providers sections -->
+      <div x-show="!loading && !error" class="animate-fade-in max-w-5xl mx-auto space-y-10">
+
+        <!-- Page heading -->
+        <div>
+          <h1 class="font-headline text-2xl font-bold tracking-tight" x-text="t('ai_providers.title')">AI Providers</h1>
+          <p class="text-[11px] text-[var(--on-surface-variant)] mt-1" x-text="t('ai_providers.subtitle')">Models, credentials, and agent model assignments</p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 1: Models -->
+        <!-- ============================================================ -->
+        <div id="models">
+          <div class="flex items-start justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Models</h2>
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">LLM Configuration</p>
+            </div>
+            <button class="btn-secondary text-xs flex items-center gap-1.5"
+                    :disabled="refreshingModels"
+                    @click="refreshModels()">
+              <span class="material-symbols-outlined text-sm" :class="refreshingModels &amp;&amp; 'animate-spin'">cloud_sync</span>
+              <span x-show="!refreshingModels">Check for new models</span>
+              <span x-show="refreshingModels">Checking…</span>
+            </button>
+          </div>
+
+          <!-- Refresh result banner -->
+          <div x-show="refreshResult" class="mb-4">
+            <div x-show="refreshResult &amp;&amp; refreshResult.added &amp;&amp; refreshResult.added.length > 0"
+                 class="card border-l-2 border-l-[var(--primary)] bg-[var(--primary)]/5">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[var(--primary)] mt-0.5">auto_awesome</span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-headline text-sm font-semibold">
+                    <span x-text="refreshResult?.added?.length || 0"></span>
+                    <span>new</span>
+                    <span x-text="(refreshResult?.added?.length || 0) === 1 ? 'model' : 'models'"></span>
+                    <span>discovered</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1.5 mt-2">
+                    <template x-for="m in (refreshResult?.added || [])" :key="m">
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-mono bg-[var(--primary)]/10 text-[var(--primary)]" x-text="m"></span>
+                    </template>
+                  </div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-2.5">
+                    Added to the registry. Assign them below or in the System Defaults to actually use them.
+                  </div>
+                  <div x-show="refreshResult?.skipped_legacy?.length" class="text-[10px] text-[var(--on-surface-variant)] mt-1 opacity-70">
+                    <span x-text="'Skipped ' + (refreshResult?.skipped_legacy?.length || 0) + ' older-generation model' + ((refreshResult?.skipped_legacy?.length || 0) === 1 ? '' : 's')"></span>
+                  </div>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null" title="Dismiss">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            </div>
+            <div x-show="refreshResult &amp;&amp; (!refreshResult.added || refreshResult.added.length === 0) &amp;&amp; !refreshResult.error"
+                 class="card py-2 px-3 flex items-center gap-2 text-[11px] text-[var(--on-surface-variant)]">
+              <span class="material-symbols-outlined text-[var(--success)] text-sm">check_circle</span>
+              <span>Registry is up to date.</span>
+              <span class="opacity-60">No new models for</span>
+              <template x-for="p in (refreshResult?.providers_checked || [])" :key="p">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--surface-container)]" x-text="p"></span>
+              </template>
+              <button class="ml-auto text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="refreshResult = null">
+                <span class="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+            <div x-show="refreshResult?.error" class="card py-2 px-3 text-[11px] text-[var(--error)]" x-text="'Refresh failed: ' + refreshResult?.error"></div>
+          </div>
+
+          <!-- ============================================= -->
+          <!-- Connect a provider (bootstrap + add more)    -->
+          <!-- ============================================= -->
+          <div
+            class="mb-4"
+            x-show="eligibleProviders().some(p => !hasCredentialFor(p.id)) || providersWithWinners().length === 0"
+          >
+            <div class="flex items-start justify-between mb-3 gap-3">
+              <div class="min-w-0">
+                <p class="font-headline text-sm font-semibold">Connect a provider</p>
+                <p class="text-[11px] text-[var(--on-surface-variant)]">
+                  Add a key to see that provider's models below.
+                </p>
+              </div>
+              <!-- EU-mode toggle. When on, the tile grid filters to providers
+                   that keep prompts/responses inside the EU when configured
+                   (Vertex AI in europe-*, Mistral La Plateforme, local Ollama). -->
+              <label class="flex items-center gap-2 text-[11px] text-[var(--on-surface-variant)] shrink-0 cursor-pointer select-none"
+                     :title="euMode
+                             ? 'Showing only providers with EU data residency'
+                             : 'Click to filter the list to EU-only providers'">
+                <span class="material-symbols-outlined text-[14px]"
+                      :class="euMode ? 'text-[var(--primary)]' : ''">public</span>
+                <span class="font-headline" x-text="'EU mode' + (euMode ? ' · on' : '')"></span>
+                <span
+                  class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors"
+                  :class="euMode ? 'bg-[var(--primary)]' : 'bg-[var(--surface-container-high)]'"
+                  @click.prevent="toggleEuMode()"
+                  role="switch" :aria-checked="euMode">
+                  <span class="inline-block h-3 w-3 rounded-full bg-white transition-transform"
+                        :class="euMode ? 'translate-x-3.5' : 'translate-x-0.5'"></span>
+                </span>
+              </label>
+            </div>
+
+            <div x-show="euMode" class="card mb-3 py-2 px-3 text-[11px] text-[var(--on-surface-variant)] border-l-2 border-l-[var(--primary)]">
+              <span class="material-symbols-outlined text-[14px] align-middle text-[var(--primary)]">shield</span>
+              <span class="align-middle ml-1">
+                EU mode is on — only providers with EU data residency are listed.
+                Vertex AI defaults to <span class="font-mono">europe-west4</span>;
+                Mistral La Plateforme is hosted in France; Ollama runs locally.
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <template x-for="p in eligibleProviders()" :key="p.id">
+                <div class="card p-3 relative hover:bg-[var(--surface-container-high)] transition-colors">
+                  <button
+                    class="flex flex-col items-start gap-1 w-full text-left"
+                    @click="openConnect(p.id)"
+                    :title="hasCredentialFor(p.id)
+                            ? 'Replace ' + p.name + ' credential'
+                            : 'Connect ' + p.name">
+                    <div class="flex items-center gap-1 w-full">
+                      <span class="material-symbols-outlined text-sm text-[var(--primary)]"
+                            x-text="providerTileMeta(p.id).icon"></span>
+                      <span x-show="p.eu_residency"
+                            class="ml-auto text-[9px] uppercase tracking-wide font-semibold text-[var(--primary)] px-1.5 py-0.5 rounded bg-[var(--primary)]/10"
+                            title="Data stays inside the EU when configured with an EU region">EU</span>
+                    </div>
+                    <div class="font-headline text-xs font-semibold" x-text="p.name"></div>
+                    <div class="text-[10px] text-[var(--on-surface-variant)]">
+                      <span x-show="!hasCredentialFor(p.id)" x-text="providerTileMeta(p.id).hint"></span>
+                      <span x-show="hasCredentialFor(p.id)" class="inline-flex items-center gap-1 text-[var(--success)]">
+                        <span class="material-symbols-outlined text-[11px]">check_circle</span>
+                        <span>Connected · click to replace</span>
+                      </span>
+                    </div>
+                  </button>
+
+                  <!-- Remove (only for cloud providers that actually have a credential row) -->
+                  <button
+                    x-show="hasCredentialFor(p.id) && p.id !== 'ollama'"
+                    class="absolute top-1.5 right-1.5 text-[var(--on-surface-variant)] hover:text-[var(--error)] p-1 rounded"
+                    @click.stop="removeProviderCredential(p.id)"
+                    :title="'Remove ' + p.name + ' credential'">
+                    <span class="material-symbols-outlined text-[14px]">delete</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+
+            <!-- Inline connect form (shown when a button is clicked) -->
+            <div x-show="connectProvider" x-transition class="card mt-3 space-y-3">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="font-headline text-sm font-semibold">
+                    <span x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
+                    <span x-text="(providerCatalog.find(p => p.id === connectProvider) || {}).name || connectProvider"></span>
+                  </p>
+                  <p class="text-[11px] text-[var(--on-surface-variant)]"
+                     x-text="connectProvider === 'ollama'
+                             ? 'Enter the URL where your Ollama server is running.'
+                             : (extendedFields
+                                ? 'Fill in every field. Encrypted at rest, never sent to the LLM.'
+                                : (hasCredentialFor(connectProvider)
+                                   ? 'Paste the new API key. The old one is overwritten.'
+                                   : 'Paste your API key. It is encrypted at rest and never sent to the LLM.'))"></p>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]" @click="cancelConnect()" title="Cancel">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+
+              <!-- Multi-field form (Vertex AI etc.) -->
+              <template x-if="extendedFields">
+                <div class="space-y-3">
+                  <template x-for="f in extendedFields" :key="f.key">
+                    <div>
+                      <label class="block text-[11px] font-headline font-semibold mb-1" x-text="f.label"></label>
+                      <template x-if="f.type === 'textarea'">
+                        <textarea class="input-field font-mono text-[11px]" rows="6"
+                                  :placeholder="f.placeholder"
+                                  x-model="extendedValues[f.key]"></textarea>
+                      </template>
+                      <template x-if="f.type === 'select'">
+                        <select class="input-field" x-model="extendedValues[f.key]">
+                          <template x-for="opt in (f.options || [])" :key="opt">
+                            <option :value="opt" x-text="opt"></option>
+                          </template>
+                        </select>
+                      </template>
+                      <template x-if="f.type !== 'textarea' && f.type !== 'select'">
+                        <input :type="f.type === 'password' ? 'password' : 'text'"
+                               class="input-field"
+                               :placeholder="f.placeholder"
+                               x-model="extendedValues[f.key]"
+                               @keydown.enter="submitConnect()">
+                      </template>
+                      <p x-show="f.help" class="text-[10px] text-[var(--on-surface-variant)] mt-1" x-text="f.help"></p>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- Single-field form (api_key / ollama_url) -->
+              <input
+                x-show="!extendedFields"
+                :type="connectProvider === 'ollama' ? 'url' : 'password'"
+                class="input-field"
+                :placeholder="connectProvider === 'ollama' ? 'http://localhost:11434' : 'sk-...'"
+                x-model="connectInput"
+                @keydown.enter="submitConnect()">
+
+              <div x-show="connectError" class="text-xs text-[var(--error)]" x-text="connectError"></div>
+              <div class="flex items-center gap-2">
+                <button class="btn-primary text-xs"
+                        :disabled="connectBusy || (extendedFields ? !extendedFormReady() : !connectInput)"
+                        @click="submitConnect()">
+                  <span x-show="!connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replace' : 'Connect'"></span>
+                  <span x-show="connectBusy" x-text="hasCredentialFor(connectProvider) ? 'Replacing…' : 'Connecting…'"></span>
+                </button>
+                <button class="btn-secondary text-xs" @click="cancelConnect()">Cancel</button>
+                <span x-show="connectResult && connectResult.ok"
+                      class="text-[11px] text-[var(--success)] inline-flex items-center gap-1">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  <span x-text="'Saved — ' + (connectResult?.models || []).length + ' model' + ((connectResult?.models || []).length === 1 ? '' : 's') + ' available'"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================= -->
+          <!-- Migration banner (newer version available)   -->
+          <!-- ============================================= -->
+          <template x-for="up in upgrades" :key="up.old_id">
+            <div class="card mb-4 border-l-2 border-l-[var(--success)] bg-[#48c78e]/5">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[var(--success)] mt-0.5">auto_fix_high</span>
+                <div class="flex-1 min-w-0">
+                  <div class="font-headline text-sm font-semibold">
+                    Newer version available:
+                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--surface-container)]" x-text="up.old_id"></span>
+                    <span class="mx-1 text-[var(--on-surface-variant)]">→</span>
+                    <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-[#48c78e]/15 text-[var(--success)]" x-text="up.new_id"></span>
+                  </div>
+                  <div class="text-[11px] text-[var(--on-surface-variant)] mt-1">
+                    <span x-text="(up.assignments?.length || 0) + ' place' + ((up.assignments?.length || 0) === 1 ? '' : 's') + ' use ' + up.old_id + '. Update which?'"></span>
+                  </div>
+
+                  <!-- Per-assignment checkboxes -->
+                  <div class="mt-3 space-y-1.5">
+                    <template x-for="a in up.assignments" :key="a.key">
+                      <label class="flex items-center gap-2 text-xs cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          class="accent-[var(--primary)]"
+                          :checked="isUpgradeKeyChecked(up.old_id, a.key)"
+                          @change="toggleUpgradeKey(up.old_id, a.key)"
+                          :disabled="upgradeDone[up.old_id] === 'ok'">
+                        <span x-text="a.label"></span>
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono" x-show="a.priority > 1" x-text="'#' + a.priority"></span>
+                      </label>
+                    </template>
+                  </div>
+
+                  <!-- Action row -->
+                  <div class="flex items-center gap-2 mt-3">
+                    <button class="btn-primary text-xs"
+                            :disabled="upgradeBusy[up.old_id] || selectedCount(up.old_id) === 0 || upgradeDone[up.old_id] === 'ok'"
+                            @click="migrateUpgrade(up)">
+                      <span x-show="!upgradeBusy[up.old_id] && upgradeDone[up.old_id] !== 'ok'"
+                            x-text="'Update ' + selectedCount(up.old_id) + ' assignment' + (selectedCount(up.old_id) === 1 ? '' : 's')"></span>
+                      <span x-show="upgradeBusy[up.old_id]">Updating…</span>
+                      <span x-show="upgradeDone[up.old_id] === 'ok'">Updated</span>
+                    </button>
+                    <span x-show="upgradeDone[up.old_id] === 'ok'" class="text-[11px] text-[var(--success)] inline-flex items-center gap-1">
+                      <span class="material-symbols-outlined text-sm">check_circle</span>
+                      Migrated
+                    </span>
+                    <span x-show="upgradeDone[up.old_id] && upgradeDone[up.old_id] !== 'ok'"
+                          class="text-[11px] text-[var(--error)]"
+                          x-text="upgradeDone[up.old_id]"></span>
+                  </div>
+                </div>
+                <button class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]"
+                        @click="dismissUpgrade(up.old_id)" title="Dismiss">
+                  <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ============================================= -->
+          <!-- Provider pills + winner cards                 -->
+          <!-- ============================================= -->
+          <div x-show="providersWithWinners().length > 0" class="mb-4">
+            <div class="flex items-center gap-2 flex-wrap mb-3">
+              <button
+                class="px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-label transition-colors"
+                :class="providerPill === 'all' ? 'bg-[var(--primary)] text-[var(--on-primary)]' : 'bg-[var(--surface-container)] text-[var(--on-surface-variant)] hover:bg-[var(--surface-container-high)]'"
+                @click="providerPill = 'all'">All</button>
+              <template x-for="pid in providersWithWinners()" :key="pid">
+                <button
+                  class="px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-label transition-colors"
+                  :class="providerPill === pid ? 'bg-[var(--primary)] text-[var(--on-primary)]' : 'bg-[var(--surface-container)] text-[var(--on-surface-variant)] hover:bg-[var(--surface-container-high)]'"
+                  @click="providerPill = pid"
+                  x-text="providerLabel(pid)"></button>
+              </template>
+              <button
+                class="ml-auto text-[11px] text-[var(--on-surface-variant)] hover:text-[var(--primary)] inline-flex items-center gap-1"
+                @click="showFullTable = !showFullTable">
+                <span class="material-symbols-outlined text-sm" x-text="showFullTable ? 'expand_less' : 'expand_more'"></span>
+                <span x-text="showFullTable ? 'Hide full table' : 'Show all models'"></span>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <template x-for="m in visibleWinners()" :key="m.id">
+                <div class="card">
+                  <div class="flex items-start justify-between mb-2">
+                    <div class="flex-1 min-w-0">
+                      <div class="font-headline text-sm font-semibold truncate" x-text="m.name || m.id"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] font-mono truncate" x-text="m.id"></div>
+                    </div>
+                    <span class="status-badge" :class="{
+                      'status-badge--active': m.tier === 'fast' || m.tier === 'haiku',
+                      'status-badge--success': m.tier === 'balanced' || m.tier === 'sonnet',
+                      'status-badge--proposed': m.tier === 'quality' || m.tier === 'reasoning' || m.tier === 'opus',
+                    }" x-text="m.tier"></span>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <div class="text-[9px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Provider</div>
+                      <div class="truncate" x-text="providerLabel(m.provider) || m.provider"></div>
+                    </div>
+                    <div>
+                      <div class="text-[9px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">In / Out $/1K</div>
+                      <div class="font-mono truncate">
+                        <span x-text="m.input_cost_per_1k != null ? m.input_cost_per_1k.toFixed(4) : '—'"></span>
+                        <span class="text-[var(--on-surface-variant)]"> / </span>
+                        <span x-text="m.output_cost_per_1k != null ? m.output_cost_per_1k.toFixed(4) : '—'"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Models Table -->
+          <div x-show="providersWithWinners().length === 0 || showFullTable" class="card overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-[var(--on-surface-variant)] text-[10px] uppercase tracking-wider font-label">
+                  <th class="pb-3">Model</th>
+                  <th class="pb-3">Provider</th>
+                  <th class="pb-3">Tier</th>
+                  <th class="pb-3">Input $/1K</th>
+                  <th class="pb-3">Output $/1K</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="m in models" :key="m.id">
+                  <tr class="border-b border-[var(--outline-variant)]/10">
+                    <td class="py-2.5 font-mono text-xs" x-text="m.id"></td>
+                    <td class="py-2.5 text-[var(--on-surface-variant)]" x-text="m.provider"></td>
+                    <td class="py-2.5">
+                      <span class="status-badge" :class="{
+                        'status-badge--active': m.tier === 'fast',
+                        'status-badge--success': m.tier === 'balanced',
+                        'status-badge--proposed': m.tier === 'quality' || m.tier === 'reasoning',
+                      }" x-text="m.tier"></span>
+                    </td>
+                    <td class="py-2.5 font-mono text-xs text-[var(--on-surface-variant)]" x-text="m.input_cost_per_1k != null ? m.input_cost_per_1k.toFixed(4) : '—'"></td>
+                    <td class="py-2.5 font-mono text-xs text-[var(--on-surface-variant)]" x-text="m.output_cost_per_1k != null ? m.output_cost_per_1k.toFixed(4) : '—'"></td>
+                  </tr>
+                </template>
+                <template x-if="models.length === 0">
+                  <tr><td colspan="5" class="py-6 text-center text-[var(--on-surface-variant)]">No models configured</td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Agent Assignments -->
+          <div x-show="agentGroups().length > 0" class="mt-4">
+            <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">Agent Assignments</p>
+            <div class="space-y-3">
+              <template x-for="group in agentGroups()" :key="group.key">
+                <div class="card">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <div class="font-headline text-sm font-semibold" x-text="group.agent_name"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label" x-text="group.agent_id"></div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span x-show="group.inherited" class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Inherits default</span>
+                      <button x-show="group.inherited" class="btn-secondary text-xs" @click="startOverride(group)">
+                        <span class="material-symbols-outlined text-sm">edit</span>
+                        Override
+                      </button>
+                      <template x-if="group.dirty">
+                        <div class="flex items-center gap-2">
+                          <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
+                          <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
+                            <span x-show="!group.saving">Save</span>
+                            <span x-show="group.saving">Saving…</span>
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="space-y-1.5" x-show="!group.inherited">
+                    <template x-for="(model_id, idx) in group.model_ids" :key="idx + ':' + model_id">
+                      <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono w-5 text-right" x-text="idx + 1"></span>
+                        <select
+                          class="input-field flex-1 font-mono text-xs"
+                          :value="model_id"
+                          @change="setModelAt(group, idx, $event.target.value)">
+                          <template x-for="m in models" :key="m.id">
+                            <option :value="m.id" x-text="m.id" :selected="m.id === model_id"></option>
+                          </template>
+                        </select>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === 0" @click="moveModel(group, idx, -1)" title="Move up">
+                          <span class="material-symbols-outlined text-sm">arrow_upward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === group.model_ids.length - 1" @click="moveModel(group, idx, 1)" title="Move down">
+                          <span class="material-symbols-outlined text-sm">arrow_downward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" @click="removeModel(group, idx)" title="Remove" :disabled="group.model_ids.length <= 1">
+                          <span class="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      </div>
+                    </template>
+                    <button class="btn-secondary text-xs mt-2" @click="addModel(group)">
+                      <span class="material-symbols-outlined text-sm">add</span>
+                      Add fallback model
+                    </button>
+                  </div>
+                  <div x-show="group.error" class="text-xs text-[var(--error)] mt-2" x-text="group.error"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- System Defaults -->
+          <div x-show="systemGroups().length > 0" class="mt-6">
+            <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-3">System Defaults</p>
+            <div class="space-y-3">
+              <template x-for="group in systemGroups()" :key="group.key">
+                <div class="card">
+                  <div class="flex items-center justify-between mb-3">
+                    <div>
+                      <div class="font-headline text-sm font-semibold" x-text="group.label"></div>
+                      <div class="text-[10px] text-[var(--on-surface-variant)] font-label" x-text="group.hint"></div>
+                    </div>
+                    <div class="flex items-center gap-2" x-show="group.dirty">
+                      <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
+                      <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
+                        <span x-show="!group.saving">Save</span>
+                        <span x-show="group.saving">Saving…</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="space-y-1.5">
+                    <template x-for="(model_id, idx) in group.model_ids" :key="idx + ':' + model_id">
+                      <div class="flex items-center gap-2">
+                        <span class="text-[10px] text-[var(--on-surface-variant)] font-mono w-5 text-right" x-text="idx + 1"></span>
+                        <select
+                          class="input-field flex-1 font-mono text-xs"
+                          :value="model_id"
+                          @change="setModelAt(group, idx, $event.target.value)">
+                          <template x-for="m in models" :key="m.id">
+                            <option :value="m.id" x-text="m.id" :selected="m.id === model_id"></option>
+                          </template>
+                        </select>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === 0" @click="moveModel(group, idx, -1)" title="Move up">
+                          <span class="material-symbols-outlined text-sm">arrow_upward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" :disabled="idx === group.model_ids.length - 1" @click="moveModel(group, idx, 1)" title="Move down">
+                          <span class="material-symbols-outlined text-sm">arrow_downward</span>
+                        </button>
+                        <button class="btn-secondary px-2 py-1" @click="removeModel(group, idx)" title="Remove" :disabled="group.model_ids.length <= 1">
+                          <span class="material-symbols-outlined text-sm">close</span>
+                        </button>
+                      </div>
+                    </template>
+                    <button class="btn-secondary text-xs mt-2" @click="addModel(group)">
+                      <span class="material-symbols-outlined text-sm">add</span>
+                      Add fallback model
+                    </button>
+                  </div>
+                  <div x-show="group.error" class="text-xs text-[var(--error)] mt-2" x-text="group.error"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section 2: Credentials -->
+        <!-- ============================================================ -->
+        <div id="credentials">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Credentials</h2>
+              <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label">Encrypted Secrets</p>
+            </div>
+            <button class="btn-secondary" @click="showAddCredential = !showAddCredential">
+              <span class="material-symbols-outlined text-sm">add</span>
+              Add Credential
+            </button>
+          </div>
+
+          <!-- Add Credential Form -->
+          <div x-show="showAddCredential" x-transition class="card mb-4 space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Service</label>
+                <input type="text" class="input-field" placeholder="e.g. openai, github" x-model="newCred.service">
+              </div>
+              <div>
+                <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Label</label>
+                <input type="text" class="input-field" placeholder="default" x-model="newCred.label">
+              </div>
+            </div>
+            <div>
+              <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Secret</label>
+              <input type="password" class="input-field" placeholder="API key or token" x-model="newCred.secret">
+            </div>
+            <div>
+              <label class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label block mb-1.5">Description (optional)</label>
+              <input type="text" class="input-field" placeholder="What is this credential for?" x-model="newCred.description">
+            </div>
+            <div x-show="credError" class="text-xs text-[var(--error)]" x-text="credError"></div>
+            <div class="flex items-center gap-3">
+              <button class="btn-primary text-sm" @click="addCredential()" :disabled="credSaving || !newCred.service || !newCred.secret">
+                <span x-show="!credSaving" x-text="t('common.save')">Save</span>
+                <span x-show="credSaving">Saving...</span>
+              </button>
+              <button class="btn-secondary text-sm" @click="showAddCredential = false; credError = null" x-text="t('common.cancel')">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Credentials List -->
+          <div class="card">
+            <template x-if="credentials.length === 0">
+              <p class="text-sm text-[var(--on-surface-variant)] py-4 text-center">No credentials stored</p>
+            </template>
+            <div class="space-y-0">
+              <template x-for="(c, idx) in credentials" :key="c.service + '-' + (c.label || 'default')">
+                <div :class="idx > 0 ? 'border-t border-[var(--outline-variant)]/10' : ''" class="flex items-center justify-between py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-lg">key</span>
+                    <div class="min-w-0">
+                      <p class="text-sm font-mono" x-text="c.service"></p>
+                      <p class="text-[10px] text-[var(--on-surface-variant)]">
+                        <span x-text="c.label || 'default'"></span>
+                        <span x-show="c.description"> · </span>
+                        <span x-text="c.description || ''"></span>
+                      </p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[10px] text-[var(--on-surface-variant)]" x-text="formatDate(c.created_at)"></span>
+
+                    <!-- Delete with confirmation -->
+                    <template x-if="confirmDeleteCred !== (c.service + ':' + (c.label || 'default'))">
+                      <button
+                        class="text-[var(--on-surface-variant)] hover:text-[var(--error)] transition-colors p-1"
+                        @click="confirmDeleteCred = c.service + ':' + (c.label || 'default')"
+                        title="Delete"
+                      >
+                        <span class="material-symbols-outlined text-sm">delete</span>
+                      </button>
+                    </template>
+                    <template x-if="confirmDeleteCred === (c.service + ':' + (c.label || 'default'))">
+                      <div class="flex items-center gap-2">
+                        <button
+                          class="text-[10px] text-[var(--error)] font-bold uppercase tracking-wider hover:underline"
+                          @click="deleteCredential(c.service, c.label)"
+                        x-text="t('common.delete')">Delete</button>
+                        <button
+                          class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-wider hover:underline"
+                          @click="confirmDeleteCred = null"
+                        x-text="t('common.cancel')">Cancel</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+</body>
+</html>

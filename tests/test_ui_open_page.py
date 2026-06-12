@@ -36,7 +36,7 @@ def test_target_connectors_anchor_already_prefixed() -> None:
 def test_target_settings_models_default_anchor() -> None:
     result = execute_open_page({"target": "settings_models"}, context={})
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/settings.html#models"
+    assert actions[0]["url"] == "/pages/ai-providers.html#models"
 
 
 def test_target_settings_models_anchor_overrides_default() -> None:
@@ -45,7 +45,7 @@ def test_target_settings_models_anchor_overrides_default() -> None:
         context={},
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/settings.html#provider-anthropic"
+    assert actions[0]["url"] == "/pages/ai-providers.html#provider-anthropic"
 
 
 def test_unknown_target_returns_error_dict() -> None:
@@ -84,7 +84,7 @@ def test_settings_anchor_not_prefixed() -> None:
         context={},
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/settings.html#provider-anthropic"
+    assert actions[0]["url"] == "/pages/ai-providers.html#provider-anthropic"
 
 
 def test_all_four_targets_resolve() -> None:
