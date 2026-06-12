@@ -654,6 +654,7 @@ web:
     save: "Save"
     language: "Language"
     theme: "Theme"
+    language_hint: "Applies to the interface, LLM responses, and voice transcription. Reload to see the interface translated."
     appearance:
       title: "Appearance"
       subtitle: "Theme & Accent"
@@ -718,6 +719,7 @@ web:
     too_large: "File too large (max 50 MB)."
     upload_error: "Upload error: {error}"
   common:
+    saved: "Saved"
     loading: "Loading..."
     error: "Error"
     retry: "Retry"

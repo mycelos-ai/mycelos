@@ -29,6 +29,46 @@ async def i18n(request: Request) -> dict[str, Any]:
     return {"lang": lang, "translations": translations}
 
 
+_SUPPORTED_LANGUAGES = ("en", "de")
+
+
+@router.get("/api/language")
+async def get_language_setting(request: Request) -> dict[str, Any]:
+    """Return the active UI language and the supported set."""
+    from mycelos.i18n import get_language
+    return {"language": get_language(), "supported": list(_SUPPORTED_LANGUAGES)}
+
+
+@router.post("/api/language")
+async def set_language_setting(request: Request) -> Any:
+    """Persist the user's UI language. Takes effect immediately for
+    translations and the STT transcription hint (get_language reads the
+    live DB value), no restart needed."""
+    from mycelos.i18n import set_language, LANGUAGE_MEMORY_KEY
+
+    mycelos = request.app.state.mycelos
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    lang = body.get("language")
+    if lang not in _SUPPORTED_LANGUAGES:
+        return JSONResponse(
+            {"error": f"Unsupported language: {lang!r}",
+             "supported": list(_SUPPORTED_LANGUAGES)},
+            status_code=422,
+        )
+    mycelos.memory.set("default", "system", LANGUAGE_MEMORY_KEY, lang,
+                       created_by="user")
+    set_language(lang)
+    try:
+        mycelos.audit.log("language.changed", user_id=resolve_user_id(request),
+                          details={"language": lang})
+    except Exception:
+        pass
+    return {"language": lang}
+
+
 @router.post("/api/config/rollback")
 async def config_rollback(request: Request, body: RollbackRequest) -> dict[str, Any]:
     """Rollback to a specific config generation."""

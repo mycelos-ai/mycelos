@@ -16,6 +16,21 @@ _LOCALES_DIR = Path(__file__).parent / "locales"
 _current_language: str = "en"
 _translations: dict[str, dict[str, str]] = {}
 
+# The canonical memory key for the user's UI language. The same key is
+# written by the /api/language endpoint and read at startup — a past bug
+# was a writer/reader key mismatch.
+LANGUAGE_MEMORY_KEY = "user.language"
+
+# Optional app reference so get_language() can reflect a change made in the
+# running server (the setting lives in the DB, not just this process global).
+_app: Any = None
+
+
+def bind_app(app: Any) -> None:
+    """Let i18n read the live language setting from the app's memory."""
+    global _app
+    _app = app
+
 
 def set_language(lang: str) -> None:
     """Set the active language. Loads translations if not cached."""
@@ -26,7 +41,22 @@ def set_language(lang: str) -> None:
 
 
 def get_language() -> str:
-    """Get the current active language."""
+    """Get the current active language.
+
+    Reads the live value from the bound app's memory when available so a
+    change made in the running server (Settings -> Language) takes effect
+    immediately — for translations AND the STT transcription hint —
+    without a restart. Falls back to the process global.
+    """
+    if _app is not None:
+        try:
+            stored = _app.memory.get("default", "system", LANGUAGE_MEMORY_KEY)
+            if stored:
+                if stored != _current_language:
+                    set_language(stored)
+                return stored
+        except Exception:
+            pass
     return _current_language
 
 

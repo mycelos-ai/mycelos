@@ -6,6 +6,7 @@ import pytest
 
 from mycelos.i18n.loader import (
     _flatten,
+    bind_app,
     get_language,
     reload_translations,
     set_language,
@@ -16,9 +17,11 @@ from mycelos.i18n.loader import (
 @pytest.fixture(autouse=True)
 def reset_i18n():
     """Reset i18n state between tests."""
+    bind_app(None)  # CLI i18n must not read a leftover bound app's DB
     reload_translations()
     set_language("en")
     yield
+    bind_app(None)
     reload_translations()
     set_language("en")
 
