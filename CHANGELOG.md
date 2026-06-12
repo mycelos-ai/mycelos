@@ -1,5 +1,44 @@
 # Changelog
 
+## Week 24 (2026) — mobile chat input fix + UX polish
+
+From a thorough UX review (desktop + mobile, chat + knowledge):
+
+### Critical: mobile chat input was unusable
+
+The message textarea collapsed to a narrow black box on phones — text
+wrapped after 1-2 words and the box ballooned vertically. Cause: the
+textarea was a flex child with `flex-1` but no `min-w-0`, so flexbox's
+default `min-width:auto` let the fixed-width buttons squeeze it to almost
+nothing (the same bug the recording waveform already had fixed). Added
+`min-w-0`.
+
+### Mobile overflow fixes
+
+- Chat top bar: the session and agent pills no longer overflow the right
+  edge on narrow screens (responsive padding/gaps, `min-w-0`, smaller pill
+  max-widths on mobile, dropped the redundant "Chat · " prefix).
+- Knowledge view tabs (Topics/All/Tasks/Graph) now scroll horizontally
+  instead of cutting off the last tab (`overflow-x-auto` + a `no-scrollbar`
+  utility + `flex-shrink-0` tabs).
+- Note-detail action toolbar wraps on mobile instead of running off-screen.
+
+### Localization
+
+- Fixed the raw `web.common.cancel` key (was double-prefixed → rendered
+  the literal key; now resolves to Abbrechen/Cancel).
+- Knowledge empty state ("Select a note" / hint), the "Untitled"
+  fallbacks, and the Saving/Save-changes states across pages now use t()
+  with en+de keys — no more German/English mix on those.
+- Corrected ASCII-ized German umlauts in the web UI strings
+  (Überfällig, Ausführen, Übersicht, Verknüpfungen, Zurück, …).
+
+### Security banner is now actionable
+
+The "Network exposed — no password set" sidebar banner is a clickable
+link to the setup guide with a "Secure it now →" call-to-action, and its
+text (plus the protected/localhost variants) is localized.
+
 ## Week 24 (2026) — knowledge mobile polish
 
 Fixes the rough edges reported on the Knowledge page on a phone:

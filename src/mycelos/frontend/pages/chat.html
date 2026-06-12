@@ -303,16 +303,16 @@
     <div id="header"></div>
 
     <!-- Session selector bar -->
-    <div class="fixed top-0 left-0 md:left-64 md:right-72 right-0 z-20 pt-16 px-8">
-      <div class="max-w-4xl mx-auto flex items-center gap-3 py-3">
+    <div class="fixed top-0 left-0 md:left-64 md:right-72 right-0 z-20 pt-16 px-3 md:px-8">
+      <div class="max-w-4xl mx-auto flex items-center gap-2 md:gap-3 py-3 min-w-0">
         <!-- Session dropdown -->
-        <div class="relative" x-data="{ open: false }">
+        <div class="relative min-w-0" x-data="{ open: false }">
           <button @click="open = !open"
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest min-w-0
                          bg-[var(--surface-container)] text-[var(--on-surface-variant)]
                          hover:text-[var(--primary)] transition-colors">
-            <span class="material-symbols-outlined text-sm">forum</span>
-            <span x-text="(() => { if (!activeSessionId) return t('chat.no_session'); const s = sessions.find(s => (s.session_id || s.id) === activeSessionId); return s?.title || (s?.timestamp ? 'Chat · ' + new Date(s.timestamp).toLocaleString([], {hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + activeSessionId.slice(0, 8)); })()" class="truncate max-w-[160px]"></span>
+            <span class="material-symbols-outlined text-sm flex-shrink-0">forum</span>
+            <span x-text="(() => { if (!activeSessionId) return t('chat.no_session'); const s = sessions.find(s => (s.session_id || s.id) === activeSessionId); return s?.title || (s?.timestamp ? new Date(s.timestamp).toLocaleString([], {hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + activeSessionId.slice(0, 8)); })()" class="truncate max-w-[90px] md:max-w-[160px]"></span>
             <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
           </button>
           <div x-show="open" @click.outside="open = false" x-transition
@@ -339,13 +339,13 @@
         </div>
 
         <!-- Agent selector dropdown -->
-        <div class="relative" x-data="{ open: false }">
+        <div class="relative min-w-0" x-data="{ open: false }">
           <button @click="open = !open"
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest min-w-0
                          bg-[var(--surface-container)] transition-colors"
                   :class="selectedAgentId !== 'mycelos' ? 'text-[var(--primary)] border border-[var(--primary)]/30' : 'text-[var(--on-surface-variant)] hover:text-[var(--primary)]'">
-            <span class="material-symbols-outlined text-sm">smart_toy</span>
-            <span x-text="selectedAgentName" class="truncate max-w-[100px]"></span>
+            <span class="material-symbols-outlined text-sm flex-shrink-0">smart_toy</span>
+            <span x-text="selectedAgentName" class="truncate max-w-[70px] md:max-w-[100px]"></span>
             <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
           </button>
           <div x-show="open" @click.outside="open = false" x-transition
@@ -595,7 +595,7 @@
           <div class="flex justify-end gap-3">
             <button @click="connectorForm.open = false"
                     class="px-4 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface transition-colors"
-                    x-text="t('web.common.cancel')"></button>
+                    x-text="t('common.cancel')"></button>
             <button @click="submitConnectorForm()"
                     :disabled="connectorForm.submitting"
                     class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-primary-fixed
@@ -635,7 +635,7 @@
           <div class="flex justify-end gap-3">
             <button @click="commandDialog.open = false"
                     class="px-4 py-2 rounded-lg text-sm text-on-surface-variant hover:text-on-surface transition-colors"
-                    x-text="t('web.common.cancel')"></button>
+                    x-text="t('common.cancel')"></button>
             <button @click="executeCommandDialog()"
                     :disabled="!commandDialog.inputValue.trim()"
                     class="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-primary-fixed
@@ -693,7 +693,7 @@
                       @keydown.escape="slashSuggestions = []; slashSelectedIdx = 0"
                       @keydown.tab.prevent="if (slashSuggestions.length > 0) selectSlashCommand(slashSuggestions[slashSelectedIdx].name)"
                       @keydown.shift.enter="void 0"
-                      class="flex-1 bg-transparent border-none focus:ring-0 text-on-surface text-[15px] py-3 resize-none max-h-32 placeholder:text-on-surface-variant/40 disabled:opacity-50"
+                      class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-on-surface text-[15px] py-3 resize-none max-h-32 placeholder:text-on-surface-variant/40 disabled:opacity-50"
                       :placeholder="t('chat.placeholder')"
                       rows="1"></textarea>
             <!-- Audio waveform visualizer (shown during recording).

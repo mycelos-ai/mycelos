@@ -540,19 +540,20 @@
           </div>
         </div>
 
-        <!-- View toggle: Topics / All / Tasks -->
-        <div class="flex gap-1 px-6 pb-3"
+        <!-- View toggle: Topics / All / Tasks / Graph. Scrolls horizontally
+             on narrow screens so the last tab is never cut off. -->
+        <div class="flex gap-1 px-4 md:px-6 pb-3 overflow-x-auto no-scrollbar"
              :class="mobileView && mobileLevel === 'topic' ? 'hidden' : ''">
           <button @click="viewMode = 'topics'; loadTopics()"
-                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex-shrink-0"
                   :class="viewMode === 'topics' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'"
                   x-text="t('knowledge.view_topics')">Topics</button>
           <button @click="viewMode = 'all'; filteredNotes = notes"
-                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex-shrink-0"
                   :class="viewMode === 'all' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'"
                   x-text="t('knowledge.view_all')">All</button>
           <button @click="viewMode = 'tasks'; loadTasks()"
-                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex items-center"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex items-center flex-shrink-0"
                   :class="viewMode === 'tasks' ? 'bg-secondary/15 text-secondary' : 'text-on-surface-variant hover:text-secondary'">
             <span x-text="t('knowledge.view_tasks')">Tasks</span>
             <span x-show="overdueTasks.length > 0"
@@ -560,7 +561,7 @@
                   x-text="overdueTasks.length"></span>
           </button>
           <button @click="viewMode = 'graph'; deselectNote(); filteredNotes = notes; $dispatch('load-graph')"
-                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex-shrink-0"
                   :class="viewMode === 'graph' ? 'bg-tertiary/15 text-tertiary' : 'text-on-surface-variant hover:text-tertiary'"
                   x-text="t('knowledge.view_graph')">Graph</button>
         </div>
@@ -757,7 +758,7 @@
                     <p class="text-sm font-medium truncate flex-1"
                        :class="selectedNote && selectedNote.path === note.path
                          ? 'text-primary' : 'text-on-surface group-hover:text-primary'"
-                       x-text="note.title || 'Untitled'"></p>
+                       x-text="note.title || t('knowledge.untitled')"></p>
                     <span x-show="note.type === 'task'"
                           class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-secondary/15 text-secondary">Task</span>
                     <span x-show="note.type === 'topic'"
@@ -925,7 +926,7 @@
                       class="text-lg font-headline font-bold text-on-surface truncate"
                       :class="selectedNote.type === 'topic' ? 'cursor-text' : ''"
                       :title="selectedNote.type === 'topic' ? 'Double-click to rename' : ''"
-                      x-text="selectedNote.title || 'Untitled'"></h1>
+                      x-text="selectedNote.title || t('knowledge.untitled')"></h1>
                   <input x-show="renamingTitle" x-ref="titleInput"
                          x-model="newTitle"
                          @keydown.enter.prevent="renameTopic(selectedNote, newTitle); renamingTitle = false"
@@ -1058,8 +1059,9 @@
             </template>
           </div>
 
-          <!-- Action buttons -->
-          <div class="flex items-center gap-2 flex-shrink-0">
+          <!-- Action buttons — wrap on narrow screens instead of running
+               off the right edge. -->
+          <div class="flex items-center flex-wrap gap-2 md:flex-shrink-0 md:flex-nowrap">
             <!-- Toggle edit/view (existing note) -->
             <template x-if="selectedNote && !creatingNew">
               <button @click="toggleEdit()"
@@ -1305,7 +1307,7 @@
               <span class="material-symbols-outlined text-sm"
                     :class="note.type === 'topic' ? 'text-tertiary' : (note.type === 'document' ? 'text-tertiary' : 'text-on-surface-variant/40')"
                     x-text="note.type === 'topic' ? 'folder' : (note.type === 'task' ? 'task_alt' : (note.type === 'document' ? 'picture_as_pdf' : 'description'))"></span>
-              <span class="text-sm truncate flex-1 text-on-surface" x-text="note.title || 'Untitled'"></span>
+              <span class="text-sm truncate flex-1 text-on-surface" x-text="note.title || t('knowledge.untitled')"></span>
             </button>
           </template>
           <div x-show="filteredNotes.length === 0"
@@ -1324,8 +1326,10 @@
             <div class="absolute inset-0 bg-tertiary/5 animate-pulse"></div>
           </div>
         </div>
-        <h2 class="font-headline text-xl font-bold tracking-tight text-on-surface/60 mb-2">Select a note</h2>
-        <p class="text-on-surface-variant/40 max-w-sm text-sm leading-relaxed">
+        <h2 class="font-headline text-xl font-bold tracking-tight text-on-surface/60 mb-2"
+            x-text="t('knowledge.select_note')">Select a note</h2>
+        <p class="text-on-surface-variant/40 max-w-sm text-sm leading-relaxed"
+           x-text="t('knowledge.select_note_hint')">
           Choose a note from the list to view its content, or create a new one to start capturing knowledge.
         </p>
         <button @click="newNote()"
@@ -2023,7 +2027,7 @@
             if (this.creatingNew) {
               // Create new note
               const data = await MycelosAPI.post('/api/knowledge/notes', {
-                title: this.newTitle.trim() || 'Untitled',
+                title: this.newTitle.trim() || t('knowledge.untitled'),
                 content: this.editContent,
               });
               // Reload notes and select the new one
