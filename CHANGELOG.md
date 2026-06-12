@@ -1,5 +1,19 @@
 # Changelog
 
+## Week 24 (2026) — Telegram bootstrap window + webhook auth
+
+Fixes inbound Telegram on slow hosts (e.g. a Raspberry Pi), where the
+daily briefing was sent but replies were never received.
+
+- **Configurable bootstrap window.** The proxy's credential-materialize
+  window was a hard 60 s; on a slow boot the bot token wasn't ready in
+  time, so inbound polling never started ("Materialize window closed").
+  The default is now 300 s and overridable via `MYCELOS_BOOTSTRAP_WINDOW`
+  (seconds) in `.env` for unusually slow hosts.
+- **Webhook path exempt from the login wall.** `/telegram/webhook` is now
+  in the public-paths allowlist (it authenticates via its own secret
+  token), so webhook-mode deliveries are no longer bounced to `/login`.
+
 ## Week 24 (2026) — UX review: density & clarity
 
 Three information-density improvements from the UX review:

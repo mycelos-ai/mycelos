@@ -298,7 +298,11 @@ def _start_telegram_channel(mycelos: App, api: FastAPI, debug: bool = False) -> 
                 bot_token = materialized["api_key"]
             else:
                 logger.warning(
-                    "Telegram credential materialize failed: %s",
+                    "Telegram credential materialize failed: %s — inbound "
+                    "polling will NOT start (outbound sends via the proxy "
+                    "still work). If this says 'window closed', the boot "
+                    "took longer than the bootstrap window; raise it with "
+                    "MYCELOS_BOOTSTRAP_WINDOW or restart the stack.",
                     materialized.get("error", "unknown"),
                 )
                 return

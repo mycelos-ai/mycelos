@@ -33,9 +33,15 @@ REMEMBER_TTL_DAYS = 90
 _DEVICES_KEY = "auth_devices"
 
 # Paths reachable without authentication: the health check (Docker),
-# the login flow itself, translations, and the static assets the login
-# page needs. Everything else is gated.
-_PUBLIC_PATHS = {"/api/health", "/login", "/api/auth/login", "/api/i18n"}
+# the login flow itself, translations, the static assets the login page
+# needs, and the Telegram webhook. The webhook is called by Telegram's
+# servers (no session/cookie), authenticated by its own secret-token
+# header (verify_webhook_secret) — gating it behind the login wall would
+# silently break webhook-mode delivery.
+_PUBLIC_PATHS = {
+    "/api/health", "/login", "/api/auth/login", "/api/i18n",
+    "/telegram/webhook",
+}
 _PUBLIC_PREFIXES = ("/shared/", "/assets/")
 
 _LOGIN_PAGE = Path(__file__).resolve().parent.parent / "frontend" / "pages" / "login.html"

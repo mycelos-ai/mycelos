@@ -422,6 +422,46 @@ class TestCredentialBootstrap:
         assert resp.status_code == 403
 
 
+class TestBootstrapWindowConfig:
+    """The materialize/bootstrap window must be configurable for slow
+    hardware (Pi 5 boot can exceed the 60s default — symptom: Telegram
+    'Materialize window closed', polling never starts, inbound dead)."""
+
+    def test_window_env_override_widens_window(self, monkeypatch):
+        monkeypatch.setenv("MYCELOS_BOOTSTRAP_WINDOW", "300")
+        monkeypatch.setenv("MYCELOS_PROXY_TOKEN", SESSION_TOKEN)
+        monkeypatch.setenv("MYCELOS_MASTER_KEY", "test-key-window")
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            monkeypatch.setenv("MYCELOS_DB_PATH", str(Path(tmp) / "w.db"))
+            from mycelos.storage.database import SQLiteStorage
+            SQLiteStorage(Path(tmp) / "w.db").initialize()
+            from mycelos.security.proxy_server import create_proxy_app
+            from starlette.testclient import TestClient
+            app = create_proxy_app()
+            client = TestClient(app)
+            # At ~120s elapsed the default-60s window would be closed, but
+            # the 300s override keeps it open. Telegram isn't credential-
+            # configured here, so a 403 'window closed' must NOT be the
+            # reason — any other status proves the window stayed open.
+            with patch("mycelos.security.proxy_server.time") as mock_time:
+                import time as _t
+                mock_time.time.return_value = _t.time() + 120
+                resp = client.post("/credential/materialize",
+                                   json={"service": "telegram"},
+                                   headers={"Authorization": f"Bearer {SESSION_TOKEN}"})
+            body = resp.json()
+            assert "window closed" not in (body.get("error") or "").lower(), (
+                f"300s override should keep the window open at 120s, got {body}"
+            )
+
+    def test_default_window_is_generous(self):
+        """The hard default must comfortably cover a Pi-class boot."""
+        from mycelos.security import proxy_server
+        assert proxy_server._default_bootstrap_window() >= 180
+
+
 class TestProxyClient:
     def test_client_sends_auth_header(self):
         """Client includes Bearer token in every request."""

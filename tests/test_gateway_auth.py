@@ -103,6 +103,18 @@ class TestLoginFlow:
         resp = client.get("/api/ui/theme", headers=_basic("wrong"))
         assert resp.status_code == 401
 
+    def test_telegram_webhook_not_gated_by_auth(self, client):
+        """Telegram's servers POST the webhook with no session/cookie; it has
+        its own secret-token auth. The login wall must NOT block it, or
+        webhook-mode delivery breaks once a password is set. We only assert
+        the auth middleware lets it reach the route (not 401/redirect) — the
+        route's own secret check then rejects an unconfigured/invalid secret."""
+        resp = client.post("/telegram/webhook", json={"update_id": 1},
+                           follow_redirects=False)
+        assert resp.status_code not in (401, 302, 303, 307), (
+            f"auth must not gate the webhook, got {resp.status_code}"
+        )
+
     def test_logout_invalidates_session(self, client):
         login = client.post("/api/auth/login", json={"password": PASSWORD})
         token = login.cookies["mycelos_session"]

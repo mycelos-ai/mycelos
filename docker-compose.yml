@@ -16,6 +16,11 @@ services:
       - MYCELOS_DATA_DIR=/data
       - MYCELOS_PROXY_PORT=9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
+      # Startup window (seconds) during which the gateway may materialize
+      # the Telegram bot token for inbound polling. Default 300s. Raise it
+      # on slow hosts if the gateway logs "Telegram ... Materialize window
+      # closed" and inbound messages stop arriving.
+      - MYCELOS_BOOTSTRAP_WINDOW=${MYCELOS_BOOTSTRAP_WINDOW:-300}
     volumes:
       # Proxy needs the full data directory — SQLite's WAL file
       # (mycelos.db-wal) must sit next to the database file, and

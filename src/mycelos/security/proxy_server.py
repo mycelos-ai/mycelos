@@ -116,6 +116,26 @@ class OauthCallbackRequest(BaseModel):
 # proxy-mediated via /http + inject_credential.
 MATERIALIZABLE_SERVICES: set[str] = {"telegram"}
 
+# Default credential bootstrap/materialize window. Generous enough to
+# cover a Pi-class boot (Python imports + model registry + MCP discovery
+# via npx/uvx can take well over a minute on a Pi 5). Override with
+# MYCELOS_BOOTSTRAP_WINDOW (seconds) for unusually slow hosts. The window
+# only matters at startup — once Telegram's token is materialized the
+# steady-state denial is unaffected by its size.
+_DEFAULT_BOOTSTRAP_WINDOW = 300
+
+
+def _default_bootstrap_window() -> int:
+    """The hard bootstrap-window limit in seconds (env-overridable)."""
+    raw = os.environ.get("MYCELOS_BOOTSTRAP_WINDOW", "")
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _DEFAULT_BOOTSTRAP_WINDOW
+
 
 # ---------------------------------------------------------------------------
 # Audit helper
@@ -885,13 +905,13 @@ def create_proxy_app() -> FastAPI:
     # The proxy only honors /credential/bootstrap and
     # /credential/materialize during a window after startup, so a
     # gateway compromised later in the session cannot pull credentials
-    # in clear. 60s is a conservative budget that fits Pi-class boot
-    # sequences (LLM healthcheck + MCP server discovery via npx/uvx),
-    # while keeping the steady-state denial in place. We also log a
-    # WARNING for every materialize that lands later than this soft
-    # threshold so a creeping boot time stays visible.
-    _BOOTSTRAP_WINDOW_SECONDS = 60
-    _MATERIALIZE_LATE_WARN_SECONDS = 30
+    # in clear. The window is generous by default and env-overridable
+    # (MYCELOS_BOOTSTRAP_WINDOW) for slow hosts — a Pi 5 boot can exceed
+    # a minute, which silently left Telegram polling offline ('Materialize
+    # window closed'). We log a WARNING for every materialize that lands
+    # past the soft threshold so a creeping boot time stays visible.
+    _BOOTSTRAP_WINDOW_SECONDS = _default_bootstrap_window()
+    _MATERIALIZE_LATE_WARN_SECONDS = max(30, _BOOTSTRAP_WINDOW_SECONDS // 2)
 
     @app.post("/credential/bootstrap")
     async def credential_bootstrap(request: Request) -> JSONResponse:
