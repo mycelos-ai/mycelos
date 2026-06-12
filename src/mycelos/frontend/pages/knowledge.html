@@ -466,13 +466,33 @@
       <!-- Left panel: Note list -->
       <aside class="w-full md:w-80 flex-shrink-0 flex flex-col overflow-hidden bg-[var(--surface)]"
              style="border-right: 1px solid rgba(70, 72, 77, 0.15);"
-             x-show="!selectedNote || !mobileView"
+             x-show="!mobileView || mobileLevel === 'list' || mobileLevel === 'topic'"
              x-transition:enter="transition ease-out duration-200"
              x-transition:enter-start="opacity-0 -translate-x-4"
              x-transition:enter-end="opacity-100 translate-x-0">
 
+        <!-- Mobile breadcrumb header (topic level): back + path -->
+        <div x-show="mobileView && mobileLevel === 'topic'"
+             class="md:hidden flex items-center gap-2 px-4 pt-6 pb-3 flex-shrink-0"
+             style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
+          <button @click="mobileBack()"
+                  class="w-9 h-9 rounded-lg flex items-center justify-center
+                         text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors"
+                  :aria-label="t('knowledge.back')">
+            <span class="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div class="flex items-center gap-1 text-sm min-w-0">
+            <button @click="mobileBack()"
+                    class="text-on-surface-variant hover:text-primary transition-colors shrink-0"
+                    x-text="t('knowledge.breadcrumb_root')"></button>
+            <span class="opacity-40 shrink-0">/</span>
+            <span class="font-medium text-on-surface truncate" x-text="mobileTopicLabel()"></span>
+          </div>
+        </div>
+
         <!-- List header -->
-        <div class="px-6 pt-6 pb-4 flex-shrink-0">
+        <div class="px-6 pt-6 pb-4 flex-shrink-0"
+             :class="mobileView && mobileLevel === 'topic' ? 'hidden' : ''">
           <div class="flex items-center justify-between mb-4">
             <div>
               <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface" x-text="t('knowledge.title')">Knowledge</h2>
@@ -520,7 +540,8 @@
         </div>
 
         <!-- View toggle: Topics / All / Tasks -->
-        <div class="flex gap-1 px-6 pb-3">
+        <div class="flex gap-1 px-6 pb-3"
+             :class="mobileView && mobileLevel === 'topic' ? 'hidden' : ''">
           <button @click="viewMode = 'topics'; loadTopics()"
                   class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
                   :class="viewMode === 'topics' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'">
@@ -560,8 +581,46 @@
             </div>
           </template>
 
+          <!-- === MOBILE TOPIC CHILDREN (stack level 'topic') === -->
+          <!-- Shown only on mobile when the user has navigated INTO a topic.
+               Lists that topic's child notes full-width; tapping a child opens
+               the note (level 'note'). Desktop never enters this branch. -->
+          <template x-if="!loading && mobileView && mobileLevel === 'topic'">
+            <div class="space-y-0.5 px-1">
+              <template x-for="child in topicChildren" :key="child.path">
+                <button @click="selectNote(child)"
+                        class="note-item w-full text-left px-3 py-3 rounded-lg flex items-center gap-2 group hover:bg-surface-container">
+                  <template x-if="child.type === 'task'">
+                    <button @click.stop="toggleDone(child)"
+                            class="w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors"
+                            :class="child.status === 'done'
+                              ? 'bg-primary border-primary text-on-primary-fixed'
+                              : 'border-on-surface-variant/30 hover:border-primary'">
+                      <span x-show="child.status === 'done'" class="material-symbols-outlined text-xs">check</span>
+                    </button>
+                  </template>
+                  <template x-if="child.type !== 'task'">
+                    <span class="material-symbols-outlined text-sm"
+                          :class="child.type === 'topic' ? 'text-tertiary' : (child.type === 'document' ? 'text-tertiary' : 'text-on-surface-variant/40')"
+                          x-text="child.type === 'topic' ? 'folder' : (child.type === 'document' ? 'picture_as_pdf' : 'description')"></span>
+                  </template>
+                  <span class="text-sm truncate flex-1"
+                        :class="child.status === 'done' ? 'line-through text-on-surface-variant/40' : 'text-on-surface'"
+                        x-text="child.title"></span>
+                  <span x-show="child.due"
+                        class="text-[9px] font-label shrink-0"
+                        :class="new Date(child.due) < new Date() ? 'text-error font-bold' : 'text-on-surface-variant/50'"
+                        x-text="new Date(child.due).toLocaleDateString()"></span>
+                </button>
+              </template>
+              <div x-show="topicChildren.length === 0"
+                   class="text-xs text-on-surface-variant/40 px-3 py-6 text-center"
+                   x-text="t('knowledge.topic_empty')"></div>
+            </div>
+          </template>
+
           <!-- === TOPICS VIEW === -->
-          <template x-if="!loading && viewMode === 'topics'">
+          <template x-if="!loading && viewMode === 'topics' && !(mobileView && mobileLevel === 'topic')">
             <div class="space-y-1">
               <template x-for="topic in topics" :key="topic.path">
                 <div>
@@ -578,13 +637,13 @@
                                 dragOverTopic === topic.path ? 'ring-2 ring-primary/50 bg-primary/5' : '',
                                 draggedNote && draggedNote.path === topic.path ? 'opacity-40' : '',
                                 !draggedNote ? 'cursor-grab' : '']">
-                    <!-- Chevron: click to expand/collapse -->
-                    <button @click.stop="toggleTopic(topic)" class="flex-shrink-0">
+                    <!-- Chevron: desktop expands inline; mobile drills into the topic -->
+                    <button @click.stop="mobileView ? openTopicMobile(topic) : toggleTopic(topic)" class="flex-shrink-0">
                       <span class="material-symbols-outlined text-sm transition-transform"
-                            :class="expandedTopic === topic.path ? 'rotate-90' : ''">chevron_right</span>
+                            :class="expandedTopic === topic.path && !mobileView ? 'rotate-90' : ''">chevron_right</span>
                     </button>
-                    <!-- Title: click to open topic note -->
-                    <button @click.stop="selectNote(topic)" class="flex items-center gap-2 flex-1 min-w-0 text-left">
+                    <!-- Title: desktop opens the topic note; mobile drills into the topic's child list -->
+                    <button @click.stop="mobileView ? openTopicMobile(topic) : selectNote(topic)" class="flex items-center gap-2 flex-1 min-w-0 text-left">
                       <span class="material-symbols-outlined text-sm text-tertiary">folder</span>
                       <span class="text-sm font-medium truncate group-hover:text-primary" x-text="topic.title"></span>
                     </button>
@@ -594,8 +653,8 @@
                           class="px-1.5 py-0.5 rounded text-[9px] font-label bg-secondary/15 text-secondary"
                           x-text="topic.open_tasks + ' open'"></span>
                   </div>
-                  <!-- Topic children -->
-                  <div x-show="expandedTopic === topic.path" class="ml-6 mt-1 space-y-0.5">
+                  <!-- Topic children (desktop inline expand only; mobile drills in) -->
+                  <div x-show="expandedTopic === topic.path && !mobileView" class="ml-6 mt-1 space-y-0.5">
                     <template x-for="child in topicChildren" :key="child.path">
                       <button @click="selectNote(child)"
                               draggable="true"
@@ -654,14 +713,14 @@
                 </div>
               </template>
 
-              <!-- Uncategorized -->
-              <button @click="showUncategorized()"
+              <!-- Uncategorized — desktop expands inline; mobile drills in -->
+              <button @click="mobileView ? openTopicMobile({ path: '__uncategorized', title: t('knowledge.pending') }) : showUncategorized()"
                       class="note-item w-full text-left px-4 py-2.5 rounded-xl flex items-center gap-2 group hover:bg-surface-container"
-                      :class="viewMode === 'topics' && expandedTopic === '__uncategorized' ? 'bg-surface-container-high' : ''">
+                      :class="viewMode === 'topics' && expandedTopic === '__uncategorized' && !mobileView ? 'bg-surface-container-high' : ''">
                 <span class="material-symbols-outlined text-sm text-on-surface-variant/40">folder_open</span>
                 <span class="text-sm font-medium flex-1 text-on-surface-variant group-hover:text-primary" x-text="t('knowledge.pending')">Pending</span>
               </button>
-              <div x-show="expandedTopic === '__uncategorized'" class="ml-6 space-y-0.5">
+              <div x-show="expandedTopic === '__uncategorized' && !mobileView" class="ml-6 space-y-0.5">
                 <template x-for="note in uncategorizedNotes" :key="note.path">
                   <button @click="selectNote(note)"
                           draggable="true"
@@ -802,9 +861,11 @@
       </aside>
 
       <!-- Right panel: Note content -->
+      <!-- Desktop: shows whenever a note is selected / being created.
+           Mobile: only at the 'note' stack level (full-screen overlay). -->
       <section class="flex-1 flex flex-col overflow-hidden min-w-0"
-               x-show="selectedNote || creatingNew"
-               :class="mobileView && (selectedNote || creatingNew) ? 'absolute inset-0 z-30 bg-[var(--surface)] pt-16' : ''"
+               x-show="(selectedNote || creatingNew) && (!mobileView || mobileLevel === 'note')"
+               :class="mobileView && mobileLevel === 'note' ? 'absolute inset-0 z-30 bg-[var(--surface)] pt-16' : ''"
                x-transition:enter="transition ease-out duration-200"
                x-transition:enter-start="opacity-0 translate-x-4"
                x-transition:enter-end="opacity-100 translate-x-0">
@@ -813,8 +874,9 @@
         <div class="flex items-center gap-3 px-6 py-4 flex-shrink-0"
              style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
 
-          <!-- Back button (mobile) -->
-          <button @click="deselectNote()"
+          <!-- Back button (mobile): pops one level off the navigation stack -->
+          <button @click="mobileBack()"
+                  :aria-label="t('knowledge.back')"
                   class="md:hidden w-9 h-9 rounded-lg flex items-center justify-center
                          text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors">
             <span class="material-symbols-outlined">arrow_back</span>
@@ -1187,7 +1249,11 @@
                x-data="knowledgeGraph()"
                @load-graph.window="load()"
                class="flex-1 flex flex-col relative overflow-hidden">
-        <div class="flex items-center gap-4 px-6 py-3 flex-shrink-0 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/60"
+        <!-- Legend + canvas: desktop only. The force-directed canvas has tiny
+             nodes and a hover-based hit test that is unusable on touch, so on
+             narrow screens we fall back to a plain note list (see below). -->
+        <div x-show="!mobileView"
+             class="flex items-center gap-4 px-6 py-3 flex-shrink-0 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/60"
              style="box-shadow: 0 1px 0 rgba(106, 214, 255, 0.08);">
           <span class="flex items-center gap-1.5">
             <span class="w-2.5 h-2.5 rounded-full" style="background: var(--primary); box-shadow: 0 0 6px var(--glow-primary);"></span>
@@ -1207,7 +1273,8 @@
           </span>
           <span class="ml-auto text-primary/70" x-text="stats"></span>
         </div>
-        <div class="flex-1 relative">
+        <!-- Desktop: interactive canvas graph -->
+        <div x-show="!mobileView" class="flex-1 relative">
           <canvas x-ref="graphCanvas" class="absolute inset-0 w-full h-full cursor-pointer"
                   @click="onClick($event)" @mousemove="onMove($event)"></canvas>
           <div x-show="hoverLabel" :style="hoverStyle"
@@ -1222,6 +1289,31 @@
             <p class="text-on-surface-variant/50 text-sm max-w-xs" x-text="t('knowledge.graph_empty')">
               No notes yet — the graph grows as your knowledge does.
             </p>
+          </div>
+        </div>
+
+        <!-- Mobile fallback: the canvas graph is not touch-usable, so show a
+             plain tappable note list plus a "desktop only" hint. Uses the
+             parent scope's filteredNotes (set to all notes by the Graph tab). -->
+        <div x-show="mobileView" class="flex-1 overflow-y-auto px-3 py-3 space-y-1">
+          <div class="flex items-start gap-2 px-3 py-3 mb-1 rounded-lg bg-surface-container">
+            <span class="material-symbols-outlined text-base text-tertiary/70 shrink-0">desktop_windows</span>
+            <p class="text-xs text-on-surface-variant/70 leading-relaxed"
+               x-text="t('knowledge.graph_desktop_only')"></p>
+          </div>
+          <template x-for="note in filteredNotes" :key="note.path">
+            <button @click="selectNote(note)"
+                    class="note-item w-full text-left px-3 py-3 rounded-lg flex items-center gap-2 hover:bg-surface-container">
+              <span class="material-symbols-outlined text-sm"
+                    :class="note.type === 'topic' ? 'text-tertiary' : (note.type === 'document' ? 'text-tertiary' : 'text-on-surface-variant/40')"
+                    x-text="note.type === 'topic' ? 'folder' : (note.type === 'task' ? 'task_alt' : (note.type === 'document' ? 'picture_as_pdf' : 'description'))"></span>
+              <span class="text-sm truncate flex-1 text-on-surface" x-text="note.title || 'Untitled'"></span>
+            </button>
+          </template>
+          <div x-show="filteredNotes.length === 0"
+               class="text-center py-12 px-6">
+            <span class="material-symbols-outlined text-3xl text-on-surface-variant/30 mb-2 block">hub</span>
+            <p class="text-sm text-on-surface-variant/50" x-text="t('knowledge.graph_empty')"></p>
           </div>
         </div>
       </section>
@@ -1331,6 +1423,14 @@
         creatingNew: false,
         newTitle: '',
         mobileView: false,
+        // Mobile navigation stack: which level of the topics → child-notes →
+        // note-content hierarchy is currently shown on a narrow screen.
+        // 'list'  = aside with topics / all / tasks
+        // 'topic' = a single topic expanded, showing its child notes full-width
+        // 'note'  = the detail / content pane
+        // Desktop (>= md) ignores this entirely and keeps the 3-pane layout.
+        mobileLevel: 'list',
+        mobileTopic: null,
         viewMode: 'topics',
         topics: [],
         topicChildren: [],
@@ -1395,6 +1495,9 @@
             } else {
               this.selectedNote = null;
               this.noteContent = '';
+              if (this.mobileView && this.mobileLevel === 'note') {
+                this.mobileLevel = this.mobileTopic ? 'topic' : 'list';
+              }
               history.replaceState({}, '', '/pages/knowledge.html');
             }
           });
@@ -1404,7 +1507,80 @@
          * Detect mobile viewport (below md breakpoint).
          */
         checkMobileView() {
+          const wasMobile = this.mobileView;
           this.mobileView = window.innerWidth < 768;
+          // When leaving mobile, drop back to the list level so the desktop
+          // 3-pane layout is never gated by a stale mobile stack position.
+          if (wasMobile && !this.mobileView) {
+            this.mobileLevel = 'list';
+          }
+          // When entering mobile, derive the level from current selection so a
+          // deep-linked note (?note=...) lands on the content pane, not the list.
+          if (!wasMobile && this.mobileView) {
+            if (this.selectedNote || this.creatingNew) {
+              this.mobileLevel = 'note';
+            } else if (this.mobileTopic) {
+              this.mobileLevel = 'topic';
+            } else {
+              this.mobileLevel = 'list';
+            }
+          }
+        },
+
+        /**
+         * Mobile-only: navigate INTO a topic (the middle hierarchy level).
+         * Loads the topic's child notes and shows them full-width with a
+         * breadcrumb + back affordance — instead of selecting the topic as a
+         * note. No-op on desktop, where toggleTopic() expands inline.
+         */
+        async openTopicMobile(topic) {
+          this.mobileTopic = topic;
+          this.mobileLevel = 'topic';
+          this.expandedTopic = topic.path;
+          // Uncategorized is a synthetic bucket — its members come from the
+          // already-loaded note list, not the topic-children endpoint.
+          if (topic.path === '__uncategorized') {
+            const topicPaths = new Set(this.topics.map(t => t.path));
+            this.uncategorizedNotes = this.notes.filter(n =>
+              n.type !== 'topic' && !topicPaths.has(n.parent_path)
+            );
+            this.topicChildren = this.uncategorizedNotes;
+            return;
+          }
+          try {
+            this.topicChildren = await MycelosAPI.get('/api/knowledge/topics/' + encodeURIComponent(topic.path) + '/children');
+          } catch (e) {
+            this.topicChildren = [];
+          }
+        },
+
+        /**
+         * Mobile-only: pop one level off the navigation stack
+         * (note → topic-children → list).
+         */
+        mobileBack() {
+          if (this.mobileLevel === 'note') {
+            // Leaving the detail pane. If we came from a topic's child list,
+            // return there; otherwise return to the flat list.
+            this.selectedNote = null;
+            this.creatingNew = false;
+            this.editing = false;
+            this.noteContent = '';
+            this.editContent = '';
+            this.mobileLevel = this.mobileTopic ? 'topic' : 'list';
+          } else if (this.mobileLevel === 'topic') {
+            this.mobileTopic = null;
+            this.expandedTopic = null;
+            this.topicChildren = [];
+            this.mobileLevel = 'list';
+          }
+        },
+
+        /**
+         * Label for the mobile breadcrumb header at the topic level.
+         */
+        mobileTopicLabel() {
+          return this.mobileTopic ? (this.mobileTopic.title || '') : '';
         },
 
         /**
@@ -1642,6 +1818,11 @@
           this.creatingNew = false;
           this.editing = false;
           this.selectedNote = note;
+          // On mobile, opening a note advances the navigation stack to the
+          // content level. Desktop keeps its 3-pane layout (mobileLevel unused).
+          if (this.mobileView) {
+            this.mobileLevel = 'note';
+          }
           this.noteContent = '';
           this.editContent = '';
           this.loadingContent = true;
@@ -1797,6 +1978,13 @@
           this.editing = false;
           this.noteContent = '';
           this.editContent = '';
+          // Fully reset the mobile stack to the list root (used by the graph
+          // toggle and other "clear selection" paths). The mobile back button
+          // uses mobileBack() instead, which only pops a single level.
+          if (this.mobileView) {
+            this.mobileLevel = 'list';
+            this.mobileTopic = null;
+          }
         },
 
         /**
@@ -1820,6 +2008,10 @@
           this.newTitle = '';
           this.editContent = '';
           this.noteContent = '';
+          // On mobile, the editor lives at the content level of the stack.
+          if (this.mobileView) {
+            this.mobileLevel = 'note';
+          }
         },
 
         /**

@@ -1,5 +1,32 @@
 # Changelog
 
+## Week 24 (2026) — knowledge mobile navigation
+
+The Knowledge page was built for the desktop 3-pane layout and collapsed
+badly on phones: tapping a topic selected it as an (empty) note and the
+list disappeared, leaving the user with nothing useful. The page now has a
+real master → detail navigation stack on mobile, in the Obsidian/Notion
+style.
+
+- **Mobile navigation stack.** A new `mobileLevel` state
+  (`list` → `topic` → `note`) drives one level at a time on narrow
+  screens. Tapping a topic now navigates *into* it and shows its child
+  notes full-width (instead of selecting the topic as a note); tapping a
+  child opens the note. A mobile-only breadcrumb header ("Topics /
+  <name>") with a back affordance pops one level at a time. The
+  Uncategorized/Pending bucket drills in the same way.
+- **Desktop untouched.** Every changed `x-show`/`:class` condition is
+  gated behind `mobileView`, so at `md:` and up the aside + detail + graph
+  panes render exactly as before. The inline topic-expand, the desktop
+  empty state, and the breadcrumb in the detail header are unchanged on
+  desktop.
+- **Graph on touch.** The force-directed canvas (tiny nodes, hover-based
+  hit test) is unusable on touch, so on narrow screens the graph view now
+  shows a plain tappable note list with a "best on a larger screen" hint
+  instead of the canvas. Desktop keeps the interactive graph.
+- New i18n keys (`knowledge.back`, `knowledge.breadcrumb_root`,
+  `knowledge.topic_empty`, `knowledge.graph_desktop_only`) in en + de.
+
 ## Week 24 (2026) — language setting actually works
 
 Fixes a three-bug chain that made the UI language setting (and the voice
