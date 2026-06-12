@@ -108,6 +108,28 @@ mycelos logs -f             # Follow gateway + proxy logs
 
 The doctor analyzes your system state, audit logs, and configuration to find root causes.
 
+### Telegram sends messages but doesn't receive them
+
+If your daily briefing (or any outbound message) arrives, but the bot
+ignores messages you send it, the inbound polling thread never started.
+On a Pi the boot sequence (imports + model registry + MCP discovery) can
+take longer than the credential bootstrap window, so the Telegram token
+is never handed to the polling thread — while outbound sends keep working
+because they go through the proxy and don't need it.
+
+`mycelos doctor --check telegram` detects this directly. The fix:
+
+```bash
+# A fresh boot reopens the bootstrap window:
+docker compose down && docker compose up -d
+```
+
+If it keeps happening on a slow Pi, widen the window in your `.env`:
+
+```bash
+MYCELOS_BOOTSTRAP_WINDOW=600   # seconds; default is 300
+```
+
 ### `pi5.local` pings but curl / the browser hangs from the Mac
 
 Happens on macOS when `ping pi5.local` succeeds but `curl http://pi5.local:9100` times out, while the IP works:

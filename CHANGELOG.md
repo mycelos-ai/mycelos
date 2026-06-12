@@ -1,5 +1,22 @@
 # Changelog
 
+## Week 24 (2026) — doctor catches dead Telegram polling
+
+`mycelos doctor` now detects the exact failure mode that was hard to
+diagnose by hand: Telegram **sends** (the daily briefing arrives) but
+**receives nothing**, because the proxy credential bootstrap window
+closed before the bot token was materialized, so the inbound polling
+thread never started.
+
+- `check_telegram` reads the `proxy.materialize_denied` /
+  `reason=window_closed` audit event (only since the latest
+  `gateway.started`, so a stale failure from an earlier boot doesn't flag
+  a now-healthy channel) and reports a warning explaining that outbound
+  works but inbound is down, plus the fix.
+- `mycelos doctor --fix` prints the restart command and the
+  `MYCELOS_BOOTSTRAP_WINDOW` knob for slow hosts.
+- Documented in the Raspberry Pi setup guide's troubleshooting section.
+
 ## Week 24 (2026) — UX review: density & clarity
 
 Three information-density improvements from the UX review:
