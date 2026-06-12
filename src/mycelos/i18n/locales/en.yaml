@@ -460,6 +460,11 @@ telegram:
 
 # --- Web UI translations ---
 web:
+  login:
+    subtitle: "Enter your password to continue"
+    submit: "Sign in"
+    remember: "Remember this device"
+    wrong_password: "Wrong password - try again."
   sidebar:
     dashboard: "Dashboard"
     agents: "Agents"

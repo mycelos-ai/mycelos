@@ -121,7 +121,7 @@ def briefing_tick(
         if not is_briefing_due(now, briefing_time, last_sent):
             return {"enabled": True, "sent": False, "reason": "not_due"}
 
-        result = deliver_briefing(app, user_id, reminder_service=reminder_service)
+        result = deliver_briefing(app, user_id, reminder_service=reminder_service, now=now)
         return {"enabled": True, **result}
     except Exception as e:
         logger.error("briefing_tick FAILED: %s", e, exc_info=True)

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos — Sign in</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/shared/base.css">
+  <style>
+    /* Standalone page — no Tailwind CDN, no layout shell. */
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 22rem;
+      padding: 2.5rem 2rem;
+      border-radius: 1.25rem;
+      background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015));
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+      backdrop-filter: blur(18px);
+      text-align: center;
+    }
+    .login-mark {
+      width: 3.25rem; height: 3.25rem;
+      margin: 0 auto 1rem;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, var(--primary), transparent 75%);
+      opacity: 0.9;
+    }
+    .login-title {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.4rem; font-weight: 700;
+      color: var(--on-surface);
+      letter-spacing: -0.01em;
+      text-shadow: 0 0 24px color-mix(in srgb, var(--primary) 35%, transparent);
+    }
+    .login-sub {
+      font-family: Inter, sans-serif;
+      font-size: 0.8rem;
+      color: var(--on-surface-variant);
+      margin: 0.4rem 0 1.6rem;
+    }
+    .login-input {
+      width: 100%;
+      padding: 0.7rem 0.9rem;
+      border-radius: 0.75rem;
+      border: 1px solid var(--outline-variant);
+      background: rgba(0,0,0,0.25);
+      color: var(--on-surface);
+      font-family: Inter, sans-serif;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .login-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent); }
+    .login-btn {
+      width: 100%;
+      margin-top: 0.9rem;
+      padding: 0.7rem;
+      border: none;
+      border-radius: 0.75rem;
+      background: var(--primary);
+      color: var(--on-primary);
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 600; font-size: 0.9rem;
+      cursor: pointer;
+      transition: filter 0.15s ease;
+    }
+    .login-btn:hover { filter: brightness(1.1); }
+    .login-btn:disabled { opacity: 0.6; cursor: wait; }
+    .login-error {
+      color: var(--error);
+      font-family: Inter, sans-serif;
+      font-size: 0.8rem;
+      margin-top: 0.8rem;
+      min-height: 1.1rem;
+    }
+    .login-remember {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.8rem;
+      font-family: Inter, sans-serif;
+      font-size: 0.8rem;
+      color: var(--on-surface-variant);
+      cursor: pointer;
+      user-select: none;
+    }
+    .login-remember input {
+      accent-color: var(--primary);
+      width: 0.95rem; height: 0.95rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="login-form" autocomplete="on">
+      <div class="login-mark"></div>
+      <h1 class="login-title">Mycelos</h1>
+      <p class="login-sub" id="login-sub">Enter your password to continue</p>
+      <!-- Hidden username keeps password managers happy; the gateway only
+           checks the password. -->
+      <input type="text" name="username" value="mycelos" autocomplete="username" style="display:none">
+      <input class="login-input" id="password" name="password" type="password"
+             placeholder="Password" autocomplete="current-password" autofocus required>
+      <label class="login-remember">
+        <input type="checkbox" id="remember" checked>
+        <span id="remember-label">Remember this device</span>
+      </label>
+      <button class="login-btn" id="submit" type="submit">Sign in</button>
+      <p class="login-error" id="error"></p>
+    </form>
+  </div>
+
+  <script>
+    // Minimal i18n: reuse server translations when available, fall back to
+    // English. This page must work before any session exists, so it loads
+    // them itself instead of depending on i18n.js + layout.js.
+    fetch('/api/i18n').then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
+      if (!data || !data.translations) return;
+      var login = (data.translations.login || {});
+      if (login.subtitle) document.getElementById('login-sub').textContent = login.subtitle;
+      if (login.submit) document.getElementById('submit').textContent = login.submit;
+      if (login.remember) document.getElementById('remember-label').textContent = login.remember;
+      window._loginWrong = login.wrong_password || null;
+    }).catch(function () {});
+
+    document.getElementById('login-form').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var btn = document.getElementById('submit');
+      var err = document.getElementById('error');
+      btn.disabled = true;
+      err.textContent = '';
+      var next = new URLSearchParams(location.search).get('next') || '/';
+      fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: document.getElementById('password').value,
+          remember: document.getElementById('remember').checked,
+          next: next,
+        }),
+      }).then(function (r) {
+        if (r.ok) return r.json().then(function (d) { location.href = d.next || '/'; });
+        err.textContent = window._loginWrong || 'Wrong password — try again.';
+        btn.disabled = false;
+      }).catch(function () {
+        err.textContent = 'Connection failed — is the gateway running?';
+        btn.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>

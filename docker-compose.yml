@@ -79,6 +79,9 @@ services:
       # recommended the moment you expose the port beyond localhost,
       # because Passkey-based auth does not ship until Phase 2.
       - MYCELOS_PASSWORD=${MYCELOS_PASSWORD:-}
+      # Passed through so the entrypoint can fail fast when the port
+      # is exposed beyond localhost without a password.
+      - MYCELOS_BIND=${MYCELOS_BIND:-127.0.0.1}
     networks:
       # Phase 1b: gateway is off the default (internet-capable) network.
       # Every outbound call flows through the proxy container or fails.

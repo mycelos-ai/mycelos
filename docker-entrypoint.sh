@@ -114,6 +114,30 @@ if [ -f "$DATA_DIR/mycelos.db" ]; then
     fi
 fi
 
+# Pre-flight: if the HOST exposes the gateway beyond localhost
+# (MYCELOS_BIND in .env), a password is mandatory. Fail fast with a clear
+# message instead of letting the gateway refuse later where only
+# docker logs would reveal why.
+BIND="${MYCELOS_BIND:-127.0.0.1}"
+case "$BIND" in
+    127.0.0.1|::1|localhost) ;;
+    *)
+        if [ -z "${MYCELOS_PASSWORD:-}" ]; then
+            echo "" >&2
+            echo "========================================================" >&2
+            echo "  REFUSING TO START: MYCELOS_BIND=$BIND exposes the" >&2
+            echo "  gateway beyond localhost, but MYCELOS_PASSWORD is" >&2
+            echo "  not set. Anyone on the network could use Mycelos." >&2
+            echo "" >&2
+            echo "  Fix: add to your .env next to docker-compose.yml:" >&2
+            echo "      MYCELOS_PASSWORD=<a strong password>" >&2
+            echo "  or set MYCELOS_BIND=127.0.0.1 to stay local-only." >&2
+            echo "========================================================" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 # Role selection: same image, two container modes.
 ROLE="${MYCELOS_ROLE:-gateway}"
 

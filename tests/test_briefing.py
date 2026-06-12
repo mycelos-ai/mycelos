@@ -253,8 +253,10 @@ class TestBriefingTick:
             "SELECT details FROM audit_events WHERE event_type='briefing.sent'"
         )
         assert row is not None
+        # Dedup marker is derived from the TICK time, not the wall clock —
+        # is_briefing_due compares against now.date(), so the two must match.
         assert app.memory.get("default", "system", "briefing_last_sent") == \
-            date.today().isoformat()
+            "2026-06-11"
 
     def test_no_double_send_same_day(self, app):
         from mycelos.scheduler.jobs import briefing_tick

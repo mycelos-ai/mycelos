@@ -134,9 +134,40 @@ set -e
 
 MYCELOS_COMPOSE="$compose_path"
 
+# Refuse to start/update a stack that exposes the port beyond
+# localhost without a password — otherwise the gateway exits inside
+# the container and the only clue is buried in docker logs.
+preflight() {
+    local env_file="\$(dirname "\$MYCELOS_COMPOSE")/.env"
+    [ -f "\$env_file" ] || return 0
+    local bind password
+    bind="\$(grep -E '^MYCELOS_BIND=' "\$env_file" | tail -1 | cut -d= -f2-)"
+    password="\$(grep -E '^MYCELOS_PASSWORD=' "\$env_file" | tail -1 | cut -d= -f2-)"
+    case "\${bind:-127.0.0.1}" in
+        127.0.0.1|::1|localhost|"") return 0 ;;
+    esac
+    if [ -z "\$password" ]; then
+        echo "" >&2
+        echo "Refusing to start: MYCELOS_BIND=\$bind exposes Mycelos beyond" >&2
+        echo "localhost, but MYCELOS_PASSWORD is not set in \$env_file." >&2
+        echo "Set a password there, or use MYCELOS_BIND=127.0.0.1." >&2
+        exit 1
+    fi
+}
+
+gateway_running() {
+    docker compose -f "\$MYCELOS_COMPOSE" ps --status running gateway 2>/dev/null | grep -q gateway
+}
+
 case "\$1" in
+    start)
+        shift
+        preflight
+        exec docker compose -f "\$MYCELOS_COMPOSE" up -d "\$@"
+        ;;
     update)
         shift
+        preflight
         cd "\$(dirname "\$MYCELOS_COMPOSE")"
         docker compose -f "\$MYCELOS_COMPOSE" pull
         exec docker compose -f "\$MYCELOS_COMPOSE" up -d "\$@"
@@ -159,6 +190,12 @@ case "\$1" in
         exec docker compose -f "\$MYCELOS_COMPOSE" stop
         ;;
     *)
+        if ! gateway_running; then
+            echo "Mycelos is not running." >&2
+            echo "  Start it:        mycelos start" >&2
+            echo "  See why it died: mycelos logs gateway --tail 30" >&2
+            exit 1
+        fi
         exec docker compose -f "\$MYCELOS_COMPOSE" exec gateway mycelos "\$@"
         ;;
 esac
