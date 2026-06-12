@@ -1015,7 +1015,7 @@
                   class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/15 text-primary text-xs font-bold hover:bg-primary/25 transition-colors disabled:opacity-50">
             <span class="material-symbols-outlined text-sm" x-show="!editing">save</span>
             <span class="material-symbols-outlined text-sm animate-spin" x-show="editing">progress_activity</span>
-            <span x-text="editing ? 'Saving...' : 'Save changes'"></span>
+            <span x-text="editing ? t('common.saving') : t('connectors.save_changes')"></span>
           </button>
         </div>
       </div>

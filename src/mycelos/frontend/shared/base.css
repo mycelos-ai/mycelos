@@ -719,3 +719,8 @@ input::placeholder, textarea::placeholder {
   --secondary: color-mix(in srgb, var(--primary) 75%, #5a6f8a);
   --secondary-dim: color-mix(in srgb, var(--primary) 60%, #3a4a5e);
 }
+
+/* Hide the scrollbar on horizontally-scrollable rows (mobile tab strips
+   etc.) while keeping scroll/swipe working. */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

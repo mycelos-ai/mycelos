@@ -1060,7 +1060,7 @@
                           <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
                           <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
                             <span x-show="!group.saving">Save</span>
-                            <span x-show="group.saving">Saving…</span>
+                            <span x-show="group.saving" x-text="t('common.saving')">Saving…</span>
                           </button>
                         </div>
                       </template>
@@ -1115,7 +1115,7 @@
                       <button class="btn-secondary text-xs" @click="resetAgentModels(group.agent_id, group.purpose)">Reset</button>
                       <button class="btn-primary text-xs" :disabled="group.saving" @click="saveAgentModels(group.agent_id, group.purpose)">
                         <span x-show="!group.saving">Save</span>
-                        <span x-show="group.saving">Saving…</span>
+                        <span x-show="group.saving" x-text="t('common.saving')">Saving…</span>
                       </button>
                     </div>
                   </div>
@@ -1193,7 +1193,7 @@
             <div class="flex items-center gap-3">
               <button class="btn-primary text-sm" @click="addCredential()" :disabled="credSaving || !newCred.service || !newCred.secret">
                 <span x-show="!credSaving" x-text="t('common.save')">Save</span>
-                <span x-show="credSaving">Saving...</span>
+                <span x-show="credSaving" x-text="t('common.saving')">Saving...</span>
               </button>
               <button class="btn-secondary text-sm" @click="showAddCredential = false; credError = null" x-text="t('common.cancel')">Cancel</button>
             </div>

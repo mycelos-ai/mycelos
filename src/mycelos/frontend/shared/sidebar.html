@@ -18,25 +18,31 @@
 
   <!-- Security status badge -->
   <div class="mb-3 px-1" x-show="security">
-    <!-- Warning: network exposed without password -->
-    <div x-show="security && security.network_exposed && !security.password_protected"
-         class="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--error)]/10 border border-[var(--error)]/30 text-xs">
+    <!-- Warning: network exposed without password. Clickable — links to the
+         setup guide that explains how to set MYCELOS_PASSWORD. -->
+    <a x-show="security && security.network_exposed && !security.password_protected"
+       href="/pages/docs.html?doc=raspberry-pi-setup#network-access"
+       class="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--error)]/10 border border-[var(--error)]/30 text-xs no-underline hover:bg-[var(--error)]/15 transition-colors group">
       <span class="material-symbols-outlined text-sm text-[var(--error)] flex-shrink-0 mt-0.5">warning</span>
       <div class="flex-1 min-w-0">
-        <div class="font-semibold text-[var(--error)] leading-tight">Network exposed</div>
-        <div class="text-[var(--on-surface-variant)] mt-0.5 leading-tight">
+        <div class="font-semibold text-[var(--error)] leading-tight" x-text="t('sidebar.network_exposed')">Network exposed</div>
+        <div class="text-[var(--on-surface-variant)] mt-0.5 leading-tight" x-text="t('sidebar.network_exposed_hint')">
           No password set. Anyone on your network can access Mycelos.
+        </div>
+        <div class="flex items-center gap-1 text-[10px] font-semibold text-[var(--error)] mt-1.5 group-hover:gap-1.5 transition-all">
+          <span x-text="t('sidebar.secure_now')">Secure it now</span>
+          <span class="material-symbols-outlined" style="font-size: 13px">arrow_forward</span>
         </div>
         <div class="text-[10px] text-[var(--on-surface-variant)]/70 mt-1 font-mono">
           <span x-text="security?.bind_host || ''"></span> · <span x-text="security?.client_ip || ''"></span>
         </div>
       </div>
-    </div>
+    </a>
     <!-- OK: network exposed but protected -->
     <div x-show="security && security.network_exposed && security.password_protected"
          class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--surface-container)] text-[10px]">
       <span class="material-symbols-outlined text-sm text-[var(--primary)]">shield_lock</span>
-      <div class="flex-1 text-[var(--on-surface-variant)] leading-tight">
+      <div class="flex-1 text-[var(--on-surface-variant)] leading-tight" x-text="t('sidebar.network_protected')">
         Network access · Basic Auth on
       </div>
     </div>

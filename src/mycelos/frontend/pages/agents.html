@@ -449,7 +449,7 @@
                   <button @click="savePersona()" :disabled="advSaving"
                           class="btn-primary px-4 py-2 rounded-lg bg-primary text-on-primary font-medium disabled:opacity-50">
                     <span x-show="!advSaving">Save</span>
-                    <span x-show="advSaving">Saving…</span>
+                    <span x-show="advSaving" x-text="t('common.saving')">Saving…</span>
                   </button>
                 </div>
 

@@ -1,5 +1,60 @@
 # Changelog
 
+## Week 24 (2026) — UX review: density & clarity
+
+Three information-density improvements from the UX review:
+
+- **Organizer Inbox is unobtrusive when collapsed.** Its action buttons
+  (Accept all / Run now / Find duplicates) only appear when the bar is
+  expanded; collapsed it's just a compact "N suggestions" badge, so it no
+  longer pushes the knowledge view down.
+- **Agent Status panel: no more wall of zeros.** Before the first message,
+  the four zero-value metric cards (0 tokens, $0.0000, 0 messages, model)
+  are replaced by a single quiet "metrics appear once you start chatting"
+  line; the full metrics show up once the session has activity.
+- **Topics vs notes are visually distinct** in the "All" view: topics get
+  a folder glyph, a tertiary tint, and bold text so folders read as
+  containers, not as notes mixed into the list.
+
+## Week 24 (2026) — mobile chat input fix + UX polish
+
+From a thorough UX review (desktop + mobile, chat + knowledge):
+
+### Critical: mobile chat input was unusable
+
+The message textarea collapsed to a narrow black box on phones — text
+wrapped after 1-2 words and the box ballooned vertically. Cause: the
+textarea was a flex child with `flex-1` but no `min-w-0`, so flexbox's
+default `min-width:auto` let the fixed-width buttons squeeze it to almost
+nothing (the same bug the recording waveform already had fixed). Added
+`min-w-0`.
+
+### Mobile overflow fixes
+
+- Chat top bar: the session and agent pills no longer overflow the right
+  edge on narrow screens (responsive padding/gaps, `min-w-0`, smaller pill
+  max-widths on mobile, dropped the redundant "Chat · " prefix).
+- Knowledge view tabs (Topics/All/Tasks/Graph) now scroll horizontally
+  instead of cutting off the last tab (`overflow-x-auto` + a `no-scrollbar`
+  utility + `flex-shrink-0` tabs).
+- Note-detail action toolbar wraps on mobile instead of running off-screen.
+
+### Localization
+
+- Fixed the raw `web.common.cancel` key (was double-prefixed → rendered
+  the literal key; now resolves to Abbrechen/Cancel).
+- Knowledge empty state ("Select a note" / hint), the "Untitled"
+  fallbacks, and the Saving/Save-changes states across pages now use t()
+  with en+de keys — no more German/English mix on those.
+- Corrected ASCII-ized German umlauts in the web UI strings
+  (Überfällig, Ausführen, Übersicht, Verknüpfungen, Zurück, …).
+
+### Security banner is now actionable
+
+The "Network exposed — no password set" sidebar banner is a clickable
+link to the setup guide with a "Secure it now →" call-to-action, and its
+text (plus the protected/localhost variants) is localized.
+
 ## Week 24 (2026) — knowledge mobile polish
 
 Fixes the rough edges reported on the Knowledge page on a phone:
