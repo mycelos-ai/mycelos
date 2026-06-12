@@ -696,25 +696,31 @@
                       class="flex-1 bg-transparent border-none focus:ring-0 text-on-surface text-[15px] py-3 resize-none max-h-32 placeholder:text-on-surface-variant/40 disabled:opacity-50"
                       :placeholder="t('chat.placeholder')"
                       rows="1"></textarea>
-            <!-- Audio waveform visualizer (shown during recording) -->
-            <div x-show="recording" class="flex-1 flex items-center gap-3 py-3 px-2">
+            <!-- Audio waveform visualizer (shown during recording).
+                 min-w-0 on container AND canvas: a canvas has an intrinsic
+                 width (300px) and flexbox refuses to shrink it below that
+                 by default — on narrow phones it pushed the stop button
+                 out of the viewport. -->
+            <div x-show="recording" class="flex-1 min-w-0 flex items-center gap-3 py-3 px-2">
               <span class="w-2 h-2 rounded-full bg-error animate-pulse flex-shrink-0"></span>
-              <canvas x-ref="waveform" height="32" class="flex-1 h-8 rounded"></canvas>
-              <span class="text-xs text-error font-label tabular-nums" x-text="recordingTime">0:00</span>
+              <canvas x-ref="waveform" height="32" class="flex-1 min-w-0 w-full h-8 rounded"></canvas>
+              <span class="text-xs text-error font-label tabular-nums flex-shrink-0" x-text="recordingTime">0:00</span>
             </div>
             <div class="flex items-center gap-2 pr-1 flex-shrink-0 self-end">
               <!-- Mic button (requires secure context: https, localhost, or 127.0.0.1) -->
+              <!-- While recording this becomes a solid stop button — a
+                   small pulsing glyph was easy to miss on phones. -->
               <button @click="toggleRecording()"
                       :disabled="sending || !window.isSecureContext"
                       :title="window.isSecureContext ? (recording ? t('voice.stop_recording') : t('voice.voice_input')) : 'Microphone requires HTTPS or localhost'"
                       :aria-label="recording ? t('voice.stop_recording') : t('voice.voice_input')"
-                      class="p-2 transition-colors"
+                      class="transition-all flex-shrink-0"
                       :class="!window.isSecureContext
-                        ? 'text-on-surface-variant/30 cursor-not-allowed'
+                        ? 'p-2 text-on-surface-variant/30 cursor-not-allowed'
                         : recording
-                          ? 'text-error animate-pulse'
-                          : 'text-on-surface-variant hover:text-primary'">
-                <span class="material-symbols-outlined" x-text="recording ? 'stop_circle' : 'mic'">mic</span>
+                          ? 'w-10 h-10 rounded-full flex items-center justify-center bg-error text-white shadow-lg shadow-error/30 animate-pulse'
+                          : 'p-2 text-on-surface-variant hover:text-primary'">
+                <span class="material-symbols-outlined" x-text="recording ? 'stop' : 'mic'">mic</span>
               </button>
               <!-- Send button -->
               <button @click="sendMessage()"

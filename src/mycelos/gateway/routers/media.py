@@ -78,10 +78,15 @@ async def transcribe_audio(request: Request, audio: UploadFile) -> dict[str, Any
         )
 
     try:
+        # Pass the user's configured language as a hint — Whisper's
+        # auto-detection misfires on short clips (German in, English
+        # word salad out).
+        from mycelos.i18n import get_language
         result = mycelos.proxy_client.stt_transcribe(
             audio=audio_bytes,
             filename=audio.filename or "audio.ogg",
             user_id=resolve_user_id(request),
+            language=get_language(),
         )
     except Exception as exc:
         logger.error("STT transcription error: %s", exc, exc_info=True)
@@ -133,10 +138,12 @@ async def handle_audio(
 
     # Transcribe via proxy
     try:
+        from mycelos.i18n import get_language
         result = mycelos.proxy_client.stt_transcribe(
             audio=audio_bytes,
             filename=audio.filename or "audio.ogg",
             user_id=user_id,
+            language=get_language(),
         )
     except Exception as exc:
         logger.error("STT transcription error: %s", exc, exc_info=True)

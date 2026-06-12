@@ -1,5 +1,19 @@
 # Changelog
 
+## Week 24 (2026) — voice fixes
+
+- **Transcription speaks your language.** Whisper's auto-detection
+  misfired on short clips (German speech came back as English word
+  salad). All STT paths — web mic, audio upload, Telegram voice notes —
+  now pass the configured UI language (Settings -> Language) as the
+  transcription hint. The in-browser speech path already did.
+- **Mobile: the stop button is visible again.** The recording waveform
+  is a canvas with a 300px intrinsic width that flexbox refuses to
+  shrink — on narrow phones it pushed the stop button out of the
+  viewport. The waveform now shrinks properly, and while recording the
+  mic button becomes a solid red stop button instead of a small pulsing
+  glyph.
+
 ## Week 24 (2026) — login page + Docker start fix
 
 ### Session login replaces the Basic-Auth popup

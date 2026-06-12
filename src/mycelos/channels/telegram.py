@@ -717,10 +717,13 @@ async def handle_voice_message(message: types.Message) -> None:
         audio_bytes = audio_data.read()
 
         # Transcribe
+        # The user's configured language beats Whisper auto-detection,
+        # which misfires on short voice notes.
+        from mycelos.i18n import get_language
         result = _app.proxy_client.stt_transcribe(
             audio=audio_bytes,
             filename="voice.ogg",
-            language="auto",
+            language=get_language(),
             user_id=f"telegram:{user_id}",
         )
 
