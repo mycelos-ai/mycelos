@@ -10,6 +10,11 @@ raw Basic-Auth dialog that demanded a username nothing ever checked:
 
 - `POST /api/auth/login` (password only) issues an HttpOnly session
   cookie (7-day TTL, in-process tokens); `POST /api/auth/logout` revokes.
+- **"Remember this device"** (checked by default): a 90-day cookie whose
+  SHA-256 hash is persisted server-side, so the device stays signed in
+  across gateway restarts — only the hash is stored, a DB leak never
+  yields a usable token. Unchecked: a browser-session cookie that dies
+  with the browser and the gateway. Logout forgets the device.
 - Browser navigations without a session redirect to `/login?next=...`
   (same-origin paths only — no open redirect); API callers still get a
   401 with the Basic challenge, so **curl/scripts keep working

@@ -80,6 +80,22 @@
       margin-top: 0.8rem;
       min-height: 1.1rem;
     }
+    .login-remember {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.8rem;
+      font-family: Inter, sans-serif;
+      font-size: 0.8rem;
+      color: var(--on-surface-variant);
+      cursor: pointer;
+      user-select: none;
+    }
+    .login-remember input {
+      accent-color: var(--primary);
+      width: 0.95rem; height: 0.95rem;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -93,6 +109,10 @@
       <input type="text" name="username" value="mycelos" autocomplete="username" style="display:none">
       <input class="login-input" id="password" name="password" type="password"
              placeholder="Password" autocomplete="current-password" autofocus required>
+      <label class="login-remember">
+        <input type="checkbox" id="remember" checked>
+        <span id="remember-label">Remember this device</span>
+      </label>
       <button class="login-btn" id="submit" type="submit">Sign in</button>
       <p class="login-error" id="error"></p>
     </form>
@@ -107,6 +127,7 @@
       var login = (data.translations.login || {});
       if (login.subtitle) document.getElementById('login-sub').textContent = login.subtitle;
       if (login.submit) document.getElementById('submit').textContent = login.submit;
+      if (login.remember) document.getElementById('remember-label').textContent = login.remember;
       window._loginWrong = login.wrong_password || null;
     }).catch(function () {});
 
@@ -122,6 +143,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           password: document.getElementById('password').value,
+          remember: document.getElementById('remember').checked,
           next: next,
         }),
       }).then(function (r) {

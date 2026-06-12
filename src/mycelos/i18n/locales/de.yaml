@@ -450,6 +450,7 @@ web:
   login:
     subtitle: "Gib dein Passwort ein, um fortzufahren"
     submit: "Anmelden"
+    remember: "Dieses Gerät merken"
     wrong_password: "Falsches Passwort - bitte erneut versuchen."
   sidebar:
     dashboard: "Dashboard"

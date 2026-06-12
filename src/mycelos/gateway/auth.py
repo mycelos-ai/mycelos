@@ -11,9 +11,11 @@ restart, which is the right trade-off for a single-user gateway.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import secrets
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
@@ -23,7 +25,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 logger = logging.getLogger("mycelos.gateway")
 
 SESSION_COOKIE = "mycelos_session"
-SESSION_TTL_SECONDS = 7 * 24 * 3600  # one week
+SESSION_TTL_SECONDS = 7 * 24 * 3600  # one week (in-process)
+# "Remember this device": the token's SHA-256 hash is persisted (system
+# memory scope) so the device stays signed in across gateway restarts.
+# Only the hash is stored — a DB leak never yields a usable token.
+REMEMBER_TTL_DAYS = 90
+_DEVICES_KEY = "auth_devices"
 
 # Paths reachable without authentication: the health check (Docker),
 # the login flow itself, translations, and the static assets the login
@@ -56,9 +63,47 @@ class SessionStore:
             return False
         return True
 
+    def admit(self, token: str) -> None:
+        """Re-cache an externally validated token (remembered device)."""
+        self._tokens[token] = time.time() + SESSION_TTL_SECONDS
+
     def revoke(self, token: str | None) -> None:
         if token:
             self._tokens.pop(token, None)
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _load_devices(mycelos) -> dict:
+    try:
+        devices = mycelos.memory.get("default", "system", _DEVICES_KEY)
+        return devices if isinstance(devices, dict) else {}
+    except Exception:
+        return {}
+
+
+def _remember_device(mycelos, token: str) -> None:
+    devices = _load_devices(mycelos)
+    expires = (datetime.now() + timedelta(days=REMEMBER_TTL_DAYS)).isoformat()
+    devices[_token_hash(token)] = expires
+    # Prune expired entries while we're here.
+    now = datetime.now().isoformat()
+    devices = {h: exp for h, exp in devices.items() if exp > now}
+    mycelos.memory.set("default", "system", _DEVICES_KEY, devices)
+
+
+def _device_remembered(mycelos, token: str) -> bool:
+    devices = _load_devices(mycelos)
+    expires = devices.get(_token_hash(token))
+    return bool(expires) and expires > datetime.now().isoformat()
+
+
+def _forget_device(mycelos, token: str) -> None:
+    devices = _load_devices(mycelos)
+    if devices.pop(_token_hash(token), None) is not None:
+        mycelos.memory.set("default", "system", _DEVICES_KEY, devices)
 
 
 def _safe_next(value) -> str:
@@ -101,16 +146,42 @@ def install_auth(api: FastAPI, password: str) -> None:
         if not isinstance(supplied, str) or not secrets.compare_digest(supplied, password):
             return JSONResponse({"error": "Wrong password"}, status_code=401)
         token = sessions.issue()
+        remember = bool(body.get("remember"))
         resp = JSONResponse({"ok": True, "next": _safe_next(body.get("next"))})
-        resp.set_cookie(
-            SESSION_COOKIE, token,
-            httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS, path="/",
-        )
+        if remember:
+            # Persistent device: long-lived cookie + server-side token hash
+            # so the session survives gateway restarts.
+            _remember_device(request.app.state.mycelos, token)
+            resp.set_cookie(
+                SESSION_COOKIE, token,
+                httponly=True, samesite="lax",
+                max_age=REMEMBER_TTL_DAYS * 24 * 3600, path="/",
+            )
+        else:
+            # Browser-session cookie (no Max-Age): dies with the browser,
+            # and the in-process token dies with the gateway.
+            resp.set_cookie(
+                SESSION_COOKIE, token,
+                httponly=True, samesite="lax", path="/",
+            )
+        try:
+            request.app.state.mycelos.audit.log(
+                "auth.login", details={"remember": remember},
+            )
+        except Exception:
+            pass
         return resp
 
     @router.post("/api/auth/logout")
     async def logout(request: Request):
-        sessions.revoke(request.cookies.get(SESSION_COOKIE))
+        token = request.cookies.get(SESSION_COOKIE)
+        sessions.revoke(token)
+        if token:
+            _forget_device(request.app.state.mycelos, token)
+        try:
+            request.app.state.mycelos.audit.log("auth.logout")
+        except Exception:
+            pass
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(SESSION_COOKIE, path="/")
         return resp
@@ -122,7 +193,13 @@ def install_auth(api: FastAPI, password: str) -> None:
             path = request.url.path
             if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
                 return await call_next(request)
-            if sessions.validate(request.cookies.get(SESSION_COOKIE)):
+            token = request.cookies.get(SESSION_COOKIE)
+            if sessions.validate(token):
+                return await call_next(request)
+            # Remembered device: the in-process token is gone (restart), but
+            # the persisted hash is valid — re-admit and re-cache.
+            if token and _device_remembered(request.app.state.mycelos, token):
+                sessions.admit(token)
                 return await call_next(request)
             if _basic_auth_ok(request, password):
                 return await call_next(request)

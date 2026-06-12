@@ -123,3 +123,65 @@ class TestLoginFlow:
         )
         assert resp.status_code == 200
         assert resp.json().get("next", "/") in ("/", "/pages/chat.html")
+
+
+class TestRememberMe:
+    def _login(self, client, remember):
+        resp = client.post("/api/auth/login",
+                           json={"password": PASSWORD, "remember": remember})
+        assert resp.status_code == 200
+        return resp
+
+    def test_remember_sets_persistent_cookie(self, client):
+        resp = self._login(client, remember=True)
+        set_cookie = resp.headers["set-cookie"]
+        assert "Max-Age" in set_cookie
+
+    def test_no_remember_sets_browser_session_cookie(self, client):
+        """Without remember the cookie must die with the browser — no
+        Max-Age/Expires."""
+        resp = self._login(client, remember=False)
+        set_cookie = resp.headers["set-cookie"]
+        assert "Max-Age" not in set_cookie
+        assert "Expires" not in set_cookie
+
+    def test_remembered_device_survives_gateway_restart(self, client):
+        """The whole point: a remembered device stays signed in after the
+        gateway restarts (in-process tokens are gone, the persisted hash
+        is not)."""
+        resp = self._login(client, remember=True)
+        token = resp.cookies["mycelos_session"]
+        # Simulate a restart: wipe the in-process token store.
+        client.app.state.session_store._tokens.clear()
+        resp = client.get("/api/ui/theme", cookies={"mycelos_session": token})
+        assert resp.status_code == 200
+
+    def test_unremembered_session_dies_with_restart(self, client):
+        resp = self._login(client, remember=False)
+        token = resp.cookies["mycelos_session"]
+        client.app.state.session_store._tokens.clear()
+        resp = client.get("/api/ui/theme", cookies={"mycelos_session": token})
+        assert resp.status_code == 401
+
+    def test_logout_forgets_the_device(self, client):
+        resp = self._login(client, remember=True)
+        token = resp.cookies["mycelos_session"]
+        client.post("/api/auth/logout", cookies={"mycelos_session": token})
+        client.app.state.session_store._tokens.clear()
+        resp = client.get("/api/ui/theme", cookies={"mycelos_session": token})
+        assert resp.status_code == 401
+
+    def test_expired_remembered_device_denied(self, client):
+        import hashlib
+        resp = self._login(client, remember=True)
+        token = resp.cookies["mycelos_session"]
+        # Expire the persisted hash directly.
+        mycelos = client.app.state.mycelos
+        devices = mycelos.memory.get("default", "system", "auth_devices") or {}
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        assert token_hash in devices, "remember must persist the token hash"
+        devices[token_hash] = "2020-01-01T00:00:00"
+        mycelos.memory.set("default", "system", "auth_devices", devices)
+        client.app.state.session_store._tokens.clear()
+        resp = client.get("/api/ui/theme", cookies={"mycelos_session": token})
+        assert resp.status_code == 401
