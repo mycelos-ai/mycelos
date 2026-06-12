@@ -1,5 +1,21 @@
 # Changelog
 
+## Week 24 (2026) — UX review: density & clarity
+
+Three information-density improvements from the UX review:
+
+- **Organizer Inbox is unobtrusive when collapsed.** Its action buttons
+  (Accept all / Run now / Find duplicates) only appear when the bar is
+  expanded; collapsed it's just a compact "N suggestions" badge, so it no
+  longer pushes the knowledge view down.
+- **Agent Status panel: no more wall of zeros.** Before the first message,
+  the four zero-value metric cards (0 tokens, $0.0000, 0 messages, model)
+  are replaced by a single quiet "metrics appear once you start chatting"
+  line; the full metrics show up once the session has activity.
+- **Topics vs notes are visually distinct** in the "All" view: topics get
+  a folder glyph, a tertiary tint, and bold text so folders read as
+  containers, not as notes mixed into the list.
+
 ## Week 24 (2026) — mobile chat input fix + UX polish
 
 From a thorough UX review (desktop + mobile, chat + knowledge):

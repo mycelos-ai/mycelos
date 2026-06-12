@@ -704,6 +704,7 @@ web:
     model_awaiting: "Wartend"
     session_cost: "Sitzungskosten"
     messages: "Nachrichten"
+    metrics_idle: "Kennzahlen erscheinen, sobald du chattest."
     this_session: "DIESE SITZUNG"
     download_session: "Herunterladen"
   widgets:

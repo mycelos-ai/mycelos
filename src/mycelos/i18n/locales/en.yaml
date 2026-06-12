@@ -717,6 +717,7 @@ web:
     model_awaiting: "Awaiting"
     session_cost: "Session Cost"
     messages: "Messages"
+    metrics_idle: "Metrics appear once you start chatting."
     this_session: "THIS SESSION"
     download_session: "Download"
   widgets:

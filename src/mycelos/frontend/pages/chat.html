@@ -822,8 +822,17 @@
       </div>
     </div>
 
-    <!-- Session metrics -->
-    <div class="space-y-4 mb-8">
+    <!-- Empty state: before any message, the four zero-value metric cards
+         are meaningless and waste the panel. Show a single quiet line
+         instead; the full metrics appear once the session has activity. -->
+    <div x-show="!$store.chat.messageCount"
+         class="flex items-center gap-2 mb-8 px-3 py-2 rounded-lg bg-surface-container-low text-[11px] text-on-surface-variant/60">
+      <span class="material-symbols-outlined text-sm">monitoring</span>
+      <span x-text="t('panel.metrics_idle')">Metrics appear once you start chatting.</span>
+    </div>
+
+    <!-- Session metrics (only once there's activity) -->
+    <div class="space-y-4 mb-8" x-show="$store.chat.messageCount">
       <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
         <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.tokens_used')"></p>
         <div class="flex items-end justify-between">
@@ -850,8 +859,9 @@
       </div>
     </div>
 
-    <!-- Messages count -->
-    <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
+    <!-- Messages count (only once there's activity) -->
+    <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);"
+         x-show="$store.chat.messageCount">
       <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.messages')"></p>
       <div class="flex items-end justify-between">
         <span class="text-2xl font-headline font-bold text-on-surface"

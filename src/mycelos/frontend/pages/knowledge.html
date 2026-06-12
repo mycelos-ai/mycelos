@@ -169,15 +169,18 @@
                   style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
                   x-text="totalCount()"></span>
           </button>
-          <button type="button" @click="acceptAll()" :disabled="busy"
+          <!-- Action buttons only show when expanded — collapsed, the bar is
+               just a compact "N suggestions" badge that doesn't crowd the
+               knowledge view. -->
+          <button type="button" x-show="expanded" @click="acceptAll()" :disabled="busy"
                   class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
                   style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
                   x-text="t('organizer.accept_all')"></button>
-          <button type="button" @click="runNow()" :disabled="busy"
+          <button type="button" x-show="expanded" @click="runNow()" :disabled="busy"
                   class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
                   style="background: rgba(255,255,255,0.06); color: #cdd5e0;"
                   x-text="busy ? '…' : t('organizer.run_now')"></button>
-          <button type="button" @click="sweepDuplicates()" :disabled="busy"
+          <button type="button" x-show="expanded" @click="sweepDuplicates()" :disabled="busy"
                   class="px-2.5 py-1 rounded-lg text-[11px] font-label font-semibold uppercase tracking-wider flex-shrink-0
                          bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors flex items-center gap-1">
             <span class="material-symbols-outlined text-xs align-middle">find_replace</span>
@@ -753,18 +756,22 @@
                         class="note-item w-full text-left px-4 py-3 rounded-xl group"
                         :class="selectedNote && selectedNote.path === note.path
                           ? 'bg-surface-container-high border border-primary/20'
-                          : 'hover:bg-surface-container border border-transparent'">
+                          : (note.type === 'topic'
+                              ? 'hover:bg-surface-container border border-tertiary/15 bg-tertiary/[0.04]'
+                              : 'hover:bg-surface-container border border-transparent')">
                   <div class="flex items-center gap-2 mb-1">
-                    <p class="text-sm font-medium truncate flex-1"
-                       :class="selectedNote && selectedNote.path === note.path
-                         ? 'text-primary' : 'text-on-surface group-hover:text-primary'"
+                    <!-- Leading type glyph — folders read clearly as containers,
+                         not as notes, so topics and content don't blur together. -->
+                    <span class="material-symbols-outlined text-base flex-shrink-0"
+                          :class="note.type === 'topic' ? 'text-tertiary' : (note.type === 'document' ? 'text-tertiary/70' : 'text-on-surface-variant/30')"
+                          x-text="note.type === 'topic' ? 'folder' : (note.type === 'document' ? 'picture_as_pdf' : (note.type === 'task' ? 'task_alt' : 'description'))"></span>
+                    <p class="text-sm truncate flex-1"
+                       :class="[selectedNote && selectedNote.path === note.path
+                         ? 'text-primary' : (note.type === 'topic' ? 'text-tertiary group-hover:text-tertiary' : 'text-on-surface group-hover:text-primary'),
+                         note.type === 'topic' ? 'font-semibold' : 'font-medium']"
                        x-text="note.title || t('knowledge.untitled')"></p>
                     <span x-show="note.type === 'task'"
-                          class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-secondary/15 text-secondary">Task</span>
-                    <span x-show="note.type === 'topic'"
-                          class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-tertiary/15 text-tertiary">Topic</span>
-                    <span x-show="note.type === 'document'"
-                          class="material-symbols-outlined text-xs text-tertiary">picture_as_pdf</span>
+                          class="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-label uppercase tracking-wider bg-secondary/15 text-secondary" x-text="t('knowledge.view_tasks')">Task</span>
                   </div>
                   <div x-show="note.due" class="flex items-center gap-1 mb-1">
                     <span class="material-symbols-outlined text-xs"
