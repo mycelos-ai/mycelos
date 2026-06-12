@@ -1,5 +1,41 @@
 # Changelog
 
+## Week 24 (2026) — login page + Docker start fix
+
+### Session login replaces the Basic-Auth popup
+
+With a password configured, browsers now get a proper login page
+(`/login`, Neural Mycelium style) and a session cookie instead of the
+raw Basic-Auth dialog that demanded a username nothing ever checked:
+
+- `POST /api/auth/login` (password only) issues an HttpOnly session
+  cookie (7-day TTL, in-process tokens); `POST /api/auth/logout` revokes.
+- Browser navigations without a session redirect to `/login?next=...`
+  (same-origin paths only — no open redirect); API callers still get a
+  401 with the Basic challenge, so **curl/scripts keep working
+  unchanged** via Basic Auth.
+- Public without auth: `/api/health` (Docker healthcheck), the login
+  flow, `/api/i18n`, and the static assets the login page needs.
+
+### Docker: gateway no longer refuses to start without a password
+
+The secure-by-default bind check (Week 24) broke Docker deployments:
+the container must bind 0.0.0.0 internally, so every password-less
+stack crash-looped and the reason was buried in `docker logs`. Fixed at
+the right layers:
+
+- The container CMD passes `--allow-insecure-bind` — in-container
+  0.0.0.0 is safe; actual exposure is the compose port mapping
+  (`127.0.0.1:9100:9100` by default).
+- The entrypoint **fails fast with a loud message** when the host
+  exposes the port (`MYCELOS_BIND` beyond localhost) without
+  `MYCELOS_PASSWORD` (compose now passes `MYCELOS_BIND` through).
+- The `mycelos` host wrapper gains a `start` command, pre-flights the
+  `.env` (exposed bind without password aborts with guidance before
+  `docker compose up`), and replies with actionable hints
+  ("mycelos start" / "mycelos logs gateway") instead of docker-compose
+  errors when the gateway isn't running.
+
 ## Week 24 (2026) — Neural Mycelium UI
 
 Full visual identity pass over the web UI ("Neural Mycelium" design

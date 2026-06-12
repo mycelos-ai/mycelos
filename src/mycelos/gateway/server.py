@@ -467,36 +467,10 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Basic Auth middleware (for network-accessible deployments)
+    # Authentication (session-cookie login page + Basic Auth fallback)
     if password:
-        import base64
-        import secrets
-
-        from fastapi.responses import JSONResponse
-        from starlette.middleware.base import BaseHTTPMiddleware
-
-        class BasicAuthMiddleware(BaseHTTPMiddleware):
-            async def dispatch(self, request, call_next):
-                # Health endpoint is always public (for Docker health checks)
-                if request.url.path == "/api/health":
-                    return await call_next(request)
-                auth = request.headers.get("Authorization", "")
-                if auth.startswith("Basic "):
-                    try:
-                        decoded = base64.b64decode(auth[6:]).decode("utf-8")
-                        user, pw = decoded.split(":", 1)
-                        if secrets.compare_digest(pw, password):
-                            return await call_next(request)
-                    except Exception:
-                        pass
-                return JSONResponse(
-                    {"error": "Authentication required"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Basic realm="Mycelos"'},
-                )
-
-        api.add_middleware(BasicAuthMiddleware)
-        logger.info("Basic Auth enabled (user: mycelos)")
+        from mycelos.gateway.auth import install_auth
+        install_auth(api, password)
 
     # Reaching here on a non-loopback bind means the operator explicitly
     # opted in (allow_insecure_bind) — make the risk loud.

@@ -63,4 +63,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
     CMD curl -f http://localhost:9100/api/health || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["mycelos", "serve", "--host", "0.0.0.0", "--port", "9100", "--data-dir", "/data"]
+# --allow-insecure-bind: INSIDE the container 0.0.0.0 is required and safe --
+# actual exposure is decided by the compose port mapping on the host
+# (127.0.0.1:9100:9100 by default). The entrypoint enforces the password
+# rule at the level where exposure is actually configured (MYCELOS_BIND).
+CMD ["mycelos", "serve", "--host", "0.0.0.0", "--port", "9100", "--data-dir", "/data", "--allow-insecure-bind"]
