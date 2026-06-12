@@ -583,6 +583,10 @@ web:
     graph_notes: "Notizen"
     graph_links: "Verknuepfungen"
     graph_empty: "Noch keine Notizen — der Graph waechst mit deinem Wissen."
+    back: "Zurueck"
+    breadcrumb_root: "Themen"
+    topic_empty: "Noch keine Notizen in diesem Thema."
+    graph_desktop_only: "Der interaktive Graph funktioniert am besten auf einem groesseren Bildschirm. Hier sind deine Notizen — oeffne eine zum Ansehen."
   quick_capture:
     placeholder: "Gedanke, Aufgabe oder Erinnerung festhalten…"
     hint_footer: "⌘K · Quick Capture"

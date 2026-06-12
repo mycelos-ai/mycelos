@@ -596,6 +596,10 @@ web:
     graph_notes: "notes"
     graph_links: "links"
     graph_empty: "No notes yet — the graph grows as your knowledge does."
+    back: "Back"
+    breadcrumb_root: "Topics"
+    topic_empty: "No notes in this topic yet."
+    graph_desktop_only: "The interactive graph works best on a larger screen. Here are your notes — open one to view it."
   quick_capture:
     placeholder: "Capture a thought, task, or reminder…"
     hint_footer: "⌘K · Quick Capture"
