@@ -876,14 +876,19 @@
                x-transition:enter-start="opacity-0 translate-x-4"
                x-transition:enter-end="opacity-100 translate-x-0">
 
-        <!-- Content header bar -->
-        <div class="flex items-center gap-3 px-6 py-4 flex-shrink-0"
+        <!-- Content header bar. On mobile it STACKS: back + title/meta on
+             top, action toolbar wraps onto its own row below. Otherwise the
+             toolbar buttons overlap the title's meta badges/tags. On desktop
+             (md:+) it's a single row — md:contents collapses the mobile
+             title-row wrapper so the children sit inline as before. -->
+        <div class="flex flex-col md:flex-row md:items-center gap-3 px-4 md:px-6 py-4 flex-shrink-0"
              style="border-bottom: 1px solid rgba(70, 72, 77, 0.15);">
 
+          <div class="flex items-start gap-3 min-w-0 md:contents">
           <!-- Back button (mobile): pops one level off the navigation stack -->
           <button @click="mobileBack()"
                   :aria-label="t('knowledge.back')"
-                  class="md:hidden w-9 h-9 rounded-lg flex items-center justify-center
+                  class="md:hidden w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0
                          text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors">
             <span class="material-symbols-outlined">arrow_back</span>
           </button>
@@ -1065,9 +1070,10 @@
               </div>
             </template>
           </div>
+          </div><!-- /mobile title row (md:contents collapses this on desktop) -->
 
-          <!-- Action buttons — wrap on narrow screens instead of running
-               off the right edge. -->
+          <!-- Action buttons — on mobile they sit on their own row below the
+               title (wrap), so they never overlap the meta badges/tags. -->
           <div class="flex items-center flex-wrap gap-2 md:flex-shrink-0 md:flex-nowrap">
             <!-- Toggle edit/view (existing note) -->
             <template x-if="selectedNote && !creatingNew">
