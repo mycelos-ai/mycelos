@@ -1,5 +1,25 @@
 # Changelog
 
+## Week 24 (2026) — knowledge mobile polish
+
+Fixes the rough edges reported on the Knowledge page on a phone:
+
+- **Organizer Inbox bar no longer overflows.** The action row
+  (Accept all / Run now / Find duplicates) now wraps on narrow screens
+  instead of running off the right edge, with tighter mobile margins.
+- **Consistent language.** The view tabs (Topics/All/Tasks/Graph), the
+  "N notes" count, the task section headers (Overdue/Open/Done), the
+  sub-topic badge, the empty-topic message, and the organizer buttons
+  ("Accept all", "Find duplicates", "open" badge) all go through t()
+  now — no more German/English mix. New en+de keys added.
+- **Mobile "More" label fixed.** The bottom nav showed the raw key
+  `sidebar.more`; the missing `sidebar.more` translation is now defined
+  (en "More" / de "Mehr"), so it renders correctly.
+- **Less wasted vertical space.** The organizer banner's large top
+  margin is desktop-only now (`mt-3` on mobile vs `mt-20` on desktop),
+  and the left-panel right divider is desktop-only (`md:border-r`) since
+  on mobile that panel is the whole screen.
+
 ## Week 24 (2026) — settings restructure
 
 Splits the single 1563-line Settings page into three focused pages. Behavior

@@ -151,36 +151,37 @@
     <div x-data="organizerInbox()" x-init="load()"
          x-show="hasItems() || busy"
          x-cloak
-         class="flex-shrink-0 mt-20 mx-6">
+         class="flex-shrink-0 mt-3 md:mt-20 mx-4 md:mx-6">
       <div class="rounded-lg border text-xs"
            style="background: var(--surface-container, #1a1d24);
                   border-color: rgba(106,214,255,0.25);">
-        <!-- Collapsed header -->
-        <div class="flex items-center gap-2 px-3 py-1.5">
+        <!-- Collapsed header — wraps on narrow screens so the action
+             buttons never overflow off the right edge. -->
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-1.5">
           <button type="button" @click="expanded = !expanded"
-                  class="flex items-center gap-2 flex-1 text-left hover:opacity-80 transition-opacity">
+                  class="flex items-center gap-2 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
             <span class="material-symbols-outlined text-sm"
                   style="color:#6ad6ff"
                   x-text="expanded ? 'expand_less' : 'expand_more'"></span>
-            <span class="font-semibold" style="color:#6ad6ff"
+            <span class="font-semibold truncate" style="color:#6ad6ff"
                   x-text="t('organizer.inbox_heading')"></span>
-            <span class="px-1.5 py-0.5 rounded text-[10px]"
+            <span class="px-1.5 py-0.5 rounded text-[10px] flex-shrink-0"
                   style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
                   x-text="totalCount()"></span>
           </button>
           <button type="button" @click="acceptAll()" :disabled="busy"
                   class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
                   style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
-                  x-text="t('organizer.accept') + ' All'"></button>
+                  x-text="t('organizer.accept_all')"></button>
           <button type="button" @click="runNow()" :disabled="busy"
                   class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
                   style="background: rgba(255,255,255,0.06); color: #cdd5e0;"
                   x-text="busy ? '…' : t('organizer.run_now')"></button>
           <button type="button" @click="sweepDuplicates()" :disabled="busy"
-                  class="px-3 py-1 rounded-lg text-[11px] font-label font-semibold uppercase tracking-wider flex-shrink-0
-                         bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors">
+                  class="px-2.5 py-1 rounded-lg text-[11px] font-label font-semibold uppercase tracking-wider flex-shrink-0
+                         bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors flex items-center gap-1">
             <span class="material-symbols-outlined text-xs align-middle">find_replace</span>
-            Find Duplicates
+            <span x-text="t('organizer.find_duplicates')"></span>
           </button>
         </div>
 
@@ -463,9 +464,9 @@
     <!-- Two-panel layout -->
     <div class="flex-1 flex overflow-hidden pt-16">
 
-      <!-- Left panel: Note list -->
-      <aside class="w-full md:w-80 flex-shrink-0 flex flex-col overflow-hidden bg-[var(--surface)]"
-             style="border-right: 1px solid rgba(70, 72, 77, 0.15);"
+      <!-- Left panel: Note list. The right divider is desktop-only —
+           on mobile this panel is the whole screen, no divider needed. -->
+      <aside class="w-full md:w-80 flex-shrink-0 flex flex-col overflow-hidden bg-[var(--surface)] md:border-r md:border-[rgba(70,72,77,0.15)]"
              x-show="!mobileView || mobileLevel === 'list' || mobileLevel === 'topic'"
              x-transition:enter="transition ease-out duration-200"
              x-transition:enter-start="opacity-0 -translate-x-4"
@@ -497,7 +498,7 @@
             <div>
               <h2 class="font-headline text-lg font-bold tracking-tight text-on-surface" x-text="t('knowledge.title')">Knowledge</h2>
               <p class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant mt-0.5"
-                 x-text="notes.length + ' notes'"></p>
+                 x-text="notes.length + ' ' + t('knowledge.notes_label')"></p>
             </div>
             <button @click="newNote()"
                     class="w-9 h-9 rounded-lg flex items-center justify-center
@@ -512,7 +513,7 @@
                     class="w-9 h-9 rounded-lg flex items-center justify-center
                            bg-surface-container text-on-surface-variant
                            hover:text-tertiary hover:bg-surface-container-high transition-colors"
-                    :title="expandedTopic && expandedTopic !== '__uncategorized' ? 'New Sub-Topic' : 'New Topic'">
+                    :title="expandedTopic && expandedTopic !== '__uncategorized' ? t('knowledge.new_subtopic') : t('knowledge.new_topic')">
               <span class="material-symbols-outlined text-xl">create_new_folder</span>
             </button>
             <!-- Import button (opens Smart Import modal) -->
@@ -544,27 +545,24 @@
              :class="mobileView && mobileLevel === 'topic' ? 'hidden' : ''">
           <button @click="viewMode = 'topics'; loadTopics()"
                   class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
-                  :class="viewMode === 'topics' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'">
-            Topics
-          </button>
+                  :class="viewMode === 'topics' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'"
+                  x-text="t('knowledge.view_topics')">Topics</button>
           <button @click="viewMode = 'all'; filteredNotes = notes"
                   class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
-                  :class="viewMode === 'all' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'">
-            All
-          </button>
+                  :class="viewMode === 'all' ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-primary'"
+                  x-text="t('knowledge.view_all')">All</button>
           <button @click="viewMode = 'tasks'; loadTasks()"
-                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
+                  class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors flex items-center"
                   :class="viewMode === 'tasks' ? 'bg-secondary/15 text-secondary' : 'text-on-surface-variant hover:text-secondary'">
-            Tasks
+            <span x-text="t('knowledge.view_tasks')">Tasks</span>
             <span x-show="overdueTasks.length > 0"
                   class="ml-1 px-1 py-0.5 rounded text-[9px] bg-error/20 text-error font-bold"
                   x-text="overdueTasks.length"></span>
           </button>
           <button @click="viewMode = 'graph'; deselectNote(); filteredNotes = notes; $dispatch('load-graph')"
                   class="px-3 py-1 rounded-lg text-[10px] font-label uppercase tracking-widest transition-colors"
-                  :class="viewMode === 'graph' ? 'bg-tertiary/15 text-tertiary' : 'text-on-surface-variant hover:text-tertiary'">
-            Graph
-          </button>
+                  :class="viewMode === 'graph' ? 'bg-tertiary/15 text-tertiary' : 'text-on-surface-variant hover:text-tertiary'"
+                  x-text="t('knowledge.view_graph')">Graph</button>
         </div>
 
         <!-- Content area -->
@@ -651,7 +649,7 @@
                           x-text="'(' + (topic.child_count || 0) + ')'"></span>
                     <span x-show="topic.open_tasks > 0"
                           class="px-1.5 py-0.5 rounded text-[9px] font-label bg-secondary/15 text-secondary"
-                          x-text="topic.open_tasks + ' open'"></span>
+                          x-text="topic.open_tasks + ' ' + t('knowledge.open_label')"></span>
                   </div>
                   <!-- Topic children (desktop inline expand only; mobile drills in) -->
                   <div x-show="expandedTopic === topic.path && !mobileView" class="ml-6 mt-1 space-y-0.5">
@@ -700,14 +698,14 @@
                     </template>
                     <div x-show="topicChildren.length === 0"
                          class="text-[10px] text-on-surface-variant/40 px-3 py-2">
-                      No notes in this topic yet.
+                      <span x-text="t('knowledge.topic_empty')">No notes in this topic yet.</span>
                     </div>
                     <!-- Add sub-topic inline -->
                     <button @click="createTopic(expandedTopic)"
                             class="text-[10px] text-on-surface-variant/40 hover:text-tertiary
                                    px-3 py-1 flex items-center gap-1 transition-colors">
                       <span class="material-symbols-outlined text-xs">add</span>
-                      Sub-Topic
+                      <span x-text="t('knowledge.subtopic_badge')">Sub-Topic</span>
                     </button>
                   </div>
                 </div>
@@ -802,7 +800,7 @@
             <div class="space-y-1">
               <!-- Overdue section -->
               <div x-show="overdueTasks.length > 0" class="mb-3">
-                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-error">Overdue</p>
+                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-error" x-text="t('knowledge.section_overdue')">Overdue</p>
                 <template x-for="task in overdueTasks" :key="task.path">
                   <div @click="selectNote(task)"
                        :title="taskTooltip(task)"
@@ -817,7 +815,7 @@
               </div>
               <!-- Open tasks -->
               <div x-show="openTasks.length > 0">
-                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-on-surface-variant">Open</p>
+                <p class="px-4 py-1 text-[10px] font-label uppercase tracking-widest text-on-surface-variant" x-text="t('knowledge.section_open')">Open</p>
                 <template x-for="task in openTasks" :key="task.path">
                   <div @click="selectNote(task)"
                        :title="taskTooltip(task)"
@@ -838,7 +836,7 @@
               </div>
               <!-- Done tasks -->
               <div x-show="doneTasks.length > 0">
-                <p class="px-4 py-1 mt-3 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/40">Done</p>
+                <p class="px-4 py-1 mt-3 text-[10px] font-label uppercase tracking-widest text-on-surface-variant/40" x-text="t('knowledge.section_done')">Done</p>
                 <template x-for="task in doneTasks" :key="task.path">
                   <div @click="selectNote(task)"
                        class="note-item w-full text-left px-4 py-2 rounded-xl flex items-center gap-2 group hover:bg-surface-container cursor-pointer">
