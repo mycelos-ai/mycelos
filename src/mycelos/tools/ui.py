@@ -14,7 +14,7 @@ from mycelos.tools.registry import ToolPermission
 
 _URL_TARGETS: dict[str, str] = {
     "connectors": "/pages/connectors.html",
-    "settings_models": "/pages/settings.html#models",
+    "settings_models": "/pages/ai-providers.html#models",
     "settings_generations": "/pages/settings.html#generations",
     "doctor": "/pages/doctor.html",
 }

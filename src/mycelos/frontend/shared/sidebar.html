@@ -159,6 +159,16 @@
       <span x-text="t('sidebar.knowledge')">Knowledge</span>
     </a>
 
+    <!-- Preferences (user-level, outside Admin) -->
+    <a
+      :href="'/pages/account-settings.html'"
+      :class="activePage === 'account-settings' ? 'sidebar-nav-link active' : 'sidebar-nav-link'"
+      class="sidebar-nav-link"
+    >
+      <span class="material-symbols-outlined">tune</span>
+      <span x-text="t('sidebar.preferences')">Preferences</span>
+    </a>
+
     <!-- Admin group (collapsed by default) -->
     <div x-data="{ open: false }">
       <button
@@ -191,9 +201,13 @@
           <span class="material-symbols-outlined text-base">hub</span>
           <span x-text="t('sidebar.admin_connectors')">Connectors</span>
         </a>
+        <a :href="'/pages/ai-providers.html'" class="sidebar-nav-link text-sm">
+          <span class="material-symbols-outlined text-base">network_intelligence</span>
+          <span x-text="t('sidebar.admin_ai_providers')">AI Providers</span>
+        </a>
         <a :href="'/pages/settings.html'" class="sidebar-nav-link text-sm">
           <span class="material-symbols-outlined text-base">settings</span>
-          <span x-text="t('sidebar.admin_settings')">Settings</span>
+          <span x-text="t('sidebar.admin_settings')">System Settings</span>
         </a>
       </div>
     </div>

@@ -472,13 +472,15 @@ web:
     scheduled_workflows: "Geplant"
     reminders: "Erinnerungen"
     recent_sessions: "Zuletzt"
+    preferences: "Einstellungen"
     admin: "Verwaltung"
     admin_dashboard: "Dashboard"
     admin_agents: "Agenten"
     admin_workflows: "Workflows"
     admin_doctor: "Doktor"
     admin_connectors: "Connectors"
-    admin_settings: "Einstellungen"
+    admin_ai_providers: "KI-Anbieter"
+    admin_settings: "Systemeinstellungen"
   header:
     search_placeholder: "Suchen..."
     local: "Lokal"
@@ -653,6 +655,15 @@ web:
       accent_default: "Standard (Cyan)"
       accent_reset: "Zurücksetzen"
       hint: "Dein Design wird im Konto gespeichert und gilt auf allen Geräten."
+  preferences:
+    title: "Einstellungen"
+    subtitle: "Sprache und Erscheinungsbild für dein Konto"
+  ai_providers:
+    title: "KI-Anbieter"
+    subtitle: "Modelle, Anmeldedaten und Modellzuweisungen für Agenten"
+  system_settings:
+    title: "Systemeinstellungen"
+    subtitle: "Konfigurationsgenerationen, Updates und Datenverwaltung"
   panel:
     agent_status: "Agent-Status"
     session_activity: "Sitzungsaktivitaet"

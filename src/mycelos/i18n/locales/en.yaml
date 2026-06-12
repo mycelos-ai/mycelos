@@ -485,13 +485,15 @@ web:
     scheduled_workflows: "Scheduled"
     reminders: "Reminders"
     recent_sessions: "Recent"
+    preferences: "Preferences"
     admin: "Admin"
     admin_dashboard: "Dashboard"
     admin_agents: "Agents"
     admin_workflows: "Workflows"
     admin_doctor: "Doctor"
     admin_connectors: "Connectors"
-    admin_settings: "Settings"
+    admin_ai_providers: "AI Providers"
+    admin_settings: "System Settings"
   header:
     search_placeholder: "Search..."
     local: "Local"
@@ -666,6 +668,15 @@ web:
       accent_default: "Default (Cyan)"
       accent_reset: "Reset"
       hint: "Your theme is saved to your account and follows you across devices."
+  preferences:
+    title: "Preferences"
+    subtitle: "Language and appearance for your account"
+  ai_providers:
+    title: "AI Providers"
+    subtitle: "Models, credentials, and agent model assignments"
+  system_settings:
+    title: "System Settings"
+    subtitle: "Config generations, updates, and data management"
   panel:
     agent_status: "Agent Status"
     session_activity: "Session Activity"
