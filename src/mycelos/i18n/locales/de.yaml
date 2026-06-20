@@ -762,3 +762,10 @@ web:
     just_now: "gerade eben"
     connection_failed: "Verbindung fehlgeschlagen"
 
+
+# --- Knowledge CLI ---
+knowledge:
+  export:
+    dir_not_empty: "Zielverzeichnis {path} ist nicht leer. Mit --force überschreiben."
+    done: "{count} Notizen nach {path} exportiert (OKF-Bundle)."
+    error: "Export fehlgeschlagen"

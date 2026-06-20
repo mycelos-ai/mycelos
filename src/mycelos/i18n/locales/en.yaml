@@ -774,3 +774,10 @@ web:
     ok: "OK"
     just_now: "just now"
     connection_failed: "Connection failed"
+
+# --- Knowledge CLI ---
+knowledge:
+  export:
+    dir_not_empty: "Target directory {path} is not empty. Use --force to overwrite."
+    done: "Exported {count} notes to {path} (OKF bundle)."
+    error: "Export failed"
