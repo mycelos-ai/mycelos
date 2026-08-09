@@ -612,7 +612,7 @@ class KnowledgeBase:
 
     # ─── Link ──────────────────────────────────────────────────────────────────
 
-    def append_related_link(self, note_path: str, target_path: str) -> None:
+    def append_related_link(self, note_path: str, target_path: str) -> bool:
         """Append a wikilink under an appended '## Verwandt' heading.
 
         Append-only: never edits existing prose. Creates the heading if
@@ -621,6 +621,9 @@ class KnowledgeBase:
         Both note_path and target_path are validated against the knowledge
         dir — a traversal path (e.g. "../../etc/passwd") raises
         PathTraversalError instead of writing outside.
+
+        Returns True when the link was written (or already present),
+        False when it no-ops because the source note file does not exist.
         """
         file_path = self._safe_path(note_path)
         # Validate target_path too so we never embed a traversal string as a
@@ -628,7 +631,7 @@ class KnowledgeBase:
         # body would be rendered as an active link.
         self._safe_path(target_path)
         if not file_path.exists():
-            return
+            return False
         body = file_path.read_text(encoding="utf-8")
         heading = "## Verwandt"
         link = f"- [[{target_path}]]"
@@ -637,8 +640,9 @@ class KnowledgeBase:
         elif link not in body:
             body = body.rstrip() + f"\n{link}\n"
         else:
-            return
+            return True
         file_path.write_text(body, encoding="utf-8")
+        return True
 
     def link(self, from_path: str, to_path: str) -> bool:
         """Create a directional link between two notes."""

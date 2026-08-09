@@ -34,11 +34,16 @@ class _FakeAudit:
 
 
 class _FakeKB:
-    def __init__(self, topics: list[str], duplicates: dict[str, list[dict]] | None = None) -> None:
+    def __init__(self, topics: list[str], duplicates: dict[str, list[dict]] | None = None,
+                 missing_sources: set[str] | None = None) -> None:
         self._topics = topics
         self._duplicates = duplicates or {}
         self.moved: list = []
+        self.linked: list = []
         self._knowledge_dir = Path("/fake")
+        # note paths whose file is treated as absent — mirrors
+        # KnowledgeBase.append_related_link's real no-op-on-missing-file behavior
+        self._missing_sources = missing_sources or set()
 
     def list_topics(self, limit: int = 100) -> list[dict]:
         return [{"path": t} for t in self._topics]
@@ -49,6 +54,12 @@ class _FakeKB:
 
     def find_duplicates(self, path: str, threshold: float = 0.92, top_k: int = 3) -> list[dict]:
         return self._duplicates.get(path, [])
+
+    def append_related_link(self, note_path: str, target_path: str) -> bool:
+        if note_path in self._missing_sources:
+            return False
+        self.linked.append((note_path, target_path))
+        return True
 
 
 class _FakeKBWithFiles(_FakeKB):
@@ -416,3 +427,23 @@ def test_auto_accept_merge_stays_pending(handler_env) -> None:
     row = storage.fetchone(
         "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
     assert row["status"] == "pending"
+
+
+def test_auto_accept_link_failure_when_source_missing(handler_env) -> None:
+    """Regression: append_related_link no-ops (returns False) when the
+    source note file was deleted between suggestion creation and the 24h
+    sweep. That must fail closed, not be recorded as accepted."""
+    handler, storage, kb, audit = handler_env
+    kb._missing_sources.add("notes/a")
+    sid = _stale_suggestion(storage, "notes/a", "link",
+                            {"to": "notes/b"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    assert kb.linked == []
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "failed"
+    note = storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert note["organizer_state"] == "pending"
+    assert any(e[0] == "organizer.auto_accept_failed" for e in audit.events)

@@ -581,8 +581,7 @@ class KnowledgeOrganizerHandler:
             src = payload.get("from") or row["note_path"]
             if not dst:
                 return False
-            kb.append_related_link(src, dst)  # raises on failure
-            return True
+            return bool(kb.append_related_link(src, dst))
         # merge and unknown kinds are never auto-applied (fail closed);
         # should_auto_accept filters them before we get here.
         return False
