@@ -61,3 +61,35 @@ def test_archived_under_30_days() -> None:
 def test_active_note_never_hard_deleted() -> None:
     note = {"status": "active", "organizer_seen_at": "2026-01-01T00:00:00Z"}
     assert is_archived_older_than(note, days=30) is False
+
+
+from mycelos.knowledge.organizer import AUTO_ACCEPT_CONFIDENCE, should_auto_accept
+
+
+def test_should_auto_accept_high_confidence_move() -> None:
+    assert should_auto_accept("move", 0.95) is True
+    assert should_auto_accept("new_topic", 1.0) is True
+    assert should_auto_accept("link", 0.99) is True
+
+
+def test_should_auto_accept_below_floor_is_rejected() -> None:
+    assert should_auto_accept("move", 0.94) is False
+    assert should_auto_accept("link", 0.0) is False
+
+
+def test_should_auto_accept_merge_never() -> None:
+    # Merges are destructive (archive + eventual hard-delete of the
+    # secondary note) — never auto-accepted regardless of confidence.
+    assert should_auto_accept("merge", 1.0) is False
+
+
+def test_should_auto_accept_unknown_kind_fails_closed() -> None:
+    assert should_auto_accept("refine_type", 1.0) is False
+    assert should_auto_accept("frobnicate", 1.0) is False
+
+
+def test_auto_accept_floor_is_stricter_than_silent_apply() -> None:
+    # The silent-apply path (fresh classification) uses 0.8; unattended
+    # acceptance of *stale* suggestions must be stricter, not looser.
+    from mycelos.knowledge.organizer import SILENT_CONFIDENCE
+    assert AUTO_ACCEPT_CONFIDENCE > SILENT_CONFIDENCE
