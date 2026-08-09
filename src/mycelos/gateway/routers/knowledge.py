@@ -488,29 +488,38 @@ async def organizer_accept(sid: int, request: Request) -> Any:
     try:
         if kind == "move":
             target = payload.get("target")
-            if target:
-                kb.move_to_topic(sug["note_path"], target)
+            if not target:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            if not kb.move_to_topic(sug["note_path"], target):
+                return JSONResponse({"error": "apply failed: note not found"}, status_code=500)
         elif kind == "new_topic":
             name = payload.get("name")
-            members = payload.get("members", [])
-            if name:
-                new_path = kb.create_topic(name)
-                for member in members:
-                    kb.move_to_topic(member, new_path)
+            if not name:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            new_path = kb.create_topic(name)
+            for member in payload.get("members", []):
+                if not kb.move_to_topic(member, new_path):
+                    return JSONResponse(
+                        {"error": f"apply failed: could not move {member}"}, status_code=500)
         elif kind == "link":
-            src = payload.get("from") or sug["note_path"]
             dst = payload.get("to")
-            if dst:
-                kb.append_related_link(src, dst)
+            if not dst:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            if not kb.append_related_link(payload.get("from") or sug["note_path"], dst):
+                return JSONResponse(
+                    {"error": "apply failed: source note missing"}, status_code=500)
         elif kind == "merge":
             duplicate_path = payload.get("duplicate_path")
-            if duplicate_path:
-                handler = mycelos.knowledge_organizer
-                handler._execute_merge(
-                    kb, mycelos.storage, sug["note_path"], duplicate_path,
-                    payload.get("similarity", 0.0),
-                    resolve_user_id(request),
-                )
+            if not duplicate_path:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            handler = mycelos.knowledge_organizer
+            ok = handler._execute_merge(
+                kb, mycelos.storage, sug["note_path"], duplicate_path,
+                payload.get("similarity", 0.0),
+                resolve_user_id(request),
+            )
+            if not ok:
+                return JSONResponse({"error": "apply failed: merge failed"}, status_code=500)
         elif kind == "refine_type":
             pass
     except Exception as exc:
