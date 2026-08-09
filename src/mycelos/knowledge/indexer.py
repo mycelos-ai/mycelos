@@ -68,7 +68,7 @@ class KnowledgeIndexer:
                 self._storage.execute(
                     "INSERT INTO knowledge_fts(rowid, title, content, tags) "
                     "VALUES (?, ?, ?, ?)",
-                    (note["id"], note["title"], content, note["tags"] or ""),
+                    (note["id"], note["title"], content, _tags_string(note["tags"])),
                 )
             logger.info(
                 "FTS index rebuilt (%d notes, tokenizer: %s)",

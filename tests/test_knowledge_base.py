@@ -504,3 +504,39 @@ def test_outdated_fts_index_is_rebuilt(app, kb) -> None:
     kb2 = KnowledgeBase(app)
     hits = kb2.search("gemuse")
     assert any(h["title"] == "Ernährung" for h in hits)
+
+
+def test_rebuilt_fts_tags_match_normal_index_tokenization(app, kb) -> None:
+    """Tags re-indexed by ensure_fts's rebuild path must be tokenized the
+    same way index_note tokenizes them (space-separated, not raw JSON) —
+    otherwise tag search recall depends on which path last touched a note."""
+    kb.write(
+        title="Kaffeeprojekt",
+        content="Notizen",
+        tags=["projekt", "kaffee"],
+        topic="notes",
+    )
+    path = kb.list_notes(type="note")[0]["path"]
+    note_id = app.storage.fetchone(
+        "SELECT id FROM knowledge_notes WHERE path = ?", (path,)
+    )["id"]
+
+    # Capture how the normal index_note path tokenizes these tags, then
+    # force a rebuild (old-tokenizer table, like test_outdated_fts_index_is_rebuilt).
+    normal_row = app.storage.fetchone(
+        "SELECT tags FROM knowledge_fts WHERE rowid = ?", (note_id,)
+    )
+    app.storage.execute("DROP TABLE knowledge_fts")
+    app.storage.executescript(
+        "CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, content, tags);"
+    )
+    from mycelos.knowledge.service import KnowledgeBase
+    kb2 = KnowledgeBase(app)
+
+    hits = kb2.search("projekt")
+    assert any(h["title"] == "Kaffeeprojekt" for h in hits)
+
+    rebuilt_row = app.storage.fetchone(
+        "SELECT tags FROM knowledge_fts WHERE rowid = ?", (note_id,)
+    )
+    assert rebuilt_row["tags"] == normal_row["tags"] == "projekt kaffee"
