@@ -21,6 +21,7 @@ from mycelos.knowledge.organizer import (
     is_archived_older_than,
     is_done_task_older_than,
     is_fired_reminder_past,
+    should_auto_accept,
 )
 
 logger = logging.getLogger("mycelos.knowledge_organizer")
@@ -481,8 +482,11 @@ class KnowledgeOrganizerHandler:
     def _auto_accept_stale(self, storage, kb, user_id: str) -> int:
         """Auto-accept suggestions that have been pending > 24 hours.
 
-        Creates new topics as needed and moves the notes. Returns the
-        number of suggestions auto-accepted.
+        Only non-destructive kinds at or above AUTO_ACCEPT_CONFIDENCE are
+        applied (merge always needs explicit confirmation). A suggestion
+        is marked 'accepted' only when the action actually succeeded;
+        failures flip it to 'failed' and put the note back into the
+        classification queue. Returns the number auto-accepted.
         """
         stale = storage.fetchall(
             "SELECT * FROM organizer_suggestions WHERE status='pending' "
@@ -495,72 +499,93 @@ class KnowledgeOrganizerHandler:
         for row in stale:
             try:
                 payload = json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
-                kind = row["kind"]
+            except (TypeError, ValueError):
+                payload = {}
+            kind = row["kind"]
+            try:
+                confidence = float(row["confidence"])
+            except (TypeError, ValueError):
+                confidence = 0.0
 
-                if kind == "new_topic":
-                    name = payload.get("name")
-                    if name:
-                        # Find-or-create via the ONE slugify — recomputing the
-                        # slug with a different algorithm produced parents
-                        # that don't exist (umlaut names).
-                        from mycelos.knowledge.note import slugify
-                        target = f"topics/{slugify(name)}"
-                        exists = storage.fetchone(
-                            "SELECT path FROM knowledge_notes WHERE path=? AND type='topic'",
-                            (target,),
-                        )
-                        if not exists:
-                            try:
-                                target = kb.create_topic(name)
-                            except Exception:
-                                target = None
-                        if target:
-                            for member in payload.get("members", []):
-                                try:
-                                    kb.move_to_topic(member, target)
-                                except Exception:
-                                    pass
-                elif kind == "move":
-                    target = payload.get("target")
-                    if target:
-                        try:
-                            kb.move_to_topic(row["note_path"], target)
-                        except Exception:
-                            pass
-                elif kind == "link":
-                    dst = payload.get("to")
-                    src = payload.get("from") or row["note_path"]
-                    if dst:
-                        try:
-                            kb.append_related_link(src, dst)
-                        except Exception:
-                            pass
-                elif kind == "merge":
-                    # Merge is destructive (archives + eventually hard-deletes
-                    # the secondary note). It is NEVER auto-accepted on
-                    # staleness — it requires explicit user confirmation,
-                    # matching the project's mandatory-dry-run principle. Leave
-                    # the suggestion pending and move on.
-                    continue
+            if not should_auto_accept(kind, confidence):
+                # Stays pending: merges and low-confidence suggestions
+                # wait for the user in the inbox.
+                continue
 
+            try:
+                ok = self._apply_suggestion(kb, storage, row, payload)
+            except Exception as exc:
+                logger.warning("Auto-accept failed for suggestion %s: %s", row["id"], exc)
+                ok = False
+
+            if ok:
                 storage.execute(
                     "UPDATE organizer_suggestions SET status='accepted' WHERE id=?",
                     (row["id"],),
                 )
-                # Also flip note state to 'ok' since it's now organized
                 storage.execute(
                     "UPDATE knowledge_notes SET organizer_state='ok' WHERE path=?",
                     (row["note_path"],),
                 )
                 count += 1
-            except Exception as e:
-                logger.warning("Auto-accept failed for suggestion %s: %s", row["id"], e)
+            else:
+                # Fail closed: never record a failure as an acceptance.
+                # Send the note back through classification so a fresh,
+                # currently-valid suggestion replaces this one.
+                storage.execute(
+                    "UPDATE organizer_suggestions SET status='failed' WHERE id=?",
+                    (row["id"],),
+                )
+                storage.execute(
+                    "UPDATE knowledge_notes SET organizer_state='pending' WHERE path=?",
+                    (row["note_path"],),
+                )
+                self._audit(user_id, "organizer.auto_accept_failed",
+                            {"id": row["id"], "kind": kind, "path": row["note_path"]})
 
         if count > 0:
             self._audit(user_id, "organizer.auto_accept",
                         {"count": count, "reason": "stale>24h"})
             logger.info("Organizer auto-accepted %d stale suggestions", count)
         return count
+
+    def _apply_suggestion(self, kb, storage, row, payload: dict) -> bool:
+        """Execute one suggestion. True only when it fully succeeded."""
+        kind = row["kind"]
+        if kind == "move":
+            target = payload.get("target")
+            if not target:
+                return False
+            return bool(kb.move_to_topic(row["note_path"], target))
+        if kind == "new_topic":
+            name = payload.get("name")
+            if not name:
+                return False
+            # Find-or-create via the ONE slugify — recomputing the slug
+            # with a different algorithm produced parents that don't
+            # exist (umlaut names).
+            from mycelos.knowledge.note import slugify
+            target = f"topics/{slugify(name)}"
+            exists = storage.fetchone(
+                "SELECT path FROM knowledge_notes WHERE path=? AND type='topic'",
+                (target,),
+            )
+            if not exists:
+                target = kb.create_topic(name)  # raises on failure
+            for member in payload.get("members", []):
+                if not kb.move_to_topic(member, target):
+                    return False
+            return True
+        if kind == "link":
+            dst = payload.get("to")
+            src = payload.get("from") or row["note_path"]
+            if not dst:
+                return False
+            kb.append_related_link(src, dst)  # raises on failure
+            return True
+        # merge and unknown kinds are never auto-applied (fail closed);
+        # should_auto_accept filters them before we get here.
+        return False
 
     def _execute_merge(
         self, kb, storage, primary_path: str, secondary_path: str,

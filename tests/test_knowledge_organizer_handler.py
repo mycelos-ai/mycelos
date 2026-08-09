@@ -92,6 +92,23 @@ def storage(tmp_path: Path) -> SQLiteStorage:
     return s
 
 
+@pytest.fixture
+def handler_env(storage: SQLiteStorage):
+    """(handler, storage, kb, audit) with a seeded 'notes/a' note."""
+    kb = _FakeKB(topics=["topics/x"])
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    handler = KnowledgeOrganizerHandler(app)
+    _insert_note(
+        storage,
+        path="notes/a", title="Note A",
+        type="note", status="active", organizer_state="suggested",
+        created_at="2026-04-10T10:00:00Z",
+    )
+    return handler, storage, kb, app.audit
+
+
 def _insert_note(storage: SQLiteStorage, **fields) -> None:
     cols = ",".join(fields.keys())
     placeholders = ",".join("?" * len(fields))
@@ -289,7 +306,7 @@ def test_non_destructive_suggestions_still_auto_accept(storage: SQLiteStorage) -
                  created_at="2026-04-10T10:00:00Z")
     storage.execute(
         "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence, created_at, status) "
-        "VALUES (?, 'move', ?, 0.9, '2026-04-13 06:00:00', 'pending')",
+        "VALUES (?, 'move', ?, 0.97, '2026-04-13 06:00:00', 'pending')",
         ("notes/stray", json.dumps({"target": "topics/misc"})),
     )
 
@@ -336,3 +353,66 @@ def test_sweep_duplicates_finds_pairs(storage: SQLiteStorage) -> None:
     # Primary should be the older note
     assert pending["merge"][0]["note_path"] == "notes/a"
     assert pending["merge"][0]["payload"]["duplicate_path"] == "notes/b"
+
+
+def _stale_suggestion(storage, note_path: str, kind: str, payload: dict,
+                      confidence: float) -> int:
+    """Insert a pending suggestion backdated past the 24h staleness window."""
+    cursor = storage.execute(
+        "INSERT INTO organizer_suggestions "
+        "(note_path, kind, payload, confidence, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))",
+        (note_path, kind, json.dumps(payload), confidence),
+    )
+    return cursor.lastrowid
+
+
+def test_auto_accept_skips_low_confidence(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.5)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    assert kb.moved == []
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"  # left for the user, not applied
+
+
+def test_auto_accept_applies_high_confidence_move(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 1
+    assert ("notes/a", "topics/x") in kb.moved
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "accepted"
+
+
+def test_auto_accept_failure_is_not_marked_accepted(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    kb.move_to_topic = lambda path, target: False  # simulate missing note
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "failed"
+    note = storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert note["organizer_state"] == "pending"  # re-enters classification
+    assert any(e[0] == "organizer.auto_accept_failed" for e in audit.events)
+
+
+def test_auto_accept_merge_stays_pending(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "merge",
+                            {"duplicate_path": "notes/b"}, confidence=1.0)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"
