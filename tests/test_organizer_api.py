@@ -146,3 +146,48 @@ def test_force_run_returns_counts(api_client, monkeypatch) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert set(data.keys()) >= {"processed", "archived", "moved", "suggested", "linked"}
+
+
+def test_accept_all_leaves_merges_pending(api_client) -> None:
+    client, app_obj = api_client
+    path = _seed_note(app_obj, "Primary")
+    inbox = InboxService(app_obj.storage)
+    inbox.add(path, "merge", {"duplicate_path": "notes/x", "similarity": 0.95}, 0.95)
+
+    resp = client.post("/api/organizer/accept-all")
+    assert resp.status_code == 200
+    assert resp.json()["skipped_merges"] == 1
+    row = app_obj.storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE kind='merge'")
+    assert row["status"] == "pending"  # never blanket-accepted
+
+
+def test_accept_all_counts_failures_and_leaves_them_pending(api_client) -> None:
+    client, app_obj = api_client
+    path = _seed_note(app_obj)
+    inbox = InboxService(app_obj.storage)
+    inbox.add("notes/ghost-note", "move", {"target": "topics/x"}, 0.7)
+
+    resp = client.post("/api/organizer/accept-all")
+    assert resp.status_code == 200
+    assert resp.json()["failed"] == 1
+    row = app_obj.storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE note_path='notes/ghost-note'")
+    assert row["status"] == "pending"
+
+
+def test_accept_all_counts_link_with_missing_source_as_failed(api_client) -> None:
+    client, app_obj = api_client
+    inbox = InboxService(app_obj.storage)
+    # "from" points at a note path that was never written to disk ->
+    # kb.append_related_link returns False (not an exception)
+    sid = inbox.add(
+        "notes/does-not-exist", "link",
+        {"from": "notes/does-not-exist", "to": "notes/some-target"}, 0.85)
+
+    resp = client.post("/api/organizer/accept-all")
+    assert resp.status_code == 200
+    assert resp.json()["failed"] == 1
+    row = app_obj.storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"

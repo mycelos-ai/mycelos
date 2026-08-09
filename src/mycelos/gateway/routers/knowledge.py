@@ -415,21 +415,39 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
     groups = inbox.list_pending_by_topic()
     accepted = 0
     topics_created = 0
+    failed = 0
+    skipped_merges = 0
 
     for group in groups:
         if group.get("topic") is None:
-            # Link suggestions — just accept them
+            # Ungrouped suggestions: links are applied; merges are
+            # destructive and NEVER part of accept-all — the user
+            # confirms each one individually.
             for s in group["notes"]:
-                if s.get("kind") == "link":
+                if s.get("_synthetic"):
+                    continue
+                kind = s.get("kind")
+                if kind == "merge":
+                    skipped_merges += 1
+                    continue
+                if kind == "link":
                     try:
                         dst = s["payload"].get("to")
-                        if dst:
-                            kb.append_related_link(
-                                s["payload"].get("from") or s["note_path"], dst
-                            )
+                        if not dst:
+                            raise ValueError("link suggestion without target")
+                        ok = kb.append_related_link(
+                            s["payload"].get("from") or s["note_path"], dst
+                        )
                     except Exception:
-                        pass
-                if not s.get("_synthetic"):
+                        ok = False
+                    if not ok:
+                        failed += 1
+                        continue
+                    inbox.accept(s["id"])
+                    accepted += 1
+                else:
+                    # refine_type and unknown kinds: accepting is a
+                    # no-op action, mark handled.
                     inbox.accept(s["id"])
                     accepted += 1
             continue
@@ -442,34 +460,37 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
                 kb.create_topic(group["topic_name"])
                 topics_created += 1
             except Exception:
-                pass
+                pass  # may already exist; per-note moves below decide success
 
         for s in group["notes"]:
             if s.get("_synthetic"):
                 continue
             try:
+                ok = True
                 if s["kind"] in ("move", "new_topic"):
-                    target = topic_path
-                    if target:
-                        kb.move_to_topic(s["note_path"], target)
+                    ok = bool(topic_path) and bool(
+                        kb.move_to_topic(s["note_path"], topic_path)
+                    )
             except Exception:
-                pass
-            inbox.accept(s["id"])
-            accepted += 1
-
-    # Flip all remaining to accepted (safety net)
-    inbox.accept_all_pending()
+                ok = False
+            if ok:
+                inbox.accept(s["id"])
+                accepted += 1
+            else:
+                failed += 1  # stays pending — never record failure as success
 
     try:
         mycelos.audit.log(
             "organizer.accept_all",
             user_id=user_id,
-            details={"accepted": accepted, "topics_created": topics_created},
+            details={"accepted": accepted, "topics_created": topics_created,
+                     "failed": failed, "skipped_merges": skipped_merges},
         )
     except Exception:
         pass
 
-    return {"accepted": accepted, "topics_created": topics_created}
+    return {"accepted": accepted, "topics_created": topics_created,
+            "failed": failed, "skipped_merges": skipped_merges}
 
 
 @router.post("/api/organizer/suggestions/{sid}/accept")
