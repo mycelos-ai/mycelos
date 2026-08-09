@@ -1,5 +1,30 @@
 # Changelog
 
+
+
+## Week 32 (2026)
+
+### Organizer auto-accept is fail-closed (P0 residuals)
+
+Closed the remaining gaps from the June claims audit:
+
+- **Confidence floor for unattended acceptance.** Stale (>24h) pending
+  suggestions are only auto-applied at confidence >= 0.95; below that
+  they stay in the inbox for the user. Merges remain excluded entirely.
+- **Acceptance now means success.** The background auto-accept, the
+  single-accept API, and accept-all no longer mark suggestions
+  "accepted" when the underlying action failed — failures stay pending
+  (API) or flip to a `failed` status and re-enter classification
+  (background), with an `organizer.auto_accept_failed` audit event.
+- **Accept-all never touches merges.** The blanket
+  `accept_all_pending()` safety net silently marked merge suggestions
+  accepted without executing them; accept-all now reports
+  `skipped_merges` and leaves them pending for individual confirmation.
+- **Merges are traceable.** A successful merge records a `merged_from`
+  edge (primary -> secondary) in the link graph before archiving the
+  secondary note, so it stays visible and restorable during the 30-day
+  tombstone window.
+
 ## Week 25 (2026) — OKF export (proof-of-concept)
 
 Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
@@ -22,6 +47,25 @@ bump touches one file.
 
 Scope (PoC): export only (import is a later extension), text notes only (no
 binary document blobs), no `log.md` synthesis.
+=======
+
+## Week 24 (2026) — doctor catches dead Telegram polling
+
+`mycelos doctor` now detects the exact failure mode that was hard to
+diagnose by hand: Telegram **sends** (the daily briefing arrives) but
+**receives nothing**, because the proxy credential bootstrap window
+closed before the bot token was materialized, so the inbound polling
+thread never started.
+
+- `check_telegram` reads the `proxy.materialize_denied` /
+  `reason=window_closed` audit event (only since the latest
+  `gateway.started`, so a stale failure from an earlier boot doesn't flag
+  a now-healthy channel) and reports a warning explaining that outbound
+  works but inbound is down, plus the fix.
+- `mycelos doctor --fix` prints the restart command and the
+  `MYCELOS_BOOTSTRAP_WINDOW` knob for slow hosts.
+- Documented in the Raspberry Pi setup guide's troubleshooting section.
+
 
 ## Week 24 (2026) — UX review: density & clarity
 

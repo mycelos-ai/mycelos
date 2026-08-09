@@ -249,3 +249,11 @@ def _auto_fix(app, results: list[dict]) -> None:
 
         elif r["category"] == "server" and "not reachable" in r.get("details", ""):
             console.print("  → Start server with: [bold]mycelos serve[/bold]")
+
+        elif r["category"] == "telegram" and "polling did not start" in r.get("details", ""):
+            console.print("  → Telegram inbound polling is down (bootstrap window). "
+                          "Restart the stack so the token materializes on a fresh boot:")
+            console.print("    [bold]docker compose down && docker compose up -d[/bold]   "
+                          "(or [bold]mycelos restart[/bold])")
+            console.print("    If it recurs on slow hardware, raise "
+                          "[bold]MYCELOS_BOOTSTRAP_WINDOW[/bold] (seconds) in your .env.")

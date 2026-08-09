@@ -57,11 +57,13 @@ class TestTopicSlugConsistency:
         from mycelos.agents.handlers.knowledge_organizer_handler import (
             KnowledgeOrganizerHandler,
         )
+        from mycelos.knowledge.organizer import AUTO_ACCEPT_CONFIDENCE
         note_path = kb.write("Mein Salat", "gesund", type="note")
         app.storage.execute(
             "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence, created_at, status) "
-            "VALUES (?, 'new_topic', ?, 0.9, datetime('now', '-25 hours'), 'pending')",
-            (note_path, json.dumps({"name": "Ernährung", "members": [note_path]})),
+            "VALUES (?, 'new_topic', ?, ?, datetime('now', '-25 hours'), 'pending')",
+            (note_path, json.dumps({"name": "Ernährung", "members": [note_path]}),
+             AUTO_ACCEPT_CONFIDENCE),
         )
 
         handler = KnowledgeOrganizerHandler(app)

@@ -134,13 +134,6 @@ class InboxService:
             })
         return result
 
-    def accept_all_pending(self) -> int:
-        """Accept every pending suggestion. Returns count."""
-        cursor = self._storage.execute(
-            "UPDATE organizer_suggestions SET status='accepted' WHERE status='pending'"
-        )
-        return cursor.rowcount
-
     def accept(self, suggestion_id: int) -> None:
         self._storage.execute(
             "UPDATE organizer_suggestions SET status='accepted' WHERE id=?",
