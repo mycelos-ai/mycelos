@@ -133,6 +133,25 @@ def test_accept_link_with_missing_source_note_is_500_and_stays_pending(api_clien
     assert row["status"] == "pending"
 
 
+def test_accept_generic_exception_returns_sanitized_body(api_client, monkeypatch) -> None:
+    client, app_obj = api_client
+    path = _seed_note(app_obj)
+    sid = InboxService(app_obj.storage).add(path, "move", {"target": "notes"}, 0.9)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("secret-internal-detail")
+
+    monkeypatch.setattr(app_obj.knowledge_base, "move_to_topic", _raise)
+
+    resp = client.post(f"/api/organizer/suggestions/{sid}/accept")
+    assert resp.status_code == 500
+    assert resp.json() == {"error": "apply failed"}
+    assert "secret-internal-detail" not in resp.text
+    row = app_obj.storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"
+
+
 def test_force_run_returns_counts(api_client, monkeypatch) -> None:
     client, app_obj = api_client
     monkeypatch.setattr(

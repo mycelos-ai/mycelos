@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mycelos.gateway.routers._helpers import resolve_user_id
+
+logger = logging.getLogger("mycelos.gateway")
 
 router = APIRouter()
 
@@ -544,9 +547,8 @@ async def organizer_accept(sid: int, request: Request) -> Any:
         elif kind == "refine_type":
             pass
     except Exception as exc:
-        return JSONResponse(
-            {"error": f"apply failed: {exc}"}, status_code=500
-        )
+        logger.warning("organizer accept failed for suggestion %s: %s", sid, exc)
+        return JSONResponse({"error": "apply failed"}, status_code=500)
 
     inbox.accept(sid)
     try:
