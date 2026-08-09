@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from mycelos.knowledge import ranking
 from mycelos.knowledge.indexer import KnowledgeIndexer
 from mycelos.knowledge.note import Note, parse_frontmatter, render_note
 from mycelos.knowledge.topic_map import build_topic_mermaid
@@ -33,6 +34,24 @@ def _parse_source(raw: str | None) -> dict | None:
 def _now() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _filter_results(
+    results: list[dict], type: str | None = None, tags: list[str] | None = None
+) -> list[dict]:
+    """Apply the same type/tags semantics as ``KnowledgeIndexer.search_fts``
+    to a result list post-hoc — used for the vector arm, which has no SQL
+    WHERE clause of its own.
+
+    Mirrors search_fts exactly: type is filtered (equality), tags is
+    accepted for interface symmetry but not filtered — search_fts declares
+    a ``tags`` parameter yet never applies it in its SQL, so real tag
+    filtering does not exist in this codebase today. Replicating that
+    (rather than inventing new semantics here) keeps both arms consistent.
+    """
+    if type:
+        results = [r for r in results if r.get("type") == type]
+    return results
 
 
 def bucket_note(note: dict) -> str:
@@ -519,12 +538,25 @@ class KnowledgeBase:
         tags: list[str] | None = None,
         limit: int = 10,
     ) -> list[dict]:
-        """Full-text search via FTS5 with LIKE fallback for fuzzy matching."""
-        results = self._indexer.search_fts(query, type=type, tags=tags, limit=limit)
-        if results:
-            return results
-        # Fallback: LIKE search on title and tags (catches typos)
-        return self._indexer.search_like(query, type=type, limit=limit)
+        """Hybrid search: FTS5 and vector KNN fused via RRF.
+
+        Degrades to FTS-only when no embedding provider is configured, and
+        to the LIKE fallback when both arms come back empty (typo net).
+        """
+        fts_results = self._indexer.search_fts(
+            query, type=type, tags=tags, limit=limit * 2
+        )
+        vector_results: list[dict] = []
+        if self._embedding_provider.dimension > 0:
+            candidates = self._find_relevant_by_vector(
+                query, top_k=limit * 2, threshold=0.25
+            )
+            vector_results = _filter_results(candidates, type=type, tags=tags)
+        if not fts_results and not vector_results:
+            return self._indexer.search_like(query, type=type, limit=limit)
+        if not vector_results:
+            return fts_results[:limit]
+        return ranking.rrf_fuse([fts_results, vector_results], limit=limit)
 
     # ─── List ──────────────────────────────────────────────────────────────────
 

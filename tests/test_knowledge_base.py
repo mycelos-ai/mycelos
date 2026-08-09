@@ -540,3 +540,42 @@ def test_rebuilt_fts_tags_match_normal_index_tokenization(app, kb) -> None:
         "SELECT tags FROM knowledge_fts WHERE rowid = ?", (note_id,)
     )
     assert rebuilt_row["tags"] == normal_row["tags"] == "projekt kaffee"
+
+
+class TestHybridSearch:
+    """Task 3: search() fuses the FTS and vector arms via RRF."""
+
+    def test_search_fuses_fts_and_vector_results(self, app) -> None:
+        # Both notes' embed text ("title content") contains "Kaffee" as a
+        # substring, and so does the query — the stub maps all three to the
+        # same vector, so the vector arm returns both notes at similarity 1.0.
+        kb = _kb_with_stub_embeddings(app, {"Kaffee": [1.0, 0.0, 0.0]})
+        kb.write(title="Kaffeemaschine entkalken", content="Essig und Wasser", topic="notes")
+        kb.write(title="Espresso Bohnen", content="Kaffee Röstung dunkel", topic="notes")
+
+        hits = kb.search("Kaffee")
+        paths = [h["path"] for h in hits]
+        # FTS hit (title/content contains Kaffee) present:
+        assert any("espresso-bohnen" in p for p in paths)
+        # fused results carry the rrf score:
+        assert all("rrf_score" in h for h in hits)
+
+    def test_search_without_provider_behaves_like_today(self, kb) -> None:
+        # dimension == 0 → FTS-only, no rrf_score requirement, LIKE fallback intact
+        kb.write(title="Solitaire", content="Kartenspiel", topic="notes")
+        hits = kb.search("Solitaire")
+        assert hits and hits[0]["title"] == "Solitaire"
+        # typo → LIKE fallback path still works
+        hits = kb.search("Solitair")
+        assert hits and hits[0]["title"] == "Solitaire"
+
+    def test_search_type_filter_applies_to_vector_arm(self, app) -> None:
+        # a vector-armed search with type="task" must not return notes of other
+        # types even if they are semantically close (filter before fusion)
+        kb = _kb_with_stub_embeddings(app, {"Kaffee": [1.0, 0.0, 0.0]})
+        kb.write(title="Kaffee kochen", content="Kaffee Task-Erinnerung", type="task", topic="tasks")
+        kb.write(title="Kaffee Notiz", content="Kaffee Gedanke", type="note", topic="notes")
+
+        hits = kb.search("Kaffee", type="task")
+        assert hits
+        assert all(h["type"] == "task" for h in hits)
