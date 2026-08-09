@@ -1169,18 +1169,25 @@ class KnowledgeBase:
         top_k: int = 5,
         threshold: float = 0.7,
     ) -> list[dict]:
-        """Find notes relevant to the given text.
+        """Find notes relevant to the given text — hybrid FTS+vector via RRF.
 
-        Uses vector search (sqlite-vec) when an embedding provider is available,
-        falling back to FTS5 when vectors yield nothing or are unavailable.
-        Relevance is non-destructive, so the keyword fallback is appropriate
-        here (unlike duplicate detection, which must not fall back).
+        ``threshold`` bounds the vector arm's cosine similarity only; FTS
+        matches join through rank fusion regardless. Degrades to FTS-only
+        when no embedding provider is available. Relevance is
+        non-destructive, so keyword participation is appropriate here
+        (unlike duplicate detection, which stays vector-only).
         """
-        results = self._find_relevant_by_vector(text, top_k=top_k, threshold=threshold)
-        if results:
-            return results
-        # Fallback to FTS5
-        return self.search(text, limit=top_k)
+        vector_results: list[dict] = []
+        if self._embedding_provider.dimension > 0:
+            vector_results = self._find_relevant_by_vector(
+                text, top_k=top_k * 2, threshold=threshold
+            )
+        fts_results = self._indexer.search_fts(text, limit=top_k * 2)
+        if not vector_results:
+            return fts_results[:top_k]
+        if not fts_results:
+            return vector_results[:top_k]
+        return ranking.rrf_fuse([fts_results, vector_results], limit=top_k)
 
     def find_duplicates(
         self,

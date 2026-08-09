@@ -579,3 +579,47 @@ class TestHybridSearch:
         hits = kb.search("Kaffee", type="task")
         assert hits
         assert all(h["type"] == "task" for h in hits)
+
+
+class TestHybridFindRelevant:
+    """Task 4: find_relevant() fuses the FTS and vector arms via RRF."""
+
+    def test_find_relevant_includes_keyword_only_matches(self, app) -> None:
+        # a note matching only by keyword must appear in fused results
+        # (today it is invisible whenever the vector arm returns anything)
+        kb = _kb_with_stub_embeddings(app, {
+            "Kaffee": [1.0, 0.0, 0.0],
+            "Wachmacher": [1.0, 0.0, 0.0],
+        })
+        # Semantic-only: embed text has no literal "kaffee" token, so FTS
+        # misses it, but it shares the stub vector with the query "Kaffee".
+        kb.write(title="Wachmacher Getraenk", content="das uebliche Morgenritual", topic="notes")
+        # Keyword-only: FTS matches "Kaffee" (case-insensitive tokenizer),
+        # but the uppercase spelling dodges the stub's case-sensitive
+        # substring lookup, so it falls back to the unrelated default
+        # vector [0, 0, 1] — orthogonal to the query, excluded by threshold.
+        keyword_only_path = kb.write(
+            title="Espresso Bohnen", content="KAFFEE Roestung dunkel", topic="notes"
+        )
+
+        results = kb.find_relevant("Kaffee")
+        paths = [r["path"] for r in results]
+        assert keyword_only_path in paths
+
+    def test_find_relevant_without_provider_is_fts_only(self, kb) -> None:
+        kb.write(title="Backup Strategie", content="Restic und Hetzner", topic="notes")
+        results = kb.find_relevant("Backup")
+        assert results and results[0]["title"] == "Backup Strategie"
+
+    def test_find_duplicates_never_uses_fts_or_fusion(self, kb, monkeypatch) -> None:
+        # Pin the June P0-3 decision: duplicate detection is vector-only.
+        from mycelos.knowledge import ranking
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("find_duplicates must not use FTS/fusion")
+
+        monkeypatch.setattr(ranking, "rrf_fuse", _boom)
+        monkeypatch.setattr(kb._indexer, "search_fts", _boom)
+        monkeypatch.setattr(kb._indexer, "search_like", _boom)
+        path = kb.write(title="Doppelt", content="inhalt", topic="notes")
+        assert kb.find_duplicates(path) == []  # no provider → fail closed, no FTS
