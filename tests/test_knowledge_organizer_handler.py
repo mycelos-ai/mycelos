@@ -447,3 +447,59 @@ def test_auto_accept_link_failure_when_source_missing(handler_env) -> None:
         "SELECT organizer_state FROM knowledge_notes WHERE path=?", ("notes/a",))
     assert note["organizer_state"] == "pending"
     assert any(e[0] == "organizer.auto_accept_failed" for e in audit.events)
+
+
+@pytest.fixture
+def merge_env(storage: SQLiteStorage, tmp_path: Path):
+    """(handler, storage, kb) with 'notes/a' (primary) seeded in storage and
+    'notes/b' (secondary) present both in storage and on disk, mirroring
+    test_merge_is_never_auto_accepted's setup."""
+    _insert_note(storage, path="notes/a", title="Note A",
+                 type="note", status="active", organizer_state="ok",
+                 created_at="2026-04-10T10:00:00Z", tags="[]")
+    _insert_note(storage, path="notes/b", title="Note B",
+                 type="note", status="active", organizer_state="ok",
+                 created_at="2026-04-12T10:00:00Z", tags="[]")
+
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "b.md").write_text(
+        "---\ntitle: Note B\ntags: []\n---\nSecondary content here",
+        encoding="utf-8",
+    )
+
+    kb = _FakeKBWithFiles(topics=[], files={})
+    kb._knowledge_dir = tmp_path
+
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    handler = KnowledgeOrganizerHandler(app)
+    return handler, storage, kb
+
+
+def test_execute_merge_returns_true_and_writes_merged_from_edge(merge_env) -> None:
+    handler, storage, kb = merge_env  # kb: _FakeKBWithFiles with notes/b on "disk"
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is True
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is not None and edge["kind"] == "merged_from"
+    assert "notes/b" in kb.archived
+
+
+def test_execute_merge_returns_false_on_failure(merge_env) -> None:
+    handler, storage, kb = merge_env
+    def _boom(path, **kwargs):
+        raise RuntimeError("disk full")
+    kb.update = _boom
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is False
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is None  # no provenance edge for a merge that didn't happen
+    assert kb.archived == []  # secondary must not be archived

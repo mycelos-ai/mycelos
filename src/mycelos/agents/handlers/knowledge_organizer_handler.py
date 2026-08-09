@@ -589,24 +589,27 @@ class KnowledgeOrganizerHandler:
     def _execute_merge(
         self, kb, storage, primary_path: str, secondary_path: str,
         similarity: float, user_id: str,
-    ) -> None:
-        """Merge secondary note into primary: append content, archive secondary."""
+    ) -> bool:
+        """Merge secondary note into primary: append content, archive secondary.
+
+        Returns True only when the merge fully succeeded. Records a
+        `merged_from` edge (primary -> secondary) so the merge is
+        traceable in the graph and restorable while the secondary's
+        30-day archive tombstone lasts.
+        """
         try:
             from mycelos.knowledge.note import parse_frontmatter
 
-            # Read secondary note content
             secondary_file = kb._knowledge_dir / (secondary_path + ".md")
             if not secondary_file.exists():
-                return
+                return False
 
             secondary_md = secondary_file.read_text(encoding="utf-8")
             secondary = parse_frontmatter(secondary_md)
 
-            # Append to primary
             separator = f"\n\n---\n*Merged from: {secondary.title}*\n\n"
             kb.update(primary_path, content=separator + secondary.content, append=True)
 
-            # Merge tags
             primary_meta = storage.fetchone(
                 "SELECT tags FROM knowledge_notes WHERE path=?", (primary_path,)
             )
@@ -616,7 +619,15 @@ class KnowledgeOrganizerHandler:
                 if merged_tags != primary_tags:
                     kb.update(primary_path, tags=merged_tags)
 
-            # Archive secondary
+            # Provenance edge BEFORE archiving: primary was merged from
+            # secondary. Survives archival; removed only if the secondary
+            # is hard-deleted (remove_note cleans its edges).
+            storage.execute(
+                "INSERT OR REPLACE INTO knowledge_links (from_path, to_path, kind) "
+                "VALUES (?, ?, 'merged_from')",
+                (primary_path, secondary_path),
+            )
+
             kb.archive_note(secondary_path)
 
             self._audit(user_id, "organizer.merge", {
@@ -624,8 +635,10 @@ class KnowledgeOrganizerHandler:
                 "archived": secondary_path,
                 "similarity": similarity,
             })
+            return True
         except Exception as exc:
             logger.warning("Merge failed %s + %s: %s", primary_path, secondary_path, exc)
+            return False
 
     def _audit(self, user_id: str, event: str, details: dict) -> None:
         try:
