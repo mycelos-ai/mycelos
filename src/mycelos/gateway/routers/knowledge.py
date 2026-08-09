@@ -604,6 +604,65 @@ async def knowledge_sync_relations(request: Request) -> dict[str, Any]:
     return kb.sync_relations()
 
 
+@router.get("/api/knowledge/export")
+async def knowledge_export(request: Request, format: str = "okf") -> Any:
+    """Export the knowledge tree as an OKF bundle (.zip download).
+
+    OKF is a boundary format (D1): notes are serialized at the boundary while
+    the internal Note + SQLite index stay authoritative. Scope: all
+    non-archived notes (D2). ``format`` currently accepts only ``okf``.
+    """
+    import io
+    import zipfile
+    from datetime import datetime, timezone
+
+    from fastapi.responses import Response
+
+    from mycelos.knowledge.okf_export import build_okf_bundle
+
+    if format != "okf":
+        return JSONResponse(
+            {"error": f"unsupported format: {format!r} (only 'okf')"},
+            status_code=422,
+        )
+
+    mycelos = request.app.state.mycelos
+    kb = mycelos.knowledge_base
+
+    notes = [
+        n for n in kb.list_notes(limit=5000)
+        if n.get("status") != "archived"
+    ]
+    bundle = build_okf_bundle(notes, kb.read)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for relpath, contents in bundle.items():
+            # Paths come from the DB (already slugified), but reject any
+            # absolute or traversal entry defensively before writing.
+            if relpath.startswith("/") or ".." in relpath.split("/"):
+                continue
+            zf.writestr(relpath, contents)
+
+    try:
+        mycelos.audit.log(
+            "knowledge.export",
+            user_id=resolve_user_id(request),
+            details={"format": "okf", "count": len(notes)},
+        )
+    except Exception:
+        pass
+
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="mycelos-okf-{date}.zip"',
+        },
+    )
+
+
 @router.post("/api/knowledge/import")
 async def knowledge_import(request: Request) -> dict[str, Any]:
     """Smart Import: accept a zip of .md/.txt files and import them.

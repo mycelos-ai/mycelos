@@ -1,5 +1,7 @@
 # Changelog
 
+
+
 ## Week 32 (2026)
 
 ### Organizer auto-accept is fail-closed (P0 residuals)
@@ -23,6 +25,30 @@ Closed the remaining gaps from the June claims audit:
   secondary note, so it stays visible and restorable during the 30-day
   tombstone window.
 
+## Week 25 (2026) — OKF export (proof-of-concept)
+
+Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
+bundle. OKF is a **boundary format**: the internal Note + SQLite index stay
+authoritative — only the serializer at the boundary knows about OKF, so a spec
+bump touches one file.
+
+- **New serializer** `mycelos/knowledge/okf_export.py`. Maps each note to OKF
+  frontmatter (required `type`, plus additive `description`, `timestamp`,
+  `resource` aliases) while preserving Mycelos-specific keys so the bundle can
+  round-trip back. The OKF directory layout reflects topic membership
+  (`parent_path`), not the internal file path, and synthesizes a navigation
+  `index.md` at the bundle root and per topic directory.
+- **CLI:** `mycelos knowledge export --okf <dir>` writes the bundle to a
+  directory (`--force` to overwrite a non-empty target).
+- **API:** `GET /api/knowledge/export?format=okf` streams the bundle as a
+  `.zip` download. Non-archived notes only; unknown format → 422.
+- Export is read-only — no config generation — but logs a `knowledge.export`
+  audit event for provenance.
+
+Scope (PoC): export only (import is a later extension), text notes only (no
+binary document blobs), no `log.md` synthesis.
+=======
+
 ## Week 24 (2026) — doctor catches dead Telegram polling
 
 `mycelos doctor` now detects the exact failure mode that was hard to
@@ -39,6 +65,7 @@ thread never started.
 - `mycelos doctor --fix` prints the restart command and the
   `MYCELOS_BOOTSTRAP_WINDOW` knob for slow hosts.
 - Documented in the Raspberry Pi setup guide's troubleshooting section.
+
 
 ## Week 24 (2026) — UX review: density & clarity
 
