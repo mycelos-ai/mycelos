@@ -1,5 +1,18 @@
 # Changelog
 
+## Week 32 (2026) — Hybrid search (FTS5 + vector + RRF)
+
+- `search()` and `find_relevant()` now fuse full-text (BM25) and vector
+  KNN results via Reciprocal Rank Fusion (K=60) instead of using one
+  signal or falling back — keyword-only and semantic-only matches both
+  surface, ranked sanely. Without an embedding provider, behavior is
+  unchanged (FTS with LIKE fallback).
+- The FTS index is diacritics-insensitive (`remove_diacritics 2`):
+  "ernahrung" finds "Ernährung". Outdated indexes are detected via their
+  stored DDL and rebuilt automatically at startup from the note files.
+- Duplicate detection deliberately remains vector-only (fail-closed
+  June decision) — now pinned by a regression test.
+
 ## Week 24 (2026) — doctor catches dead Telegram polling
 
 `mycelos doctor` now detects the exact failure mode that was hard to
