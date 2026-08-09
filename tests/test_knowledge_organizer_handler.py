@@ -503,3 +503,24 @@ def test_execute_merge_returns_false_on_failure(merge_env) -> None:
     )
     assert edge is None  # no provenance edge for a merge that didn't happen
     assert kb.archived == []  # secondary must not be archived
+
+
+def test_execute_merge_rolls_back_edge_when_archive_fails(merge_env) -> None:
+    """Regression: the merged_from edge insert must not survive a failure that
+    happens AFTER it (e.g. archive_note raising). Without a transaction the
+    edge INSERT auto-commits immediately, leaving a provenance edge for a
+    merge that never completed."""
+    handler, storage, kb = merge_env
+
+    def _boom(path):
+        raise RuntimeError("archive failed")
+    kb.archive_note = _boom
+
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is False
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is None  # rolled back together with the failed archive
+    assert not any(e[0] == "organizer.merge" for e in handler._app.audit.events)

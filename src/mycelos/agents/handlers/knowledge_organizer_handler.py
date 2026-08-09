@@ -607,6 +607,11 @@ class KnowledgeOrganizerHandler:
             secondary_md = secondary_file.read_text(encoding="utf-8")
             secondary = parse_frontmatter(secondary_md)
 
+            # Filesystem write outside the DB transaction below: if a later
+            # step fails, this append is NOT rolled back (accepted
+            # limitation — file writes can't participate in a SQL
+            # transaction). Worst case the primary note has the secondary's
+            # content appended but the merge still reports failure.
             separator = f"\n\n---\n*Merged from: {secondary.title}*\n\n"
             kb.update(primary_path, content=separator + secondary.content, append=True)
 
@@ -619,16 +624,18 @@ class KnowledgeOrganizerHandler:
                 if merged_tags != primary_tags:
                     kb.update(primary_path, tags=merged_tags)
 
-            # Provenance edge BEFORE archiving: primary was merged from
-            # secondary. Survives archival; removed only if the secondary
-            # is hard-deleted (remove_note cleans its edges).
-            storage.execute(
-                "INSERT OR REPLACE INTO knowledge_links (from_path, to_path, kind) "
-                "VALUES (?, ?, 'merged_from')",
-                (primary_path, secondary_path),
-            )
-
-            kb.archive_note(secondary_path)
+            # Provenance edge BEFORE archiving, both inside one transaction:
+            # primary was merged from secondary. Survives archival; removed
+            # only if the secondary is hard-deleted (remove_note cleans its
+            # edges). If archive_note fails, the edge insert is rolled back
+            # too — a failed merge must leave no trace of a merged_from edge.
+            with storage.transaction():
+                storage.execute(
+                    "INSERT OR REPLACE INTO knowledge_links (from_path, to_path, kind) "
+                    "VALUES (?, ?, 'merged_from')",
+                    (primary_path, secondary_path),
+                )
+                kb.archive_note(secondary_path)
 
             self._audit(user_id, "organizer.merge", {
                 "primary": primary_path,
