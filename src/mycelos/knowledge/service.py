@@ -69,7 +69,7 @@ class KnowledgeBase:
         self._knowledge_dir = self._resolve_knowledge_dir(app)
         self._knowledge_dir.mkdir(parents=True, exist_ok=True)
         self._indexer = KnowledgeIndexer(app.storage)
-        self._indexer.ensure_fts()
+        self._indexer.ensure_fts(rebuild_content_provider=self._note_body)
         self._embedding_provider = self._init_embedding_provider()
         self._ensure_vec_table()
 
@@ -110,6 +110,18 @@ class KnowledgeBase:
             )
             raise PathTraversalError(f"Path escapes knowledge directory: {path}")
         return resolved
+
+    def _note_body(self, path: str) -> str:
+        """Read a note's markdown body by path, for FTS rebuild re-indexing.
+
+        Returns "" when the file is missing rather than raising, so a stale
+        knowledge_notes row (deleted on disk but not yet cleaned up) doesn't
+        abort the rebuild.
+        """
+        file_path = self._safe_path(path)
+        if not file_path.exists():
+            return ""
+        return parse_frontmatter(file_path.read_text(encoding="utf-8")).content
 
     def _init_embedding_provider(self):
         """Initialize the best available embedding provider."""

@@ -478,3 +478,29 @@ class TestSetReminderRemindAt:
 
         note = kb.read(path)
         assert note["remind_at"] is None
+
+
+# ─── FTS tokenizer: diacritics-insensitive search + self-detecting rebuild ─────
+
+
+def test_search_is_diacritics_insensitive(kb) -> None:
+    kb.write(title="Ernährung", content="Gemüse und Obst täglich", topic="notes")
+    hits = kb.search("ernahrung")
+    assert any(h["title"] == "Ernährung" for h in hits)
+    hits = kb.search("gemuse")
+    assert any(h["title"] == "Ernährung" for h in hits)
+
+
+def test_outdated_fts_index_is_rebuilt(app, kb) -> None:
+    # Simulate a pre-existing index built with the old tokenizer.
+    kb.write(title="Ernährung", content="Gemüse", topic="notes")
+    app.storage.execute("DROP TABLE knowledge_fts")
+    app.storage.executescript(
+        "CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, content, tags);"
+    )
+    # Old-tokenizer index is empty and diacritics-sensitive. Re-running the
+    # service bootstrap must detect the DDL mismatch and rebuild from files.
+    from mycelos.knowledge.service import KnowledgeBase
+    kb2 = KnowledgeBase(app)
+    hits = kb2.search("gemuse")
+    assert any(h["title"] == "Ernährung" for h in hits)
