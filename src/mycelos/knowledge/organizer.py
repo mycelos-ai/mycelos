@@ -15,6 +15,24 @@ SILENT_CONFIDENCE = 0.8
 DUPLICATE_THRESHOLD = 0.92
 DUPLICATE_TOP_K = 3
 
+AUTO_ACCEPT_CONFIDENCE = 0.95
+
+# Suggestion kinds that unattended acceptance may apply. Merge is
+# deliberately absent: it archives (and eventually hard-deletes) the
+# secondary note and always requires explicit user confirmation.
+_AUTO_ACCEPTABLE_KINDS = frozenset({"move", "new_topic", "link"})
+
+
+def should_auto_accept(kind: str, confidence: float) -> bool:
+    """Whether a stale pending suggestion may be applied unattended.
+
+    Fail-closed: unknown kinds and anything below the confidence floor
+    stay pending for the user to decide.
+    """
+    if kind not in _AUTO_ACCEPTABLE_KINDS:
+        return False
+    return confidence >= AUTO_ACCEPT_CONFIDENCE
+
 
 def _parse_iso(value: str | None) -> datetime | None:
     """Parse an ISO datetime string, always returning a timezone-aware datetime.

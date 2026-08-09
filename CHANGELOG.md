@@ -1,5 +1,28 @@
 # Changelog
 
+## Week 32 (2026)
+
+### Organizer auto-accept is fail-closed (P0 residuals)
+
+Closed the remaining gaps from the June claims audit:
+
+- **Confidence floor for unattended acceptance.** Stale (>24h) pending
+  suggestions are only auto-applied at confidence >= 0.95; below that
+  they stay in the inbox for the user. Merges remain excluded entirely.
+- **Acceptance now means success.** The background auto-accept, the
+  single-accept API, and accept-all no longer mark suggestions
+  "accepted" when the underlying action failed — failures stay pending
+  (API) or flip to a `failed` status and re-enter classification
+  (background), with an `organizer.auto_accept_failed` audit event.
+- **Accept-all never touches merges.** The blanket
+  `accept_all_pending()` safety net silently marked merge suggestions
+  accepted without executing them; accept-all now reports
+  `skipped_merges` and leaves them pending for individual confirmation.
+- **Merges are traceable.** A successful merge records a `merged_from`
+  edge (primary -> secondary) in the link graph before archiving the
+  secondary note, so it stays visible and restorable during the 30-day
+  tombstone window.
+
 ## Week 24 (2026) — doctor catches dead Telegram polling
 
 `mycelos doctor` now detects the exact failure mode that was hard to

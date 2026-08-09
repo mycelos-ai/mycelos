@@ -189,6 +189,19 @@ class TestKnowledgeBaseCRUD:
         result = kb.read(p2)
         assert p1 in result.get("backlinks", [])
 
+    def test_append_related_link_returns_true_when_written(self, kb):
+        p1 = kb.write("Note A", "aaa", type="note")
+        p2 = kb.write("Note B", "bbb", type="note")
+        assert kb.append_related_link(p1, p2) is True
+        result = kb.read(p1)
+        assert f"[[{p2}]]" in result["content"]
+
+    def test_append_related_link_returns_false_when_source_missing(self, kb):
+        """Fail-closed contract for the organizer's auto-accept path: a
+        stale suggestion whose source note was deleted must be reported as
+        a no-op, not silently treated as success."""
+        assert kb.append_related_link("notes/does-not-exist", "notes/other") is False
+
     def test_sync_relations_detects_wikilinks(self, kb):
         p1 = kb.write("Alpha", "aaa", type="note")
         p2 = kb.write("Beta", f"Links to [[{p1}]] and [[Alpha]]", type="note")
