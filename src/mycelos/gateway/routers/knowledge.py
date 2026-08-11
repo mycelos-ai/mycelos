@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mycelos.gateway.routers._helpers import resolve_user_id
+
+logger = logging.getLogger("mycelos.gateway")
 
 router = APIRouter()
 
@@ -421,21 +424,39 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
     groups = inbox.list_pending_by_topic()
     accepted = 0
     topics_created = 0
+    failed = 0
+    skipped_merges = 0
 
     for group in groups:
         if group.get("topic") is None:
-            # Link suggestions — just accept them
+            # Ungrouped suggestions: links are applied; merges are
+            # destructive and NEVER part of accept-all — the user
+            # confirms each one individually.
             for s in group["notes"]:
-                if s.get("kind") == "link":
+                if s.get("_synthetic"):
+                    continue
+                kind = s.get("kind")
+                if kind == "merge":
+                    skipped_merges += 1
+                    continue
+                if kind == "link":
                     try:
                         dst = s["payload"].get("to")
-                        if dst:
-                            kb.append_related_link(
-                                s["payload"].get("from") or s["note_path"], dst
-                            )
+                        if not dst:
+                            raise ValueError("link suggestion without target")
+                        ok = kb.append_related_link(
+                            s["payload"].get("from") or s["note_path"], dst
+                        )
                     except Exception:
-                        pass
-                if not s.get("_synthetic"):
+                        ok = False
+                    if not ok:
+                        failed += 1
+                        continue
+                    inbox.accept(s["id"])
+                    accepted += 1
+                else:
+                    # refine_type and unknown kinds: accepting is a
+                    # no-op action, mark handled.
                     inbox.accept(s["id"])
                     accepted += 1
             continue
@@ -448,34 +469,37 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
                 kb.create_topic(group["topic_name"])
                 topics_created += 1
             except Exception:
-                pass
+                pass  # may already exist; per-note moves below decide success
 
         for s in group["notes"]:
             if s.get("_synthetic"):
                 continue
             try:
+                ok = True
                 if s["kind"] in ("move", "new_topic"):
-                    target = topic_path
-                    if target:
-                        kb.move_to_topic(s["note_path"], target)
+                    ok = bool(topic_path) and bool(
+                        kb.move_to_topic(s["note_path"], topic_path)
+                    )
             except Exception:
-                pass
-            inbox.accept(s["id"])
-            accepted += 1
-
-    # Flip all remaining to accepted (safety net)
-    inbox.accept_all_pending()
+                ok = False
+            if ok:
+                inbox.accept(s["id"])
+                accepted += 1
+            else:
+                failed += 1  # stays pending — never record failure as success
 
     try:
         mycelos.audit.log(
             "organizer.accept_all",
             user_id=user_id,
-            details={"accepted": accepted, "topics_created": topics_created},
+            details={"accepted": accepted, "topics_created": topics_created,
+                     "failed": failed, "skipped_merges": skipped_merges},
         )
     except Exception:
         pass
 
-    return {"accepted": accepted, "topics_created": topics_created}
+    return {"accepted": accepted, "topics_created": topics_created,
+            "failed": failed, "skipped_merges": skipped_merges}
 
 
 @router.post("/api/organizer/suggestions/{sid}/accept")
@@ -494,35 +518,43 @@ async def organizer_accept(sid: int, request: Request) -> Any:
     try:
         if kind == "move":
             target = payload.get("target")
-            if target:
-                kb.move_to_topic(sug["note_path"], target)
+            if not target:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            if not kb.move_to_topic(sug["note_path"], target):
+                return JSONResponse({"error": "apply failed: note not found"}, status_code=500)
         elif kind == "new_topic":
             name = payload.get("name")
-            members = payload.get("members", [])
-            if name:
-                new_path = kb.create_topic(name)
-                for member in members:
-                    kb.move_to_topic(member, new_path)
+            if not name:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            new_path = kb.create_topic(name)
+            for member in payload.get("members", []):
+                if not kb.move_to_topic(member, new_path):
+                    return JSONResponse(
+                        {"error": f"apply failed: could not move {member}"}, status_code=500)
         elif kind == "link":
-            src = payload.get("from") or sug["note_path"]
             dst = payload.get("to")
-            if dst:
-                kb.append_related_link(src, dst)
+            if not dst:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            if not kb.append_related_link(payload.get("from") or sug["note_path"], dst):
+                return JSONResponse(
+                    {"error": "apply failed: source note missing"}, status_code=500)
         elif kind == "merge":
             duplicate_path = payload.get("duplicate_path")
-            if duplicate_path:
-                handler = mycelos.knowledge_organizer
-                handler._execute_merge(
-                    kb, mycelos.storage, sug["note_path"], duplicate_path,
-                    payload.get("similarity", 0.0),
-                    resolve_user_id(request),
-                )
+            if not duplicate_path:
+                return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
+            handler = mycelos.knowledge_organizer
+            ok = handler._execute_merge(
+                kb, mycelos.storage, sug["note_path"], duplicate_path,
+                payload.get("similarity", 0.0),
+                resolve_user_id(request),
+            )
+            if not ok:
+                return JSONResponse({"error": "apply failed: merge failed"}, status_code=500)
         elif kind == "refine_type":
             pass
     except Exception as exc:
-        return JSONResponse(
-            {"error": f"apply failed: {exc}"}, status_code=500
-        )
+        logger.warning("organizer accept failed for suggestion %s: %s", sid, exc)
+        return JSONResponse({"error": "apply failed"}, status_code=500)
 
     inbox.accept(sid)
     try:
@@ -576,6 +608,65 @@ async def knowledge_sync_relations(request: Request) -> dict[str, Any]:
     """Rebuild relation links from note content and frontmatter."""
     kb = request.app.state.mycelos.knowledge_base
     return kb.sync_relations()
+
+
+@router.get("/api/knowledge/export")
+async def knowledge_export(request: Request, format: str = "okf") -> Any:
+    """Export the knowledge tree as an OKF bundle (.zip download).
+
+    OKF is a boundary format (D1): notes are serialized at the boundary while
+    the internal Note + SQLite index stay authoritative. Scope: all
+    non-archived notes (D2). ``format`` currently accepts only ``okf``.
+    """
+    import io
+    import zipfile
+    from datetime import datetime, timezone
+
+    from fastapi.responses import Response
+
+    from mycelos.knowledge.okf_export import build_okf_bundle
+
+    if format != "okf":
+        return JSONResponse(
+            {"error": f"unsupported format: {format!r} (only 'okf')"},
+            status_code=422,
+        )
+
+    mycelos = request.app.state.mycelos
+    kb = mycelos.knowledge_base
+
+    notes = [
+        n for n in kb.list_notes(limit=5000)
+        if n.get("status") != "archived"
+    ]
+    bundle = build_okf_bundle(notes, kb.read)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for relpath, contents in bundle.items():
+            # Paths come from the DB (already slugified), but reject any
+            # absolute or traversal entry defensively before writing.
+            if relpath.startswith("/") or ".." in relpath.split("/"):
+                continue
+            zf.writestr(relpath, contents)
+
+    try:
+        mycelos.audit.log(
+            "knowledge.export",
+            user_id=resolve_user_id(request),
+            details={"format": "okf", "count": len(notes)},
+        )
+    except Exception:
+        pass
+
+    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="mycelos-okf-{date}.zip"',
+        },
+    )
 
 
 @router.post("/api/knowledge/import")

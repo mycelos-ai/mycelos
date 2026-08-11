@@ -34,11 +34,16 @@ class _FakeAudit:
 
 
 class _FakeKB:
-    def __init__(self, topics: list[str], duplicates: dict[str, list[dict]] | None = None) -> None:
+    def __init__(self, topics: list[str], duplicates: dict[str, list[dict]] | None = None,
+                 missing_sources: set[str] | None = None) -> None:
         self._topics = topics
         self._duplicates = duplicates or {}
         self.moved: list = []
+        self.linked: list = []
         self._knowledge_dir = Path("/fake")
+        # note paths whose file is treated as absent — mirrors
+        # KnowledgeBase.append_related_link's real no-op-on-missing-file behavior
+        self._missing_sources = missing_sources or set()
 
     def list_topics(self, limit: int = 100) -> list[dict]:
         return [{"path": t} for t in self._topics]
@@ -49,6 +54,12 @@ class _FakeKB:
 
     def find_duplicates(self, path: str, threshold: float = 0.92, top_k: int = 3) -> list[dict]:
         return self._duplicates.get(path, [])
+
+    def append_related_link(self, note_path: str, target_path: str) -> bool:
+        if note_path in self._missing_sources:
+            return False
+        self.linked.append((note_path, target_path))
+        return True
 
 
 class _FakeKBWithFiles(_FakeKB):
@@ -90,6 +101,23 @@ def storage(tmp_path: Path) -> SQLiteStorage:
     s = SQLiteStorage(tmp_path / "org.db")
     s.initialize()
     return s
+
+
+@pytest.fixture
+def handler_env(storage: SQLiteStorage):
+    """(handler, storage, kb, audit) with a seeded 'notes/a' note."""
+    kb = _FakeKB(topics=["topics/x"])
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    handler = KnowledgeOrganizerHandler(app)
+    _insert_note(
+        storage,
+        path="notes/a", title="Note A",
+        type="note", status="active", organizer_state="suggested",
+        created_at="2026-04-10T10:00:00Z",
+    )
+    return handler, storage, kb, app.audit
 
 
 def _insert_note(storage: SQLiteStorage, **fields) -> None:
@@ -289,7 +317,7 @@ def test_non_destructive_suggestions_still_auto_accept(storage: SQLiteStorage) -
                  created_at="2026-04-10T10:00:00Z")
     storage.execute(
         "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence, created_at, status) "
-        "VALUES (?, 'move', ?, 0.9, '2026-04-13 06:00:00', 'pending')",
+        "VALUES (?, 'move', ?, 0.97, '2026-04-13 06:00:00', 'pending')",
         ("notes/stray", json.dumps({"target": "topics/misc"})),
     )
 
@@ -336,3 +364,163 @@ def test_sweep_duplicates_finds_pairs(storage: SQLiteStorage) -> None:
     # Primary should be the older note
     assert pending["merge"][0]["note_path"] == "notes/a"
     assert pending["merge"][0]["payload"]["duplicate_path"] == "notes/b"
+
+
+def _stale_suggestion(storage, note_path: str, kind: str, payload: dict,
+                      confidence: float) -> int:
+    """Insert a pending suggestion backdated past the 24h staleness window."""
+    cursor = storage.execute(
+        "INSERT INTO organizer_suggestions "
+        "(note_path, kind, payload, confidence, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))",
+        (note_path, kind, json.dumps(payload), confidence),
+    )
+    return cursor.lastrowid
+
+
+def test_auto_accept_skips_low_confidence(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.5)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    assert kb.moved == []
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"  # left for the user, not applied
+
+
+def test_auto_accept_applies_high_confidence_move(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 1
+    assert ("notes/a", "topics/x") in kb.moved
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "accepted"
+
+
+def test_auto_accept_failure_is_not_marked_accepted(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    kb.move_to_topic = lambda path, target: False  # simulate missing note
+    sid = _stale_suggestion(storage, "notes/a", "move",
+                            {"target": "topics/x"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "failed"
+    note = storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert note["organizer_state"] == "pending"  # re-enters classification
+    assert any(e[0] == "organizer.auto_accept_failed" for e in audit.events)
+
+
+def test_auto_accept_merge_stays_pending(handler_env) -> None:
+    handler, storage, kb, audit = handler_env
+    sid = _stale_suggestion(storage, "notes/a", "merge",
+                            {"duplicate_path": "notes/b"}, confidence=1.0)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"
+
+
+def test_auto_accept_link_failure_when_source_missing(handler_env) -> None:
+    """Regression: append_related_link no-ops (returns False) when the
+    source note file was deleted between suggestion creation and the 24h
+    sweep. That must fail closed, not be recorded as accepted."""
+    handler, storage, kb, audit = handler_env
+    kb._missing_sources.add("notes/a")
+    sid = _stale_suggestion(storage, "notes/a", "link",
+                            {"to": "notes/b"}, confidence=0.97)
+    accepted = handler._auto_accept_stale(storage, kb, "u1")
+    assert accepted == 0
+    assert kb.linked == []
+    row = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "failed"
+    note = storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert note["organizer_state"] == "pending"
+    assert any(e[0] == "organizer.auto_accept_failed" for e in audit.events)
+
+
+@pytest.fixture
+def merge_env(storage: SQLiteStorage, tmp_path: Path):
+    """(handler, storage, kb) with 'notes/a' (primary) seeded in storage and
+    'notes/b' (secondary) present both in storage and on disk, mirroring
+    test_merge_is_never_auto_accepted's setup."""
+    _insert_note(storage, path="notes/a", title="Note A",
+                 type="note", status="active", organizer_state="ok",
+                 created_at="2026-04-10T10:00:00Z", tags="[]")
+    _insert_note(storage, path="notes/b", title="Note B",
+                 type="note", status="active", organizer_state="ok",
+                 created_at="2026-04-12T10:00:00Z", tags="[]")
+
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "b.md").write_text(
+        "---\ntitle: Note B\ntags: []\n---\nSecondary content here",
+        encoding="utf-8",
+    )
+
+    kb = _FakeKBWithFiles(topics=[], files={})
+    kb._knowledge_dir = tmp_path
+
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    handler = KnowledgeOrganizerHandler(app)
+    return handler, storage, kb
+
+
+def test_execute_merge_returns_true_and_writes_merged_from_edge(merge_env) -> None:
+    handler, storage, kb = merge_env  # kb: _FakeKBWithFiles with notes/b on "disk"
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is True
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is not None and edge["kind"] == "merged_from"
+    assert "notes/b" in kb.archived
+
+
+def test_execute_merge_returns_false_on_failure(merge_env) -> None:
+    handler, storage, kb = merge_env
+    def _boom(path, **kwargs):
+        raise RuntimeError("disk full")
+    kb.update = _boom
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is False
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is None  # no provenance edge for a merge that didn't happen
+    assert kb.archived == []  # secondary must not be archived
+
+
+def test_execute_merge_rolls_back_edge_when_archive_fails(merge_env) -> None:
+    """Regression: the merged_from edge insert must not survive a failure that
+    happens AFTER it (e.g. archive_note raising). Without a transaction the
+    edge INSERT auto-commits immediately, leaving a provenance edge for a
+    merge that never completed."""
+    handler, storage, kb = merge_env
+
+    def _boom(path):
+        raise RuntimeError("archive failed")
+    kb.archive_note = _boom
+
+    ok = handler._execute_merge(kb, storage, "notes/a", "notes/b", 0.95, "u1")
+    assert ok is False
+    edge = storage.fetchone(
+        "SELECT kind FROM knowledge_links WHERE from_path=? AND to_path=?",
+        ("notes/a", "notes/b"),
+    )
+    assert edge is None  # rolled back together with the failed archive
+    assert not any(e[0] == "organizer.merge" for e in handler._app.audit.events)

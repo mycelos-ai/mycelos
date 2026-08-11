@@ -1,6 +1,8 @@
 # Changelog
 
-## Week 32 (2026) — Hybrid search (FTS5 + vector + RRF)
+## Week 32 (2026)
+
+### Hybrid search (FTS5 + vector + RRF)
 
 - `search()` and `find_relevant()` now fuse full-text (BM25) and vector
   KNN results via Reciprocal Rank Fusion (K=60) instead of using one
@@ -12,6 +14,50 @@
   stored DDL and rebuilt automatically at startup from the note files.
 - Duplicate detection deliberately remains vector-only (fail-closed
   June decision) — now pinned by a regression test.
+
+### Organizer auto-accept is fail-closed (P0 residuals)
+
+Closed the remaining gaps from the June claims audit:
+
+- **Confidence floor for unattended acceptance.** Stale (>24h) pending
+  suggestions are only auto-applied at confidence >= 0.95; below that
+  they stay in the inbox for the user. Merges remain excluded entirely.
+- **Acceptance now means success.** The background auto-accept, the
+  single-accept API, and accept-all no longer mark suggestions
+  "accepted" when the underlying action failed — failures stay pending
+  (API) or flip to a `failed` status and re-enter classification
+  (background), with an `organizer.auto_accept_failed` audit event.
+- **Accept-all never touches merges.** The blanket
+  `accept_all_pending()` safety net silently marked merge suggestions
+  accepted without executing them; accept-all now reports
+  `skipped_merges` and leaves them pending for individual confirmation.
+- **Merges are traceable.** A successful merge records a `merged_from`
+  edge (primary -> secondary) in the link graph before archiving the
+  secondary note, so it stays visible and restorable during the 30-day
+  tombstone window.
+
+## Week 25 (2026) — OKF export (proof-of-concept)
+
+Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
+bundle. OKF is a **boundary format**: the internal Note + SQLite index stay
+authoritative — only the serializer at the boundary knows about OKF, so a spec
+bump touches one file.
+
+- **New serializer** `mycelos/knowledge/okf_export.py`. Maps each note to OKF
+  frontmatter (required `type`, plus additive `description`, `timestamp`,
+  `resource` aliases) while preserving Mycelos-specific keys so the bundle can
+  round-trip back. The OKF directory layout reflects topic membership
+  (`parent_path`), not the internal file path, and synthesizes a navigation
+  `index.md` at the bundle root and per topic directory.
+- **CLI:** `mycelos knowledge export --okf <dir>` writes the bundle to a
+  directory (`--force` to overwrite a non-empty target).
+- **API:** `GET /api/knowledge/export?format=okf` streams the bundle as a
+  `.zip` download. Non-archived notes only; unknown format → 422.
+- Export is read-only — no config generation — but logs a `knowledge.export`
+  audit event for provenance.
+
+Scope (PoC): export only (import is a later extension), text notes only (no
+binary document blobs), no `log.md` synthesis.
 
 ## Week 24 (2026) — doctor catches dead Telegram polling
 
@@ -29,6 +75,7 @@ thread never started.
 - `mycelos doctor --fix` prints the restart command and the
   `MYCELOS_BOOTSTRAP_WINDOW` knob for slow hosts.
 - Documented in the Raspberry Pi setup guide's troubleshooting section.
+
 
 ## Week 24 (2026) — UX review: density & clarity
 
