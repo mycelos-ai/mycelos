@@ -102,9 +102,23 @@ model switch**, not a greenfield build. The four real defects:
 - Target model: **`intfloat/multilingual-e5-small`** (384d — same dimension as
   today, but a different vector space, so a full re-embed is required anyway).
 - Runtime stays **sentence-transformers** (already a dependency, already
-  installed, works on the Pi). No fastembed/ONNX migration — that was the
-  first draft's assumption when no provider existed; switching runtimes is a
-  separate decision, not needed for the model change.
+  installed, works on the Pi). No fastembed/ONNX migration.
+
+  **Why not fastembed (evaluated and rejected 2026-08-12).** The obvious
+  objection to sentence-transformers is that it drags in PyTorch (~2 GB) for
+  CPU-only inference. fastembed (ONNX, no torch) would avoid that — but its
+  model catalog does not contain `multilingual-e5-small`. It offers only
+  `multilingual-e5-large` (1024d, **2.24 GB** — larger than the torch stack
+  it would save, and unusable on a Pi) or
+  `paraphrase-multilingual-MiniLM-L12-v2` (384d, 220 MB, but a 2019 model
+  that is clearly weaker at retrieval than E5, especially on the
+  query-vs-document asymmetry E5's prefixes exist for). The trade was
+  therefore "save ~2 GB of install, lose search quality", not "same quality,
+  less weight". Decided against, because the deployment constraints that
+  motivated it do not bite: the Pi has 8 GB RAM and its image is built
+  natively on ARM (no cross-compile wheel problems). Image size grows by the
+  torch stack — accepted knowingly. Revisit only if fastembed adds
+  `multilingual-e5-small`, or if a smaller deployment target appears.
 - E5 requires role prefixes: documents get `"passage: "`, queries get
   `"query: "`. The `EmbeddingProvider` interface gains
   `compute(text, *, is_query: bool = False)` and the batch equivalent; the
