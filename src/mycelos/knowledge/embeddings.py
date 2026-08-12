@@ -157,23 +157,35 @@ def select_provider_name(
     return "none"
 
 
-def get_embedding_provider(openai_key: str | None = None,
-                            proxy_client: Any = None,
-                            eu_mode: bool = False) -> EmbeddingProvider:
-    """Get the best available embedding provider.
+def get_embedding_provider(
+    *,
+    explicit: str | None = None,
+    eu_mode: bool = False,
+    has_openai_credential: bool = False,
+    proxy_client: Any = None,
+) -> EmbeddingProvider:
+    """Build the provider the configuration actually allows.
 
-    When ``eu_mode`` is on, the OpenAI provider (which POSTs note text to
-    api.openai.com) is never selected — local embeddings or FTS5-only.
+    Raises EUModeViolation when the configuration explicitly demands a
+    non-EU provider under EU mode. Any other unmet prerequisite degrades
+    to FallbackProvider (FTS-only search) — never a network download.
     """
-    if openai_key and proxy_client and not eu_mode:
+    choice = select_provider_name(
+        explicit, eu_mode, bool(has_openai_credential and proxy_client),
+        local_model_present(),
+    )
+    if choice == "openai":
         return OpenAIEmbeddingProvider(proxy_client)
-    try:
+    if choice == "local":
         provider = LocalEmbeddingProvider()
-        provider.load()
+        try:
+            provider.load()
+        except Exception as e:
+            logger.warning("Local embedding model unavailable (%s) — FTS5 only", e)
+            return FallbackProvider()
         return provider
-    except Exception as e:
-        logger.info("No embedding provider available (%s) — using FTS5 only", e)
-        return FallbackProvider()
+    logger.info("No embedding provider selected — search uses FTS5 only")
+    return FallbackProvider()
 
 
 def serialize_embedding(embedding: list[float]) -> bytes:

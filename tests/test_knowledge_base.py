@@ -282,9 +282,9 @@ class TestKnowledgeBaseCRUD:
 class TestEmbeddings:
     def test_embedding_provider_fallback(self):
         from mycelos.knowledge.embeddings import get_embedding_provider
-        provider = get_embedding_provider(openai_key=None)
-        # Without sentence-transformers installed, returns FallbackProvider
-        # With it installed, returns LocalEmbeddingProvider
+        provider = get_embedding_provider(has_openai_credential=False)
+        # Without the local model installed, returns FallbackProvider.
+        # With it installed, returns LocalEmbeddingProvider.
         assert provider.name in ("local", "none")
 
     def test_serialize_deserialize_embedding(self):
@@ -326,6 +326,7 @@ class _StubEmbeddingProvider:
 
     def __init__(self, vectors: dict[str, list[float]]):
         self._vectors = vectors
+        self.query_flags: list[bool] = []
 
     def _vec(self, text: str) -> list[float]:
         for key, v in self._vectors.items():
@@ -333,10 +334,12 @@ class _StubEmbeddingProvider:
                 return v
         return [0.0, 0.0, 1.0]
 
-    def compute(self, text: str) -> list[float]:
+    def compute(self, text: str, *, is_query: bool = False) -> list[float]:
+        self.query_flags.append(is_query)
         return self._vec(text)
 
-    def compute_batch(self, texts):
+    def compute_batch(self, texts, *, is_query: bool = False):
+        self.query_flags.append(is_query)
         return [self._vec(t) for t in texts]
 
 
@@ -354,6 +357,21 @@ def _kb_with_stub_embeddings(app, vectors):
         pass
     kb._ensure_vec_table()
     return kb
+
+
+def _kb_with_recording_stub(app):
+    """Build a KnowledgeBase with a stub provider that records the
+    ``is_query`` flag of every compute()/compute_batch() call."""
+    kb = _kb_with_stub_embeddings(app, {"Kaffee": [1.0, 0.0, 0.0]})
+    return kb, kb._embedding_provider
+
+
+def test_search_requests_query_side_embedding(app) -> None:
+    kb, stub = _kb_with_recording_stub(app)
+    kb.search("Kaffee")
+    assert stub.query_flags and all(stub.query_flags), (
+        "search must embed the query with is_query=True"
+    )
 
 
 class TestVectorSimilarityCalibration:

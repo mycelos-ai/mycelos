@@ -143,23 +143,53 @@ class KnowledgeBase:
         return parse_frontmatter(file_path.read_text(encoding="utf-8")).content
 
     def _init_embedding_provider(self):
-        """Initialize the best available embedding provider."""
-        from mycelos.knowledge.embeddings import get_embedding_provider
-        openai_key = None
-        try:
-            if getattr(self._app, 'proxy_client', None):
-                # Check if OpenAI credential exists via a lightweight call
-                openai_key = "available"  # proxy handles the actual key
-        except Exception:
-            pass
-        proxy = getattr(self._app, 'proxy_client', None)
+        """Gather configuration facts and let embeddings.py decide."""
+        from mycelos.knowledge.embeddings import (
+            EUModeViolation, FallbackProvider, get_embedding_provider,
+        )
+        proxy = getattr(self._app, "proxy_client", None)
+        has_credential = self._has_openai_credential(proxy)
         eu_mode = False
         try:
             from mycelos.llm.eu_mode import get_eu_mode
             eu_mode = get_eu_mode(self._app, "default")
         except Exception:
             pass
-        return get_embedding_provider(openai_key=openai_key, proxy_client=proxy, eu_mode=eu_mode)
+        explicit = None
+        try:
+            row = self._app.storage.fetchone(
+                "SELECT value FROM knowledge_config WHERE key = 'embedding_provider_setting'"
+            )
+            explicit = row["value"] if row else None
+        except Exception:
+            pass
+        try:
+            return get_embedding_provider(
+                explicit=explicit, eu_mode=eu_mode,
+                has_openai_credential=has_credential, proxy_client=proxy,
+            )
+        except EUModeViolation as e:
+            logger.error("Embedding configuration refused: %s", e)
+            return FallbackProvider()
+
+    @staticmethod
+    def _has_openai_credential(proxy) -> bool:
+        """Ask the credential proxy whether an OpenAI credential is actually
+        stored — never inferred from the proxy object merely existing.
+
+        Uses the same metadata-only ``credential_list()`` RPC that
+        ``DelegatingCredentialProxy.list_services`` uses elsewhere, so the
+        plaintext key never has to leave the SecurityProxy container. Fails
+        closed: any exception (proxy unreachable, malformed response, no
+        proxy at all) means "no credential".
+        """
+        if proxy is None:
+            return False
+        try:
+            credentials = proxy.credential_list()
+            return any(c.get("service") == "openai" for c in credentials)
+        except Exception:
+            return False
 
     def _ensure_vec_table(self):
         """Create sqlite-vec virtual table if provider has embeddings.
@@ -1132,11 +1162,14 @@ class KnowledgeBase:
         is available or the vector query fails — never falls back to keyword
         search, so callers (e.g. duplicate detection) can rely on the
         threshold actually being honored.
+
+        Always embeds ``text`` as a query (E5 ``query: `` prefix) — every
+        caller passes search/duplicate-lookup text, never a document body.
         """
         if self._embedding_provider.dimension == 0:
             return []
         try:
-            embedding = self._embedding_provider.compute(text)
+            embedding = self._embedding_provider.compute(text, is_query=True)
             if not embedding:
                 return []
             from mycelos.knowledge.embeddings import serialize_embedding

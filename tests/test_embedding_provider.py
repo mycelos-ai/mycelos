@@ -85,7 +85,9 @@ def test_get_embedding_provider_loads_local_when_model_present(monkeypatch) -> N
 
     monkeypatch.setattr(LocalEmbeddingProvider, "load", _fake_load)
 
-    provider = get_embedding_provider(openai_key=None, proxy_client=None, eu_mode=False)
+    provider = get_embedding_provider(
+        has_openai_credential=False, proxy_client=None, eu_mode=False
+    )
 
     assert isinstance(provider, LocalEmbeddingProvider)
     assert not isinstance(provider, FallbackProvider)
