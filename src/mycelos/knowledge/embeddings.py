@@ -98,11 +98,16 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     def compute(self, text: str, *, is_query: bool = False) -> list[float]:
         model = self.load()
         prefix = _QUERY_PREFIX if is_query else _PASSAGE_PREFIX
+        # SentenceTransformer.encode declares list[Tensor] | ndarray | Tensor;
+        # with the default convert_to_numpy=True (unchanged here) a single
+        # string input always yields a 1-D ndarray, so list(...) is floats.
         return list(model.encode(prefix + text))
 
     def compute_batch(self, texts: list[str], *, is_query: bool = False) -> list[list[float]]:
         model = self.load()
         prefix = _QUERY_PREFIX if is_query else _PASSAGE_PREFIX
+        # Same convert_to_numpy=True default: a list input yields a 2-D
+        # ndarray, so each row converts cleanly to list[float].
         vectors = model.encode([prefix + t for t in texts])
         return [list(v) for v in vectors]
 
@@ -164,7 +169,7 @@ def get_embedding_provider(openai_key: str | None = None,
         return OpenAIEmbeddingProvider(proxy_client)
     try:
         provider = LocalEmbeddingProvider()
-        provider._load_model()
+        provider.load()
         return provider
     except Exception as e:
         logger.info("No embedding provider available (%s) — using FTS5 only", e)

@@ -5,8 +5,10 @@ import pytest
 from mycelos.knowledge.embeddings import (
     LOCAL_MODEL_DIMENSION,
     LOCAL_MODEL_NAME,
+    FallbackProvider,
     LocalEmbeddingProvider,
     OpenAIEmbeddingProvider,
+    get_embedding_provider,
 )
 
 
@@ -61,6 +63,33 @@ def test_load_never_downloads_when_model_absent(tmp_path, monkeypatch) -> None:
     provider = LocalEmbeddingProvider()
     with pytest.raises(FileNotFoundError):
         provider.load()
+
+
+def test_get_embedding_provider_loads_local_when_model_present(monkeypatch) -> None:
+    # Regression: get_embedding_provider() must call the current load()
+    # entry point. It previously called the removed _load_model(), which
+    # raised AttributeError, got swallowed by the bare except, and silently
+    # downgraded every caller to FallbackProvider even with the model
+    # installed.
+    import mycelos.knowledge.embeddings as emb
+
+    monkeypatch.setattr(emb, "local_model_present", lambda: True)
+
+    fake = _FakeEncoder()
+    calls: list = []
+
+    def _fake_load(self):
+        calls.append(self)
+        self._model = fake
+        return fake
+
+    monkeypatch.setattr(LocalEmbeddingProvider, "load", _fake_load)
+
+    provider = get_embedding_provider(openai_key=None, proxy_client=None, eu_mode=False)
+
+    assert isinstance(provider, LocalEmbeddingProvider)
+    assert not isinstance(provider, FallbackProvider)
+    assert calls, "LocalEmbeddingProvider.load() was not called"
 
 
 def test_openai_provider_accepts_and_ignores_is_query() -> None:
