@@ -38,6 +38,13 @@ def test_credential_present_outranks_local() -> None:
     assert select_provider_name(None, False, True, True) == "openai"
 
 
+def test_explicit_openai_without_credential_falls_closed() -> None:
+    # Asking for OpenAI without a real credential must degrade, not select
+    # a provider whose every compute() would silently return [].
+    assert select_provider_name("openai", False, False, True) == "none"
+    assert select_provider_name("openai", False, False, False) == "none"
+
+
 def test_unknown_explicit_value_is_ignored_not_trusted() -> None:
     # Garbage in config must not select a provider by accident.
     assert select_provider_name("gpt9", False, False, True) == "local"
