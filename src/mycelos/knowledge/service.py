@@ -238,10 +238,14 @@ class KnowledgeBase:
 
             # A mismatch in ANY stamp — including a same-dimension model
             # swap that leaves stored_dim untouched — invalidates the
-            # existing vectors.
+            # existing vectors. This also covers the none→provider
+            # transition (stored_dim is None on a fresh install, or on a
+            # KB that only ever had FallbackProvider): missing stamps must
+            # trigger the backfill too, or notes written before `mycelos
+            # embeddings setup` never get vectors. A genuinely fresh KB
+            # with zero notes just backfills zero notes — harmless.
             changed = (
-                stored_dim is not None
-                and (stored_dim != dim or stored_provider != provider_name or stored_model != model_id)
+                stored_dim != dim or stored_provider != provider_name or stored_model != model_id
             )
             if changed:
                 logger.info(

@@ -7,7 +7,6 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-from sentence_transformers import SentenceTransformer
 
 from mycelos.app import App
 from mycelos.cli import default_data_dir
@@ -50,6 +49,13 @@ def embeddings_cmd():
 @click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 def embeddings_setup(yes: bool, data_dir: Path) -> None:
     """Download the local embedding model into the Mycelos data directory."""
+    # Lazy import: sentence-transformers only ships in the optional
+    # `embeddings` extra (pyproject.toml). Importing it at module scope
+    # would make every `mycelos` command — including `serve` — fail with
+    # ModuleNotFoundError in images that don't install that extra (e.g.
+    # the production Dockerfile installs ".[agent-toolkit]" only).
+    from sentence_transformers import SentenceTransformer
+
     _bind_data_dir(data_dir)
     target = _target_dir()
 

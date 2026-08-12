@@ -706,3 +706,34 @@ def test_unchanged_stamps_do_not_reembed(app, monkeypatch) -> None:
     _kb_construct_with_stub(app, monkeypatch, stub_b)
 
     assert stub_b.batch_calls == 0
+
+
+def test_none_to_provider_transition_backfills(app, monkeypatch) -> None:
+    """Fresh install with no provider → notes written → `embeddings setup`
+    installs a model → next KnowledgeBase construction must backfill every
+    existing note, not just skip because no stamp was ever recorded.
+
+    This is the feature's primary onboarding flow: a KB starts with
+    FallbackProvider (dimension 0, no vec table, no stamps at all), the
+    user writes notes, then a real provider becomes available on the next
+    construction (a fresh process, e.g. after `mycelos embeddings setup`).
+    """
+    from mycelos.knowledge.embeddings import FallbackProvider
+
+    # First construction: no provider at all, matching a fresh install.
+    kb = _kb_construct_with_stub(app, monkeypatch, FallbackProvider())
+    kb.write(title="Eins", content="inhalt", topic="notes")
+    kb.write(title="Zwei", content="inhalt", topic="notes")
+
+    # A real provider now appears (e.g. `mycelos embeddings setup` ran and
+    # the process restarted) — construct a fresh KnowledgeBase against the
+    # same storage, exercising the exact none→provider code path.
+    stub = _StubEmbeddingProvider({"Kaffee": [1.0, 0.0, 0.0]}, model_id="stub-a")
+    _kb_construct_with_stub(app, monkeypatch, stub)
+
+    rows = app.storage.fetchone("SELECT COUNT(*) AS c FROM knowledge_vec")
+    notes = app.storage.fetchone(
+        "SELECT COUNT(*) AS c FROM knowledge_notes WHERE type != 'topic'"
+    )
+    assert rows["c"] == notes["c"] == 2
+    assert stub.batch_calls >= 1
