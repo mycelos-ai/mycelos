@@ -16,14 +16,20 @@ router = APIRouter()
 
 
 @router.get("/api/knowledge/notes")
-async def knowledge_notes(
+def knowledge_notes(
     request: Request,
     query: str | None = None,
     type: str | None = None,
     status: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """List/search notes for the web knowledge view."""
+    """List/search notes for the web knowledge view.
+
+    Sync def (not async): kb.search()'s vector arm may block on a network
+    call (OpenAIEmbeddingProvider.compute -> proxy.http_post, up to 30s),
+    and this endpoint is hit per debounced typeahead keystroke. A plain
+    def keeps FastAPI running it in its threadpool, off the event loop.
+    """
     kb = request.app.state.mycelos.knowledge_base
     if query:
         return kb.search(query=query, type=type, limit=limit)

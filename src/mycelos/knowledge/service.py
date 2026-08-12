@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from mycelos.knowledge import ranking
 from mycelos.knowledge.indexer import KnowledgeIndexer
 from mycelos.knowledge.note import Note, parse_frontmatter, render_note
 from mycelos.knowledge.topic_map import build_topic_mermaid
@@ -33,6 +34,24 @@ def _parse_source(raw: str | None) -> dict | None:
 def _now() -> str:
     """Return current UTC time as ISO 8601 string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _filter_results(
+    results: list[dict], type: str | None = None, tags: list[str] | None = None
+) -> list[dict]:
+    """Apply the same type/tags semantics as ``KnowledgeIndexer.search_fts``
+    to a result list post-hoc — used for the vector arm, which has no SQL
+    WHERE clause of its own.
+
+    Mirrors search_fts exactly: type is filtered (equality), tags is
+    accepted for interface symmetry but not filtered — search_fts declares
+    a ``tags`` parameter yet never applies it in its SQL, so real tag
+    filtering does not exist in this codebase today. Replicating that
+    (rather than inventing new semantics here) keeps both arms consistent.
+    """
+    if type:
+        results = [r for r in results if r.get("type") == type]
+    return results
 
 
 def bucket_note(note: dict) -> str:
@@ -69,7 +88,7 @@ class KnowledgeBase:
         self._knowledge_dir = self._resolve_knowledge_dir(app)
         self._knowledge_dir.mkdir(parents=True, exist_ok=True)
         self._indexer = KnowledgeIndexer(app.storage)
-        self._indexer.ensure_fts()
+        self._indexer.ensure_fts(rebuild_content_provider=self._note_body)
         self._embedding_provider = self._init_embedding_provider()
         self._ensure_vec_table()
 
@@ -110,6 +129,18 @@ class KnowledgeBase:
             )
             raise PathTraversalError(f"Path escapes knowledge directory: {path}")
         return resolved
+
+    def _note_body(self, path: str) -> str:
+        """Read a note's markdown body by path, for FTS rebuild re-indexing.
+
+        Returns "" when the file is missing rather than raising, so a stale
+        knowledge_notes row (deleted on disk but not yet cleaned up) doesn't
+        abort the rebuild.
+        """
+        file_path = self._safe_path(path)
+        if not file_path.exists():
+            return ""
+        return parse_frontmatter(file_path.read_text(encoding="utf-8")).content
 
     def _init_embedding_provider(self):
         """Initialize the best available embedding provider."""
@@ -507,12 +538,25 @@ class KnowledgeBase:
         tags: list[str] | None = None,
         limit: int = 10,
     ) -> list[dict]:
-        """Full-text search via FTS5 with LIKE fallback for fuzzy matching."""
-        results = self._indexer.search_fts(query, type=type, tags=tags, limit=limit)
-        if results:
-            return results
-        # Fallback: LIKE search on title and tags (catches typos)
-        return self._indexer.search_like(query, type=type, limit=limit)
+        """Hybrid search: FTS5 and vector KNN fused via RRF.
+
+        Degrades to FTS-only when no embedding provider is configured, and
+        to the LIKE fallback when both arms come back empty (typo net).
+        """
+        fts_results = self._indexer.search_fts(
+            query, type=type, tags=tags, limit=limit * 2
+        )
+        vector_results: list[dict] = []
+        if self._embedding_provider.dimension > 0:
+            candidates = self._find_relevant_by_vector(
+                query, top_k=limit * 2, threshold=0.25
+            )
+            vector_results = _filter_results(candidates, type=type, tags=tags)
+        if not fts_results and not vector_results:
+            return self._indexer.search_like(query, type=type, limit=limit)
+        if not vector_results:
+            return fts_results[:limit]
+        return ranking.rrf_fuse([fts_results, vector_results], limit=limit)
 
     # ─── List ──────────────────────────────────────────────────────────────────
 
@@ -1129,18 +1173,25 @@ class KnowledgeBase:
         top_k: int = 5,
         threshold: float = 0.7,
     ) -> list[dict]:
-        """Find notes relevant to the given text.
+        """Find notes relevant to the given text — hybrid FTS+vector via RRF.
 
-        Uses vector search (sqlite-vec) when an embedding provider is available,
-        falling back to FTS5 when vectors yield nothing or are unavailable.
-        Relevance is non-destructive, so the keyword fallback is appropriate
-        here (unlike duplicate detection, which must not fall back).
+        ``threshold`` bounds the vector arm's cosine similarity only; FTS
+        matches join through rank fusion regardless. Degrades to FTS-only
+        when no embedding provider is available. Relevance is
+        non-destructive, so keyword participation is appropriate here
+        (unlike duplicate detection, which stays vector-only).
         """
-        results = self._find_relevant_by_vector(text, top_k=top_k, threshold=threshold)
-        if results:
-            return results
-        # Fallback to FTS5
-        return self.search(text, limit=top_k)
+        vector_results: list[dict] = []
+        if self._embedding_provider.dimension > 0:
+            vector_results = self._find_relevant_by_vector(
+                text, top_k=top_k * 2, threshold=threshold
+            )
+        fts_results = self._indexer.search_fts(text, limit=top_k * 2)
+        if not vector_results:
+            return fts_results[:top_k]
+        if not fts_results:
+            return vector_results[:top_k]
+        return ranking.rrf_fuse([fts_results, vector_results], limit=top_k)
 
     def find_duplicates(
         self,

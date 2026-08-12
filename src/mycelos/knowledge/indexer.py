@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mycelos.storage.database import SQLiteStorage
+
+logger = logging.getLogger("mycelos.knowledge")
+
+# FTS5 tokenizer: unicode61 with full diacritics folding, so "ernahrung"
+# matches "Ernährung" and "gemuse" matches "Gemüse".
+FTS_TOKENIZER = "unicode61 remove_diacritics 2"
 
 
 class KnowledgeIndexer:
@@ -16,20 +23,59 @@ class KnowledgeIndexer:
     def __init__(self, storage: "SQLiteStorage") -> None:
         self._storage = storage
 
-    def ensure_fts(self) -> None:
-        """Create FTS5 table if it doesn't exist.
+    def ensure_fts(
+        self, rebuild_content_provider: Callable[[str], str] | None = None
+    ) -> bool:
+        """Create the FTS5 table, upgrading the tokenizer when outdated.
 
         Uses a standalone FTS5 table (no content= backing) so that INSERT/DELETE
         operations work without SQLite trigger complications.
+
+        The stored DDL in sqlite_master is self-describing: when it lacks the
+        current tokenizer clause (table missing, or built with an older
+        tokenizer), the table is (re)created. Returns True when a (re)build
+        happened, so the caller knows to re-index. ``rebuild_content_provider
+        (path) -> str`` supplies a note's body text during re-indexing (notes
+        on disk are the content source of truth — the old FTS rows are
+        dropped, not reused).
         """
-        try:
-            self._storage.execute("SELECT 1 FROM knowledge_fts LIMIT 0")
-        except Exception:
-            self._storage.executescript("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-                    title, content, tags
-                );
-            """)
+        row = self._storage.fetchone(
+            "SELECT sql FROM sqlite_master WHERE name = 'knowledge_fts'"
+        )
+        if row and "remove_diacritics 2" in (row["sql"] or ""):
+            return False
+
+        self._storage.execute("DROP TABLE IF EXISTS knowledge_fts")
+        self._storage.executescript(f"""
+            CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+                title, content, tags,
+                tokenize = '{FTS_TOKENIZER}'
+            );
+        """)
+
+        if rebuild_content_provider is not None:
+            notes = self._storage.fetchall(
+                "SELECT id, path, title, tags FROM knowledge_notes"
+            )
+            for note in notes:
+                content = ""
+                try:
+                    content = rebuild_content_provider(note["path"]) or ""
+                except Exception:
+                    logger.warning(
+                        "FTS rebuild: could not read note body for %s", note["path"]
+                    )
+                self._storage.execute(
+                    "INSERT INTO knowledge_fts(rowid, title, content, tags) "
+                    "VALUES (?, ?, ?, ?)",
+                    (note["id"], note["title"], content, _tags_string(note["tags"])),
+                )
+            logger.info(
+                "FTS index rebuilt (%d notes, tokenizer: %s)",
+                len(notes),
+                FTS_TOKENIZER,
+            )
+        return True
 
     def index_note(
         self,

@@ -491,3 +491,148 @@ class TestSetReminderRemindAt:
 
         note = kb.read(path)
         assert note["remind_at"] is None
+
+
+# ─── FTS tokenizer: diacritics-insensitive search + self-detecting rebuild ─────
+
+
+def test_search_is_diacritics_insensitive(kb) -> None:
+    kb.write(title="Ernährung", content="Gemüse und Obst täglich", topic="notes")
+    hits = kb.search("ernahrung")
+    assert any(h["title"] == "Ernährung" for h in hits)
+    hits = kb.search("gemuse")
+    assert any(h["title"] == "Ernährung" for h in hits)
+
+
+def test_outdated_fts_index_is_rebuilt(app, kb) -> None:
+    # Simulate a pre-existing index built with the old tokenizer.
+    kb.write(title="Ernährung", content="Gemüse", topic="notes")
+    app.storage.execute("DROP TABLE knowledge_fts")
+    app.storage.executescript(
+        "CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, content, tags);"
+    )
+    # Old-tokenizer index is empty and diacritics-sensitive. Re-running the
+    # service bootstrap must detect the DDL mismatch and rebuild from files.
+    from mycelos.knowledge.service import KnowledgeBase
+    kb2 = KnowledgeBase(app)
+    hits = kb2.search("gemuse")
+    assert any(h["title"] == "Ernährung" for h in hits)
+
+
+def test_rebuilt_fts_tags_match_normal_index_tokenization(app, kb) -> None:
+    """Tags re-indexed by ensure_fts's rebuild path must be tokenized the
+    same way index_note tokenizes them (space-separated, not raw JSON) —
+    otherwise tag search recall depends on which path last touched a note."""
+    kb.write(
+        title="Kaffeeprojekt",
+        content="Notizen",
+        tags=["projekt", "kaffee"],
+        topic="notes",
+    )
+    path = kb.list_notes(type="note")[0]["path"]
+    note_id = app.storage.fetchone(
+        "SELECT id FROM knowledge_notes WHERE path = ?", (path,)
+    )["id"]
+
+    # Capture how the normal index_note path tokenizes these tags, then
+    # force a rebuild (old-tokenizer table, like test_outdated_fts_index_is_rebuilt).
+    normal_row = app.storage.fetchone(
+        "SELECT tags FROM knowledge_fts WHERE rowid = ?", (note_id,)
+    )
+    app.storage.execute("DROP TABLE knowledge_fts")
+    app.storage.executescript(
+        "CREATE VIRTUAL TABLE knowledge_fts USING fts5(title, content, tags);"
+    )
+    from mycelos.knowledge.service import KnowledgeBase
+    kb2 = KnowledgeBase(app)
+
+    hits = kb2.search("projekt")
+    assert any(h["title"] == "Kaffeeprojekt" for h in hits)
+
+    rebuilt_row = app.storage.fetchone(
+        "SELECT tags FROM knowledge_fts WHERE rowid = ?", (note_id,)
+    )
+    assert rebuilt_row["tags"] == normal_row["tags"] == "projekt kaffee"
+
+
+class TestHybridSearch:
+    """Task 3: search() fuses the FTS and vector arms via RRF."""
+
+    def test_search_fuses_fts_and_vector_results(self, app) -> None:
+        # Both notes' embed text ("title content") contains "Kaffee" as a
+        # substring, and so does the query — the stub maps all three to the
+        # same vector, so the vector arm returns both notes at similarity 1.0.
+        kb = _kb_with_stub_embeddings(app, {"Kaffee": [1.0, 0.0, 0.0]})
+        kb.write(title="Kaffeemaschine entkalken", content="Essig und Wasser", topic="notes")
+        kb.write(title="Espresso Bohnen", content="Kaffee Röstung dunkel", topic="notes")
+
+        hits = kb.search("Kaffee")
+        paths = [h["path"] for h in hits]
+        # FTS hit (title/content contains Kaffee) present:
+        assert any("espresso-bohnen" in p for p in paths)
+        # fused results carry the rrf score:
+        assert all("rrf_score" in h for h in hits)
+
+    def test_search_without_provider_behaves_like_today(self, kb) -> None:
+        # dimension == 0 → FTS-only, no rrf_score requirement, LIKE fallback intact
+        kb.write(title="Solitaire", content="Kartenspiel", topic="notes")
+        hits = kb.search("Solitaire")
+        assert hits and hits[0]["title"] == "Solitaire"
+        # typo → LIKE fallback path still works
+        hits = kb.search("Solitair")
+        assert hits and hits[0]["title"] == "Solitaire"
+
+    def test_search_type_filter_applies_to_vector_arm(self, app) -> None:
+        # a vector-armed search with type="task" must not return notes of other
+        # types even if they are semantically close (filter before fusion)
+        kb = _kb_with_stub_embeddings(app, {"Kaffee": [1.0, 0.0, 0.0]})
+        kb.write(title="Kaffee kochen", content="Kaffee Task-Erinnerung", type="task", topic="tasks")
+        kb.write(title="Kaffee Notiz", content="Kaffee Gedanke", type="note", topic="notes")
+
+        hits = kb.search("Kaffee", type="task")
+        assert hits
+        assert all(h["type"] == "task" for h in hits)
+
+
+class TestHybridFindRelevant:
+    """Task 4: find_relevant() fuses the FTS and vector arms via RRF."""
+
+    def test_find_relevant_includes_keyword_only_matches(self, app) -> None:
+        # a note matching only by keyword must appear in fused results
+        # (today it is invisible whenever the vector arm returns anything)
+        kb = _kb_with_stub_embeddings(app, {
+            "Kaffee": [1.0, 0.0, 0.0],
+            "Wachmacher": [1.0, 0.0, 0.0],
+        })
+        # Semantic-only: embed text has no literal "kaffee" token, so FTS
+        # misses it, but it shares the stub vector with the query "Kaffee".
+        kb.write(title="Wachmacher Getraenk", content="das uebliche Morgenritual", topic="notes")
+        # Keyword-only: FTS matches "Kaffee" (case-insensitive tokenizer),
+        # but the uppercase spelling dodges the stub's case-sensitive
+        # substring lookup, so it falls back to the unrelated default
+        # vector [0, 0, 1] — orthogonal to the query, excluded by threshold.
+        keyword_only_path = kb.write(
+            title="Espresso Bohnen", content="KAFFEE Roestung dunkel", topic="notes"
+        )
+
+        results = kb.find_relevant("Kaffee")
+        paths = [r["path"] for r in results]
+        assert keyword_only_path in paths
+
+    def test_find_relevant_without_provider_is_fts_only(self, kb) -> None:
+        kb.write(title="Backup Strategie", content="Restic und Hetzner", topic="notes")
+        results = kb.find_relevant("Backup")
+        assert results and results[0]["title"] == "Backup Strategie"
+
+    def test_find_duplicates_never_uses_fts_or_fusion(self, kb, monkeypatch) -> None:
+        # Pin the June P0-3 decision: duplicate detection is vector-only.
+        from mycelos.knowledge import ranking
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("find_duplicates must not use FTS/fusion")
+
+        monkeypatch.setattr(ranking, "rrf_fuse", _boom)
+        monkeypatch.setattr(kb._indexer, "search_fts", _boom)
+        monkeypatch.setattr(kb._indexer, "search_like", _boom)
+        path = kb.write(title="Doppelt", content="inhalt", topic="notes")
+        assert kb.find_duplicates(path) == []  # no provider → fail closed, no FTS
