@@ -35,6 +35,7 @@ class EmbeddingProvider:
     """Base class for embedding providers."""
     name: str = "none"
     dimension: int = 0
+    model_id: str = ""
 
     def compute(self, text: str, *, is_query: bool = False) -> list[float]:
         return []
@@ -47,6 +48,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     """Uses OpenAI text-embedding-3-small via SecurityProxy."""
     name = "openai"
     dimension = 1536
+    model_id = "text-embedding-3-small"
 
     def __init__(self, proxy_client: Any):
         self._proxy = proxy_client
@@ -77,6 +79,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     """
     name = "local"
     dimension = LOCAL_MODEL_DIMENSION
+    model_id = LOCAL_MODEL_NAME
 
     def __init__(self) -> None:
         self._model = None
@@ -116,6 +119,7 @@ class FallbackProvider(EmbeddingProvider):
     """No embeddings available — search uses FTS5 only."""
     name = "none"
     dimension = 0
+    model_id = ""
 
 
 class EUModeViolation(Exception):

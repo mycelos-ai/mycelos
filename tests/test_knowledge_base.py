@@ -324,9 +324,11 @@ class _StubEmbeddingProvider:
     name = "stub"
     dimension = 3
 
-    def __init__(self, vectors: dict[str, list[float]]):
+    def __init__(self, vectors: dict[str, list[float]], model_id: str = "stub-a"):
         self._vectors = vectors
         self.query_flags: list[bool] = []
+        self.model_id = model_id
+        self.batch_calls = 0
 
     def _vec(self, text: str) -> list[float]:
         for key, v in self._vectors.items():
@@ -340,15 +342,16 @@ class _StubEmbeddingProvider:
 
     def compute_batch(self, texts, *, is_query: bool = False):
         self.query_flags.append(is_query)
+        self.batch_calls += 1
         return [self._vec(t) for t in texts]
 
 
-def _kb_with_stub_embeddings(app, vectors):
+def _kb_with_stub_embeddings(app, vectors, model_id: str = "stub-a"):
     """Build a KnowledgeBase whose embedding provider is the stub, with the
     vec table sized to the stub dimension."""
     from mycelos.knowledge.service import KnowledgeBase
     kb = KnowledgeBase(app)
-    kb._embedding_provider = _StubEmbeddingProvider(vectors)
+    kb._embedding_provider = _StubEmbeddingProvider(vectors, model_id=model_id)
     # Reset the vec table to the stub's dimension.
     app.storage.execute("DELETE FROM knowledge_config WHERE key='embedding_dimension'")
     try:
@@ -654,3 +657,52 @@ class TestHybridFindRelevant:
         monkeypatch.setattr(kb._indexer, "search_like", _boom)
         path = kb.write(title="Doppelt", content="inhalt", topic="notes")
         assert kb.find_duplicates(path) == []  # no provider → fail closed, no FTS
+
+
+# ─── Task 5: re-embed on provider/model/dimension change ──────────────────────
+
+
+def _kb_construct_with_stub(app, monkeypatch, stub):
+    """Construct a real KnowledgeBase whose __init__ uses ``stub`` as its
+    embedding provider from the start — the same code path a real
+    provider/model swap takes across a process restart."""
+    from mycelos.knowledge.service import KnowledgeBase
+    monkeypatch.setattr(KnowledgeBase, "_init_embedding_provider", lambda self: stub)
+    return KnowledgeBase(app)
+
+
+def test_model_change_triggers_full_reembed(app, monkeypatch) -> None:
+    """Same dimension, different model → vectors must be rebuilt."""
+    stub_a = _StubEmbeddingProvider({"Kaffee": [1.0, 0.0, 0.0]}, model_id="stub-a")
+    kb = _kb_construct_with_stub(app, monkeypatch, stub_a)
+    kb.write(title="Eins", content="inhalt", topic="notes")
+    kb.write(title="Zwei", content="inhalt", topic="notes")
+
+    # Switch to a differently-named model at the same dimension (e.g. old
+    # MiniLM 384 → new e5-small 384) and construct a new KnowledgeBase
+    # against the same storage — this must detect the model-identity
+    # mismatch (dimension alone would miss it) and re-embed everything.
+    stub_b = _StubEmbeddingProvider({"Kaffee": [1.0, 0.0, 0.0]}, model_id="stub-b")
+    _kb_construct_with_stub(app, monkeypatch, stub_b)
+
+    rows = app.storage.fetchone("SELECT COUNT(*) AS c FROM knowledge_vec")
+    notes = app.storage.fetchone(
+        "SELECT COUNT(*) AS c FROM knowledge_notes WHERE type != 'topic'"
+    )
+    assert rows["c"] == notes["c"] == 2
+    assert stub_b.batch_calls >= 1
+
+
+def test_unchanged_stamps_do_not_reembed(app, monkeypatch) -> None:
+    """Steady state: no re-embedding work on every startup."""
+    stub_a = _StubEmbeddingProvider({"Kaffee": [1.0, 0.0, 0.0]}, model_id="stub-a")
+    kb = _kb_construct_with_stub(app, monkeypatch, stub_a)
+    kb.write(title="Eins", content="inhalt", topic="notes")
+
+    # Construct a second KnowledgeBase with an identically-stamped stub
+    # provider (same name, same model_id, same dimension) against the same
+    # storage — this must NOT trigger a backfill.
+    stub_b = _StubEmbeddingProvider({"Kaffee": [1.0, 0.0, 0.0]}, model_id="stub-a")
+    _kb_construct_with_stub(app, monkeypatch, stub_b)
+
+    assert stub_b.batch_calls == 0

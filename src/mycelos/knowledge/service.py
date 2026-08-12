@@ -194,10 +194,12 @@ class KnowledgeBase:
     def _ensure_vec_table(self):
         """Create sqlite-vec virtual table if provider has embeddings.
 
-        If the provider dimension changed (e.g., switched from local 384 to
-        OpenAI 1536), drops and recreates the table. Existing embeddings
-        become invalid — FTS5 search is used as fallback until they're
-        recomputed.
+        If the provider's dimension, name, or model identity changed since
+        the table was last built (e.g. local 384 → OpenAI 1536, or a
+        same-dimension model swap like MiniLM → e5-small), drops and
+        recreates the table, then re-embeds every note from scratch —
+        single-user deployment, so old vectors are disposable rather than
+        migrated.
         """
         if self._embedding_provider.dimension == 0:
             return
@@ -208,21 +210,45 @@ class KnowledgeBase:
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
             dim = self._embedding_provider.dimension
+            provider_name = self._embedding_provider.name
+            model_id = self._embedding_provider.model_id
 
-            # Check if dimension changed (stored in knowledge_config table)
+            # Check if provider identity changed (stamped in knowledge_config).
             stored_dim = None
+            stored_provider = None
+            stored_model = None
             try:
                 row = self._app.storage.fetchone(
                     "SELECT value FROM knowledge_config WHERE key = 'embedding_dimension'"
                 )
                 if row:
                     stored_dim = int(row["value"])
+                row = self._app.storage.fetchone(
+                    "SELECT value FROM knowledge_config WHERE key = 'embedding_provider'"
+                )
+                if row:
+                    stored_provider = row["value"]
+                row = self._app.storage.fetchone(
+                    "SELECT value FROM knowledge_config WHERE key = 'embedding_model'"
+                )
+                if row:
+                    stored_model = row["value"]
             except Exception:
                 pass
 
-            if stored_dim and stored_dim != dim:
-                # Dimension changed — drop and recreate
-                logger.info("Embedding dimension changed (%d → %d) — recreating vector table", stored_dim, dim)
+            # A mismatch in ANY stamp — including a same-dimension model
+            # swap that leaves stored_dim untouched — invalidates the
+            # existing vectors.
+            changed = (
+                stored_dim is not None
+                and (stored_dim != dim or stored_provider != provider_name or stored_model != model_id)
+            )
+            if changed:
+                logger.info(
+                    "Embedding config changed (dim %s → %d, provider %s → %s, model %s → %s) — "
+                    "recreating vector table",
+                    stored_dim, dim, stored_provider, provider_name, stored_model, model_id,
+                )
                 try:
                     conn.execute("DROP TABLE IF EXISTS knowledge_vec")
                     conn.commit()
@@ -246,13 +272,57 @@ class KnowledgeBase:
             )
             self._app.storage.execute(
                 "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
-                ("embedding_provider", self._embedding_provider.name),
+                ("embedding_provider", provider_name),
             )
+            self._app.storage.execute(
+                "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
+                ("embedding_model", model_id),
+            )
+
+            if changed:
+                self._backfill_embeddings()
         except Exception as e:
             logger.warning("sqlite-vec not available: %s", e)
             # Fallback: no vector search
             from mycelos.knowledge.embeddings import FallbackProvider
             self._embedding_provider = FallbackProvider()
+
+    def _backfill_embeddings(self) -> int:
+        """Re-embed every note after a provider/model/dimension change.
+
+        Single-user deployment: old vectors are disposable, so this is a
+        full rebuild rather than an incremental migration. Failures log a
+        warning and stop the loop rather than crashing startup — the
+        vector arm simply stays partial and hybrid search degrades to FTS.
+        """
+        if self._embedding_provider.dimension == 0:
+            return 0
+        notes = self._app.storage.fetchall(
+            "SELECT id, path, title FROM knowledge_notes WHERE type != 'topic'"
+        )
+        if not notes:
+            return 0
+        from mycelos.knowledge.embeddings import serialize_embedding
+        done = 0
+        batch_size = 32
+        for start in range(0, len(notes), batch_size):
+            chunk = notes[start:start + batch_size]
+            texts = [f"{n['title']} {self._note_body(n['path'])}" for n in chunk]
+            try:
+                vectors = self._embedding_provider.compute_batch(texts)
+            except Exception as e:
+                logger.warning("Embedding backfill failed at offset %d: %s", start, e)
+                break
+            for note, vector in zip(chunk, vectors):
+                if not vector:
+                    continue
+                self._app.storage.execute(
+                    "INSERT OR REPLACE INTO knowledge_vec(rowid, embedding) VALUES (?, ?)",
+                    (note["id"], serialize_embedding(vector)),
+                )
+                done += 1
+        logger.info("Re-embedded %d notes with %s", done, self._embedding_provider.name)
+        return done
 
     # ─── Write ─────────────────────────────────────────────────────────────────
 
