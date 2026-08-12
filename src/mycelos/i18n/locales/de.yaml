@@ -769,3 +769,29 @@ knowledge:
     dir_not_empty: "Zielverzeichnis {path} ist nicht leer. Mit --force überschreiben."
     done: "{count} Notizen nach {path} exportiert (OKF-Bundle)."
     error: "Export fehlgeschlagen"
+
+# --- Embeddings CLI ---
+embeddings:
+  setup:
+    title: "Mycelos Embeddings-Setup"
+    model: "Modell: {model}"
+    size: "Ungefaehre Groesse: ~{size} MB"
+    target: "Zielverzeichnis: {path}"
+    confirm: "Dieses Modell herunterladen?"
+    cancelled: "Abgebrochen — kein Download durchgefuehrt."
+    downloading: "Modell wird heruntergeladen..."
+    download_failed: "Download fehlgeschlagen: {error}"
+    verifying: "Ueberpruefung mit einer Test-Kodierung..."
+    verify_failed: "Ueberpruefung fehlgeschlagen: {error}"
+    done: "Modell installiert unter {path}."
+    reembed_note: "Bestehende Notizen werden beim naechsten Zugriff auf die Wissensbasis neu eingebettet."
+  status:
+    title: "Mycelos Embeddings-Status"
+    provider: "Ausgewaehlter Provider: {provider}"
+    model: "Modell: {model}"
+    present: "Modell vorhanden: {present}"
+    dir: "Modellverzeichnis: {path}"
+    dimension: "Dimension: {dimension}"
+    counts: "Vektor-Zeilen: {vectors} / Notizen: {notes}"
+    present_true: "ja"
+    present_false: "nein"

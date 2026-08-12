@@ -781,3 +781,29 @@ knowledge:
     dir_not_empty: "Target directory {path} is not empty. Use --force to overwrite."
     done: "Exported {count} notes to {path} (OKF bundle)."
     error: "Export failed"
+
+# --- Embeddings CLI ---
+embeddings:
+  setup:
+    title: "Mycelos Embeddings Setup"
+    model: "Model: {model}"
+    size: "Approximate size: ~{size} MB"
+    target: "Target directory: {path}"
+    confirm: "Download this model?"
+    cancelled: "Cancelled — no download performed."
+    downloading: "Downloading model..."
+    download_failed: "Download failed: {error}"
+    verifying: "Verifying with a probe encode..."
+    verify_failed: "Verification failed: {error}"
+    done: "Model installed at {path}."
+    reembed_note: "Existing notes will be re-embedded the next time the knowledge base is accessed."
+  status:
+    title: "Mycelos Embeddings Status"
+    provider: "Selected provider: {provider}"
+    model: "Model: {model}"
+    present: "Model present: {present}"
+    dir: "Models directory: {path}"
+    dimension: "Dimension: {dimension}"
+    counts: "Vector rows: {vectors} / notes: {notes}"
+    present_true: "yes"
+    present_false: "no"
