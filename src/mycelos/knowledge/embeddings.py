@@ -68,6 +68,45 @@ class FallbackProvider(EmbeddingProvider):
     dimension = 0
 
 
+class EUModeViolation(Exception):
+    """Raised when configuration demands a non-EU provider under EU mode."""
+
+
+_VALID_PROVIDERS = ("openai", "local", "none")
+
+
+def select_provider_name(
+    explicit: str | None,
+    eu_mode: bool,
+    has_openai_credential: bool,
+    local_model_present: bool,
+) -> str:
+    """Decide which embedding provider to use. Pure, fail-closed.
+
+    Order: explicit setting > EU mode > real OpenAI credential > local
+    model > none. Every uncertainty resolves downward: an explicit choice
+    whose prerequisite is missing degrades rather than reaching out to the
+    network at request time.
+    """
+    if explicit in _VALID_PROVIDERS:
+        if explicit == "openai":
+            if eu_mode:
+                raise EUModeViolation(
+                    "embedding_provider=openai is not allowed while EU mode is on"
+                )
+            return "openai" if has_openai_credential else "none"
+        if explicit == "local":
+            return "local" if local_model_present else "none"
+        return "none"
+    if eu_mode:
+        return "local" if local_model_present else "none"
+    if has_openai_credential:
+        return "openai"
+    if local_model_present:
+        return "local"
+    return "none"
+
+
 def get_embedding_provider(openai_key: str | None = None,
                             proxy_client: Any = None,
                             eu_mode: bool = False) -> EmbeddingProvider:
