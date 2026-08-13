@@ -88,7 +88,24 @@ The segment-aware matching matters: naive `startswith` would let an attachment o
 
 Layer 2 is not optional. An LLM told "only these" will occasionally answer otherwise; a probabilistic boundary is not a boundary. This mirrors the Constitution Rule 3 stance and the pattern already used for auto-accept.
 
-**New-topic proposals:** the organizer may propose a new topic only *beneath* a permitted path. A proposal elsewhere is rejected the same way.
+### New topics — where the confirmation point sits
+
+The organizer may create new folders, but only **beneath a permitted path**; a proposal outside the permitted set is rejected like any other invalid path.
+
+Whether a new folder needs confirmation depends on its depth **relative to the attachment**, not on confidence alone:
+
+| Case | Example (source attached to `Vorfina`) | Behavior |
+|---|---|---|
+| New folder **directly under an attachment** | `Vorfina/Schmidt` | **Always an inbox entry**, regardless of confidence. The note is parked in the attachment folder until confirmed. |
+| New folder **deeper than an attachment** | `Vorfina/Mandanten/Schmidt` (with `Mandanten` existing) | Created automatically when confidence ≥ the silent-apply floor; inbox entry below it. |
+
+The reasoning: a folder directly under an attachment opens a **new main category** for that source — a structural decision the user should make. Anything deeper is fine-sorting *inside* a category the user already accepted, so the organizer has earned that trust.
+
+The rule applies **per attachment** — each attached folder is its own root for this purpose. A source attached to both `Vorfina` and `Research` needs confirmation for `Vorfina/X` and for `Research/Y` alike, but not for `Vorfina/Mandanten/X`.
+
+Depth beyond that is unconstrained: once `Vorfina/Mandanten/Schmidt` exists, the organizer may create `…/Schmidt/Rechnungen` and deeper on its own. In practice the LLM rarely goes deep, and the user can always restructure.
+
+Implementation note: "directly under an attachment" is a pure predicate over the proposed path and the attachment list — `parent_of(proposed) in attachments`. It belongs in the pure module next to `permitted_paths`, and gets its own tests including the multi-attachment case.
 
 ### Fallback order
 
@@ -138,6 +155,13 @@ New `src/mycelos/knowledge/source_attachment.py` — pure logic plus a thin serv
 def permitted_paths(attachments: list[str], all_topics: list[str]) -> list[str]
 def is_permitted(path: str, permitted: list[str]) -> bool
 def fallback_path(attachments: list[str]) -> str          # first attachment, or '' for root
+def needs_confirmation(proposed_path: str, attachments: list[str]) -> bool
+    """True when the proposed NEW folder sits directly under an attachment.
+
+    Those open a new main category for the source and always go to the
+    inbox; anything deeper is fine-sorting inside an already-accepted
+    category and may be created on confidence alone.
+    """
 
 # service (storage-backed, notifies config)
 class SourceAttachmentService:
@@ -171,9 +195,9 @@ All go through the service layer (Rule 2). Fail-closed on invalid input: a non-e
 
 ## Testing
 
-**Pure** (`tests/test_source_attachment.py`): subtree resolution including the `work`/`workshop` prefix trap; root means everything; `is_permitted` for exact, descendant, ancestor (false), sibling (false); `fallback_path` with zero/one/many attachments.
+**Pure** (`tests/test_source_attachment.py`): subtree resolution including the `work`/`workshop` prefix trap; root means everything; `is_permitted` for exact, descendant, ancestor (false), sibling (false); `fallback_path` with zero/one/many attachments; `needs_confirmation` — true directly under an attachment, false one level deeper, true under *each* attachment when several exist, and correct when an attachment is root.
 
-**Enforcement** (`tests/test_organizer_source_scoping.py`): the organizer prompt contains only permitted topics; an LLM answer outside the permitted set is rejected and falls back + creates an inbox entry; a new-topic proposal outside a permitted path is rejected; a proposal beneath a permitted path is accepted.
+**Enforcement** (`tests/test_organizer_source_scoping.py`): the organizer prompt contains only permitted topics; an LLM answer outside the permitted set is rejected and falls back + creates an inbox entry; a new-topic proposal outside a permitted path is rejected; a proposal beneath a permitted path is accepted; a new folder directly under an attachment produces an inbox entry **even at confidence 1.0**, and the note is parked in the attachment folder meanwhile; a new folder deeper than an attachment is created silently at high confidence.
 
 **Security** (`tests/security/test_source_rule_injection.py`): note content instructing a different placement does not change the outcome; the rule stays outside `<note-content>`; audit payloads contain no rule text.
 
