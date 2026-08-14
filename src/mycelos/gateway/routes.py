@@ -216,5 +216,8 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.connectors import router as connectors_router
     api.include_router(connectors_router)
 
+    from mycelos.gateway.routers.sources import router as sources_router
+    api.include_router(sources_router)
+
     # ── End of API endpoints ───────────────────────────────────
 

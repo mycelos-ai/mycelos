@@ -259,3 +259,20 @@ def test_post_channels_creates_generation(app_and_client) -> None:
             f"POST /api/channels failed (status {resp.status_code}) but "
             f"produced {after - before} generation(s)."
         )
+
+
+# ── Sources ─────────────────────────────────────────────────────
+
+def test_source_attach_creates_config_generation(app_and_client) -> None:
+    app, client = app_and_client
+    topic = app.knowledge_base.create_topic("Vorfina")
+    before = _generation_count(app)
+    client.post("/api/sources/gmail/attachments", json={"topic_path": topic})
+    assert _generation_count(app) > before
+
+
+def test_source_rule_creates_config_generation(app_and_client) -> None:
+    app, client = app_and_client
+    before = _generation_count(app)
+    client.put("/api/sources/gmail/rule", json={"rule_text": "x"})
+    assert _generation_count(app) > before

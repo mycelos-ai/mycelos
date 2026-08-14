@@ -1,5 +1,33 @@
 # Changelog
 
+## Week 33 (2026)
+
+### Sources attach to folders and carry a rule
+
+A source (Gmail, yt-summary, …) now attaches to one or more folders and
+carries **one free-text rule** describing what belongs where — configured
+once, in the user's own words, at the place the source feeds.
+
+- **Attachments open subtrees.** A source attached to `Vorfina` may file
+  into `Vorfina` and anything beneath it — never above it, never into a
+  sibling branch. Attaching at root means "anywhere", the right meaning
+  for a mixed inbox.
+- **The constraint is enforced deterministically.** The organizer is
+  prompted with the permitted topics only, *and* its answer is validated
+  against them: a path outside the permitted set is rejected, the note
+  falls back to the attachment folder, and an inbox entry is created.
+  Prompt scoping alone would be a probabilistic boundary, which is no
+  boundary at all.
+- **New main categories need confirmation.** A new folder directly under
+  an attachment always goes to the inbox, whatever the confidence —
+  opening a category is the user's decision. Folders deeper than an
+  attachment are fine-sorting inside an already-accepted category and are
+  created on confidence alone.
+- **The rule is an instruction, content is data.** The rule sits in a
+  `<user-rule>` block before the note sections, and the classifier is told
+  explicitly that only that block is an instruction — imported mail
+  cannot redirect its own filing.
+
 ## Week 32 (2026)
 
 ### Hybrid search (FTS5 + vector + RRF)
