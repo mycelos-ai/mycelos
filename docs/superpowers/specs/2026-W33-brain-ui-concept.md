@@ -17,6 +17,8 @@ The test for any proposed element: does it make the knowledge more visible, more
 3. **Sources are objects in the tree, not settings.** A source hangs on a folder, next to the knowledge it produces.
 4. **Corrections are cheap and teach.** Misfiling is expected; every correction offers to improve the rule that caused it.
 5. **Nothing arrives silently.** What the system decided, and what it wants confirmed, is visible without hunting.
+6. **What runs by itself is visible.** A brain that works while you sleep must be able to show what it did — otherwise the user cannot tell a working routine from a broken one, and stops trusting both.
+7. **Channels are pipes, not places.** Every way in (web, Telegram, voice, mail, whatever follows) feeds the same capture path and is recorded in the note's provenance. Adding a channel adds an entrance, never a second brain.
 
 ## Information architecture
 
@@ -25,11 +27,19 @@ Four surfaces, not the current menu sprawl:
 ```
 BRAIN (home)          the graph — explore, add, attach sources
 NODE (drill-in)       one topic or note: content, relations, arrivals, sources
-INBOX                 what the organizer wants confirmed
+INBOX                 everything waiting for you
+ROUTINES              everything that runs by itself
 CONVERSE              talk to the brain (today's chat, re-framed)
 ```
 
-Everything else — settings, providers, connectors, diagnostics — moves behind a single "System" entry. It is maintenance, not the product.
+Everything else — LLM providers, embedding model, credentials, diagnostics — moves behind a single "System" entry. That is maintenance: set once, then forgotten.
+
+**A correction to an earlier draft of this document.** It said "settings, providers, connectors, diagnostics" all belong behind System. That was too coarse and would have buried functions Stefan uses daily. The distinction that matters:
+
+- **Maintenance** — configured once, then invisible. Providers, models, credentials, doctor. Behind System.
+- **What the brain does for you while you are not looking** — the morning briefing, source syncs, scheduled jobs. That is not overhead; it is the evidence the brain is alive. It gets its own surface.
+
+The dividing line between the two working surfaces is *who acts*: ROUTINES is what the system does on its own; INBOX is what needs you. A reminder is yours to act on, so it lives in the inbox — not in routines, even though a scheduler fires it.
 
 ## Surface 1: BRAIN (home)
 
@@ -80,20 +90,61 @@ A source is created *at a node* ("add a source to this folder") and can be attac
 
 **A source overview** exists (all sources, last run, result, errors) but is reached from System — the primary place to meet a source is on its node.
 
-## Surface 4: INBOX
+## Surface 4: INBOX — everything waiting for you
 
-Everything the organizer wants confirmed, in one list: proposed placements below the confidence floor, proposed merges (never automatic), notes it could not classify, failed source runs.
+One list of everything that needs a human, whatever produced it:
 
-Each entry states what it proposes, why, and how confident it is — and offers accept / place elsewhere / dismiss. Accepting is one gesture; the interesting one is "place elsewhere", which should offer the same "teach the rule" follow-up as a correction on a node.
+- **Organizer suggestions** — placements below the confidence floor, proposed merges (never automatic), notes it could not classify, new folders directly under a source attachment.
+- **Due reminders** — the "remind me" function. A reminder is *yours* to act on, which is why it lives here and not in Routines, even though a scheduler fires it.
+- **Open tasks** — notes of type `task` that are due or overdue.
+- **Failed runs** — a source or routine that errored, with a retry.
 
-The inbox count is the one number that may interrupt: it appears on the home surface, because unattended suggestions are the one thing that silently degrades a brain.
+Each entry states what it is, why it is here, and (where applicable) how confident the system is — then offers the one or two actions that resolve it. For placements: accept / place elsewhere / dismiss, with "place elsewhere" offering the same "teach the rule?" follow-up as a correction on a node.
 
-## Surface 5: CONVERSE
+The inbox count is the one number that may interrupt: it appears on the home surface, because things waiting unattended are what silently degrades a brain.
+
+## Surface 5: ROUTINES — everything that runs by itself
+
+**Naming decision:** what the code calls *workflows* is called **Routines** in the interface. "Workflow" is a technical word for the machinery; "routine" is what it is to the user — something recurring that happens without being asked. The name also avoids claiming a frequency: the morning briefing runs daily, a source sync every fifteen minutes, an arXiv sweep weekly, and all three are routines.
+
+**Substance already exists** (see the reality check below): workflows with steps, conditions, policies, cost ceilings and notifications, plus a scheduler that fires reminders, triggers ingests, sends the briefing and runs scheduled workflows. None of it has a home in the interface today. This surface is mostly about *showing* what is already there.
+
+The list shows, per routine: what it does, when it last ran, what that run produced, when it runs next — and two controls: run now, and pause. A failed run links to the inbox entry it created.
+
+**Three kinds of routine, one list:**
+
+1. **Deliveries** — the brain reaching out. The morning briefing is the archetype: it composes and sends, it does not import.
+2. **Source syncs** — an attached source pulling on a schedule (yt-summary, mail, OKF bundles). These are configured on their node, but appear here because they *run*.
+3. **Jobs** — multi-step routines that fetch, decide and act. Stefan's example: "check arXiv for new papers on X, import the relevant ones."
+
+The third kind blurs into the second on purpose: "fetch and file" is a source with a schedule, and the source's rule already covers "which of these belong where". A routine is only warranted when something beyond importing happens — several steps, a decision between them, or an outbound action. That boundary is a design question still open (see below), not a settled one.
+
+**What a routine may cost is visible.** The workflow model already carries `max_cost` per step; the interface must surface the ceiling and the actual spend, because a routine that runs unattended is a routine that spends unattended.
+
+## Surface 6: CONVERSE
 
 Today's chat, re-framed as *asking the brain*. Two changes beyond visuals:
 
 - **Answers cite their nodes.** A response drawn from knowledge links to the notes it used; clicking one opens that node in the graph. This makes conversation a navigation surface, not a dead end.
 - **Answers can be kept.** One gesture turns an exchange into a note, placed like anything else. This is how conversation feeds the brain instead of evaporating.
+
+## Channels — the way in and out
+
+Telegram is not a surface; it is a **channel**. So is the web UI, so is voice, and so will be an email inbox, a voice assistant skill, or whatever comes next. The goal is to collect as much knowledge as possible — which means the number of channels grows, and the interface must not need redesigning each time one is added.
+
+**A channel is a pipe, not a place.** Consequences for the design:
+
+- Channels never get their own surface. They appear where they are relevant: as the origin of a note (in its provenance), as a delivery target of a routine, and as an entry in System where they are connected and configured.
+- **Every note records the channel it arrived through**, alongside the source. "Where did this come from" must answer both "which tool" and "which way in" — a thought dictated to a voice assistant and one typed into the web UI are the same knowledge with different provenance.
+- The capture path is identical regardless of channel: arrive → classify → file or ask. A new channel adds an entrance, never a second brain.
+
+**Privacy is what makes the growth acceptable.** Every added channel widens the funnel of personal data flowing in — mail, voice, whatever follows. Three properties hold that in check, and each has a visible consequence in the interface:
+
+1. **It stays on your hardware.** Local embeddings, local classification where configured, EU-resident providers otherwise. The interface must make the current answer visible — which provider processes what — not bury it in settings.
+2. **Every channel is opt-in and revocable.** Connecting a channel is an explicit act; disconnecting it must be equally easy and must state what happens to what already arrived.
+3. **Provenance is never lost.** Because a channel can be revoked, the notes it produced must remain identifiable — which is what the per-note channel record above is for.
+
+A fourth property is deferred but shapes the ceiling: nothing leaves the brain to another system without an explicit grant (the scoped-access work, see below). Growing the inputs is safe precisely because the outputs stay closed.
 
 ## What this concept deliberately leaves out
 
@@ -106,9 +157,15 @@ Today's chat, re-framed as *asking the brain*. Two changes beyond visuals:
 1. How to distinguish containment edges from relation edges at a glance without colour alone (accessibility).
 2. Whether recent arrivals belong at the node only, or also as a global "what came in today" strip on home.
 3. How the graph behaves on mobile, where a force-directed layout is hard to manipulate — possibly a list/tree fallback that mirrors the same structure.
+4. **Where a scheduled source ends and a routine begins.** "Fetch arXiv and import the relevant papers" is expressible as a source with a schedule (the source's rule already decides what belongs where). It becomes a routine when something beyond importing happens. If the answer is "sources with schedules are routines too", the two lists merge and a source's node card links into Routines; if not, the user has two places to look. Unresolved.
+5. Whether a routine's history (past runs, their results) deserves more than a last-run line — a routine that quietly returns nothing for three weeks looks identical to one that works.
 
 ## Implementation reality check
 
 What already exists and can be built on: the typed link graph (`knowledge_links.kind`), the force-directed graph UI and `get_graph_data()` endpoint, hybrid search, provenance fields (`created_by`, `source`), the organizer with confidence scores and the suggestions table, the ingest registry.
+
+**For Routines specifically, more exists than the interface suggests.** `workflows/models.py` defines `Workflow` and `WorkflowStep` with conditions, policies, model tiers, `max_cost` and notification config; `workflows/workflow_registry.py` and `parser.py` manage and read them. `scheduler/jobs.py` already runs `reminder_tick_check`, `auto_ingest_check`, `briefing_tick`, `check_scheduled_workflows`, `execute_background_workflow`, `notify_completed_workflows`, plus sweeps for orphaned runs and stale background tasks. `scheduler/schedule_manager.py` owns the schedules. The `workflow_runs` / `workflow_events` tables carry execution history. Surfacing this is largely a read-and-render job, not a build.
+
+**For Channels:** the `channels` table and `channels/telegram.py` exist; voice input runs through `speech/transcription.py`. Missing for the concept above: a per-note record of the arrival channel (today's provenance names the source/connector, not the way in).
 
 What is genuinely new: source-to-folder attachment (a source currently has no notion of placement), the per-source rule field and its path into the organizer prompt, the subtree constraint on classification (the organizer currently gets the whole topic list; it must instead get only the permitted subtrees, and its answer must be validated against them — an LLM told "only these" will occasionally answer otherwise, and that must be rejected deterministically rather than trusted), persisted graph positions, and the node view's relations pairing.
