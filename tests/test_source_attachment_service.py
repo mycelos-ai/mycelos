@@ -105,3 +105,31 @@ def test_audit_never_contains_rule_text(storage) -> None:
     payloads = [str(details) for _, _, details in audit.events]
     assert all("mueller-gmbh" not in p for p in payloads)
     assert any("source.rule_updated" == e for e, _, _ in audit.events)
+
+
+def test_migration_recreates_tables_on_existing_database(tmp_path: Path) -> None:
+    """_ensure_schema() must create source_attachments/source_rules even on
+    a database that was already initialized before these tables existed —
+    not just on a brand-new file. Simulate that by dropping both tables on
+    an initialized DB, then opening a *fresh* SQLiteStorage on the same
+    file (mirrors the real "existing ~/.mycelos/mycelos.db" scenario)."""
+    db_path = tmp_path / "existing.db"
+    old = SQLiteStorage(db_path)
+    old.initialize()
+    old.execute("DROP TABLE source_attachments")
+    old.execute("DROP TABLE source_rules")
+    with pytest.raises(Exception):
+        old.fetchone("SELECT 1 FROM source_attachments LIMIT 0")
+
+    # Fresh instance, as a new process opening the pre-existing file would.
+    reopened = SQLiteStorage(db_path)
+    reopened.execute(
+        "INSERT OR IGNORE INTO users (id, name, status) VALUES (?, ?, ?)",
+        ("default", "default", "active"),
+    )
+
+    svc = SourceAttachmentService(reopened)
+    svc.attach("gmail", "topics/work", user_id="default")
+    assert svc.list_attachments("gmail", "default") == ["topics/work"]
+    assert reopened.fetchone(
+        "SELECT COUNT(*) AS c FROM source_rules")["c"] == 0

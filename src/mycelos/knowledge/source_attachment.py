@@ -10,10 +10,7 @@ root attachment and means "anywhere".
 """
 from __future__ import annotations
 
-import logging
 from typing import Any
-
-logger = logging.getLogger("mycelos.knowledge")
 
 
 def _covers(attachment: str, path: str) -> bool:
@@ -143,14 +140,8 @@ class SourceAttachmentService:
 
     def _notify(self, description: str, trigger: str) -> None:
         if self._notifier:
-            try:
-                self._notifier.notify_change(description, trigger)
-            except Exception as e:
-                logger.warning("source attachment notify failed: %s", e)
+            self._notifier.notify_change(description, trigger)
 
     def _log(self, user_id: str, event: str, details: dict) -> None:
         if self._audit:
-            try:
-                self._audit.log(event, user_id=user_id, details=details)
-            except Exception as e:
-                logger.warning("source attachment audit failed: %s", e)
+            self._audit.log(event, user_id=user_id, details=details)

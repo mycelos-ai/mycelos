@@ -200,6 +200,30 @@ class SQLiteStorage:
         )
         self._conn.commit()
 
+        # source_attachments / source_rules tables for SourceAttachmentService
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS source_attachments (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id   TEXT NOT NULL,
+                user_id     TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+                topic_path  TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                UNIQUE (source_id, user_id, topic_path)
+            );
+            CREATE INDEX IF NOT EXISTS idx_source_attachments_source
+                ON source_attachments(source_id, user_id);
+            CREATE TABLE IF NOT EXISTS source_rules (
+                source_id   TEXT NOT NULL,
+                user_id     TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+                rule_text   TEXT NOT NULL DEFAULT '',
+                updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (source_id, user_id)
+            );
+            """
+        )
+        self._conn.commit()
+
     def initialize(self) -> None:
         """Create database and apply schema."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
