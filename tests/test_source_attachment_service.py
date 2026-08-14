@@ -1,6 +1,8 @@
 """SourceAttachmentService — declarative state for source placement."""
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,18 @@ def storage(tmp_path: Path) -> SQLiteStorage:
         ("other", "other", "active"),
     )
     return s
+
+
+@pytest.fixture
+def app():
+    """A real App + KnowledgeBase, needed for the topic-lifecycle tests below
+    (rename/merge/delete run real KnowledgeBase code, not a fake)."""
+    from mycelos.app import App
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["MYCELOS_MASTER_KEY"] = "test-key-source-attachment"
+        a = App(Path(tmp))
+        a.initialize()
+        yield a
 
 
 class _FakeNotifier:
@@ -133,3 +147,51 @@ def test_migration_recreates_tables_on_existing_database(tmp_path: Path) -> None
     assert svc.list_attachments("gmail", "default") == ["topics/work"]
     assert reopened.fetchone(
         "SELECT COUNT(*) AS c FROM source_rules")["c"] == 0
+
+
+# ─── Topic lifecycle ────────────────────────────────────────────────────────
+# Attachments point at topic paths, not ids — the topic operations below
+# must keep those paths in sync so an attachment never silently points at a
+# gone or stale folder.
+
+
+def test_rename_topic_repoints_attachments(app) -> None:
+    kb = app.knowledge_base
+    svc = SourceAttachmentService(app.storage)
+    old = kb.create_topic("Vorfina")
+    svc.attach("gmail", old)
+    new = kb.rename_topic(old, "Vorfina GmbH")
+    assert svc.list_attachments("gmail") == [new]
+
+
+def test_merge_topic_moves_attachments_to_target(app) -> None:
+    kb = app.knowledge_base
+    svc = SourceAttachmentService(app.storage)
+    src = kb.create_topic("Alt")
+    dst = kb.create_topic("Neu")
+    svc.attach("gmail", src)
+    kb.merge_topics(src, dst)
+    assert svc.list_attachments("gmail") == [dst]
+
+
+def test_merge_topic_drops_leftover_when_already_attached_to_target(app) -> None:
+    """UPDATE OR IGNORE leaves the old row behind on a UNIQUE collision (the
+    source is already attached to both source and target) — that leftover,
+    still pointing at the merged-away topic, must be deleted too."""
+    kb = app.knowledge_base
+    svc = SourceAttachmentService(app.storage)
+    src = kb.create_topic("Alt2")
+    dst = kb.create_topic("Neu2")
+    svc.attach("gmail", src)
+    svc.attach("gmail", dst)
+    kb.merge_topics(src, dst)
+    assert svc.list_attachments("gmail") == [dst]
+
+
+def test_delete_topic_removes_attachments(app) -> None:
+    kb = app.knowledge_base
+    svc = SourceAttachmentService(app.storage)
+    topic = kb.create_topic("Weg")
+    svc.attach("gmail", topic)
+    kb.delete_topic(topic)
+    assert svc.list_attachments("gmail") == []
