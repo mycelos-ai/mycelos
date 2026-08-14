@@ -21,6 +21,7 @@ from mycelos.cli.credential_cmd import credential_cmd
 from mycelos.cli.reset_cmd import reset_cmd
 from mycelos.cli.stop_cmd import stop_cmd
 from mycelos.cli.doctor_cmd import doctor_cmd
+from mycelos.cli.embeddings_cmd import embeddings_cmd
 from mycelos.i18n import set_language
 
 
@@ -57,3 +58,4 @@ cli.add_command(reset_cmd, "reset")
 cli.add_command(stop_cmd, "stop")
 cli.add_command(doctor_cmd, "doctor")
 cli.add_command(knowledge_cmd, "knowledge")
+cli.add_command(embeddings_cmd, "embeddings")

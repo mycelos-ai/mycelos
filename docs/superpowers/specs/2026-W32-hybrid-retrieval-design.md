@@ -72,23 +72,77 @@ Today: vector, else FTS fallback (either/or). New: same two arms, fused with `rr
 | No provider (no key, no local model) | FTS only (today's behavior) | FTS only | `[]` (fail closed) |
 | FTS empty, vector empty | LIKE fallback | `[]` | `[]` |
 
-## Work Package 2: Local Embedding Provider
+## Work Package 2: Local Embeddings — Repair + Model Switch
 
-### Provider: `LocalEmbeddingProvider` (embeddings.py)
+### Correction to this spec's first draft (2026-08-12)
 
-- Runtime: **fastembed** (ONNX, CPU — no torch, ARM/Pi-compatible), optional dependency: `pip install "mycelos[local-embeddings]"`.
-- Model: **`intfloat/multilingual-e5-small`**, 384 dimensions, quantized ONNX ~120 MB. Good German/English quality at note length.
-- E5 requires role prefixes for quality: the provider prefixes documents with `"passage: "` and queries with `"query: "`. The `EmbeddingProvider` interface gains `compute(text, *, is_query: bool = False)` (and batch equivalent); the OpenAI provider accepts and ignores the flag. All indexing call sites pass documents (default); `search`/`find_relevant`/`find_duplicates` query paths pass `is_query=True` where the text is a query. (For the OpenAI provider nothing changes.)
-- Model files live in `~/.mycelos/models/` (fastembed cache dir pinned there — not the global HF cache), so `mycelos doctor` can check them and backups are self-contained.
+The original WP2 text assumed no local provider existed. **It does:**
+`embeddings.py` already ships `LocalEmbeddingProvider` (sentence-transformers,
+`all-MiniLM-L6-v2`, 384d), `sentence-transformers>=3.0` is an optional
+dependency group (`embeddings`) in pyproject.toml, and `get_embedding_provider`
+already falls back to local when EU mode is on. WP2 is therefore a **repair +
+model switch**, not a greenfield build. The four real defects:
+
+1. **Fail-open provider selection** (`service.py:_init_embedding_provider`):
+   `openai_key = "available"` is set whenever *any* proxy client exists — it
+   never checks whether an OpenAI credential is actually present. Without a
+   key the OpenAI provider is still selected and every `compute()` silently
+   returns `[]`: semantic search is dead with no error anywhere. This is the
+   June audit's P1-7 "fake provider detection", still open.
+2. **No backfill on dimension change** (`service.py:_ensure_vec_table`): the
+   vec table is correctly dropped on 384↔1536, but nothing re-embeds the
+   notes, so the vector arm stays empty until each note happens to be
+   rewritten.
+3. **Implicit model download**: `LocalEmbeddingProvider._load_model()` pulls
+   ~90 MB from HuggingFace on first use, without consent, inside a request.
+4. **English-centric model**: `all-MiniLM-L6-v2` is weak on German notes.
+
+### Model switch
+
+- Target model: **`intfloat/multilingual-e5-small`** (384d — same dimension as
+  today, but a different vector space, so a full re-embed is required anyway).
+- Runtime stays **sentence-transformers** (already a dependency, already
+  installed, works on the Pi). No fastembed/ONNX migration.
+
+  **Why not fastembed (evaluated and rejected 2026-08-12).** The obvious
+  objection to sentence-transformers is that it drags in PyTorch (~2 GB) for
+  CPU-only inference. fastembed (ONNX, no torch) would avoid that — but its
+  model catalog does not contain `multilingual-e5-small`. It offers only
+  `multilingual-e5-large` (1024d, **2.24 GB** — larger than the torch stack
+  it would save, and unusable on a Pi) or
+  `paraphrase-multilingual-MiniLM-L12-v2` (384d, 220 MB, but a 2019 model
+  that is clearly weaker at retrieval than E5, especially on the
+  query-vs-document asymmetry E5's prefixes exist for). The trade was
+  therefore "save ~2 GB of install, lose search quality", not "same quality,
+  less weight". Decided against, because the deployment constraints that
+  motivated it do not bite: the Pi has 8 GB RAM and its image is built
+  natively on ARM (no cross-compile wheel problems). Image size grows by the
+  torch stack — accepted knowingly. Revisit only if fastembed adds
+  `multilingual-e5-small`, or if a smaller deployment target appears.
+- E5 requires role prefixes: documents get `"passage: "`, queries get
+  `"query: "`. The `EmbeddingProvider` interface gains
+  `compute(text, *, is_query: bool = False)` and the batch equivalent; the
+  OpenAI provider accepts and ignores the flag. Indexing call sites use the
+  document default; `search`/`find_relevant`/`find_duplicates` query paths
+  pass `is_query=True`.
+- Model files live under `~/.mycelos/models/` (`SENTENCE_TRANSFORMERS_HOME`
+  pinned there, not the global HF cache) so `mycelos doctor` can check them
+  and backups are self-contained.
+
+### Migration stance (decided 2026-08-12)
+
+Single-user deployment: **no gradual migration path, no dual-vector-space
+period**. On a provider/model/dimension change the vec table is dropped and
+every note is re-embedded from scratch. Old vectors are disposable.
 
 ### Provider selection (deterministic, fail-closed)
 
 Order, evaluated at app startup:
 
-1. Explicit setting (`embedding_provider` = `openai` | `local` | `none`) — stored via the service layer like other config, wins always. EU mode + `openai` = refused at startup with a clear error (fail closed, no silent override).
-2. EU mode active → `local` if the model is installed, else `none` (embeddings off; hybrid degrades to FTS — never a remote call, Constitution Rule 3 posture).
-3. OpenAI credential available → `openai` (today's behavior).
-4. Local model installed → `local`.
+1. Explicit setting (`embedding_provider` = `openai` | `local` | `none`) — stored in `knowledge_config` next to the existing `embedding_provider`/`embedding_dimension` stamps, wins always. EU mode + `openai` = refused at startup with a clear error (fail closed, no silent override).
+2. EU mode active → `local` if the model is present, else `none` (embeddings off; hybrid degrades to FTS — never a remote call, Constitution Rule 3 posture).
+3. **Real** OpenAI credential present → `openai`. "Real" means asking the credential proxy whether the `openai` credential exists — not merely "a proxy client object exists" (defect 1). If the check cannot be performed, treat it as absent (fail closed).
+4. Local model present on disk → `local`.
 5. Otherwise → `none`.
 
 The local provider runs in-process in the gateway — no credentials, no SecurityProxy involvement (Rule 4 untouched).
@@ -96,25 +150,24 @@ The local provider runs in-process in the gateway — no credentials, no Securit
 ### Model download (explicit, consented)
 
 - New CLI command `mycelos embeddings setup` (i18n via `t()`, en+de keys in the same step — Rule 7): states model name, size (~120 MB), target directory, asks for confirmation, downloads, verifies, reports.
-- The gateway never downloads implicitly. If selection lands on `local` but the model is absent, it logs one warning and behaves as `none`.
-- The web UI settings page is out of scope for v1 (CLI only); the doctor command learns a `--check embeddings` probe (provider chosen, model present, dimension matches).
+- The gateway never downloads implicitly: `LocalEmbeddingProvider` loads from the pinned local directory only (offline load). If selection lands on `local` but the model is absent, it logs one warning and behaves as `none` — it must not reach out to HuggingFace at request time (defect 3).
+- The web UI settings page is out of scope for v1 (CLI only); the doctor command learns an embeddings probe (provider chosen, model present, dimension matches, vector count vs. note count).
 
-### Dimension migration
+### Re-embed on provider/model change
 
-Provider or dimension changes (e.g. OpenAI 1536 → local 384):
-
-- The active provider name + dimension are stamped alongside the vec table (same mechanism as the FTS version stamp).
-- On startup mismatch: drop `knowledge_vec`, recreate with the new dimension (`distance_metric=cosine` pinned, as today), re-embed all notes in batches (`compute_batch`), log progress. Synchronous at startup; for typical KB sizes (hundreds to low thousands of notes) this is seconds-to-a-minute on CPU.
-- While a backfill has not run (e.g. model missing), vector arms return empty and hybrid degrades per the matrix above.
+- `knowledge_config` already stamps `embedding_provider` and `embedding_dimension` when the vec table is (re)created. Add a `embedding_model` stamp so a same-dimension model switch (MiniLM 384 → e5-small 384) is detected too — dimension alone is not enough.
+- On mismatch: drop `knowledge_vec`, recreate (`distance_metric=cosine` pinned, as today), then **re-embed every note** via `compute_batch` in batches, logging progress. Fixes defect 2.
+- Runs at first knowledge access, not inside a request handler's critical path; for this KB's size (hundreds of notes) it is seconds on CPU. While it has not run (e.g. model missing), vector arms return empty and hybrid degrades per the matrix above.
 
 ## Testing
 
 - **Pure:** `rrf_fuse` — ordering, score math (1/(k+r+1)), dedup keeps first-seen dict, single-list passthrough, empty lists, limit truncation.
 - **German:** index "Ernährung", search "ernahrung" → hit (FTS arm). Rebuild test: old-tokenizer index + version bump → rebuilt index matches.
 - **Hybrid behavior:** with a stub embedding provider, a note matching only semantically and a note matching only by keyword both appear; RRF order sane. Degradation matrix rows each pinned.
-- **E5 prefixes:** local provider prepends `passage: `/`query: ` correctly (assert on the text handed to the ONNX runner, mocked).
-- **Selection matrix:** each row of the provider-selection order, incl. EU+explicit-openai refusal (goes in `tests/security/` next to the EU residency tests).
-- **Migration:** dimension change → vec table rebuilt, all notes re-embedded, duplicate detection works after.
+- **E5 prefixes:** local provider prepends `passage: `/`query: ` correctly (assert on the text handed to the encoder, mocked — no model download in tests).
+- **Selection matrix:** each row of the provider-selection order, incl. EU+explicit-openai refusal and the "proxy exists but no OpenAI credential → not openai" case that is defect 1 (goes in `tests/security/` next to the EU residency tests).
+- **No implicit download:** with the model absent, provider selection yields `none` and nothing contacts HuggingFace.
+- **Re-embed:** provider/model/dimension stamp mismatch → vec table rebuilt AND all notes re-embedded (assert vector row count equals note count); duplicate detection works after.
 - **Pin:** `find_duplicates` never calls `rrf_fuse` and never touches FTS (fail-closed June decision).
 
 ## Rollout

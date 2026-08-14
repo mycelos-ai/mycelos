@@ -3,33 +3,59 @@
 from __future__ import annotations
 import logging
 import struct
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("mycelos.knowledge")
+
+LOCAL_MODEL_NAME = "intfloat/multilingual-e5-small"
+LOCAL_MODEL_DIMENSION = 384
+_QUERY_PREFIX = "query: "
+_PASSAGE_PREFIX = "passage: "
+
+
+def models_dir() -> Path:
+    """Directory holding downloaded embedding models.
+
+    Lives under the same Mycelos data directory as everything else
+    (``$MYCELOS_DATA_DIR`` override, else ``~/.mycelos``).
+    """
+    from mycelos.cli import default_data_dir
+
+    return default_data_dir() / "models"
+
+
+def local_model_present() -> bool:
+    """True when the local model is on disk (no network check, no download)."""
+    target = models_dir() / LOCAL_MODEL_NAME.replace("/", "__")
+    return target.is_dir() and any(target.iterdir())
 
 
 class EmbeddingProvider:
     """Base class for embedding providers."""
     name: str = "none"
     dimension: int = 0
+    model_id: str = ""
 
-    def compute(self, text: str) -> list[float]:
+    def compute(self, text: str, *, is_query: bool = False) -> list[float]:
         return []
 
-    def compute_batch(self, texts: list[str]) -> list[list[float]]:
-        return [self.compute(t) for t in texts]
+    def compute_batch(self, texts: list[str], *, is_query: bool = False) -> list[list[float]]:
+        return [self.compute(t, is_query=is_query) for t in texts]
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """Uses OpenAI text-embedding-3-small via SecurityProxy."""
     name = "openai"
     dimension = 1536
+    model_id = "text-embedding-3-small"
 
     def __init__(self, proxy_client: Any):
         self._proxy = proxy_client
 
-    def compute(self, text: str) -> list[float]:
-        # Call OpenAI embeddings API via proxy /http endpoint
+    def compute(self, text: str, *, is_query: bool = False) -> list[float]:
+        # OpenAI embeddings are symmetric; the flag exists for interface
+        # parity with LocalEmbeddingProvider. No prefix is added.
         result = self._proxy.http_post(
             "https://api.openai.com/v1/embeddings",
             body={"input": text, "model": "text-embedding-3-small"},
@@ -45,46 +71,125 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
-    """Uses sentence-transformers all-MiniLM-L6-v2 locally."""
-    name = "local"
-    dimension = 384
+    """Local sentence-transformers embeddings (multilingual E5).
 
-    def __init__(self):
+    The model is loaded from the pinned local directory only — this class
+    never downloads at request time. Use ``mycelos embeddings setup`` to
+    install the model.
+    """
+    name = "local"
+    dimension = LOCAL_MODEL_DIMENSION
+    model_id = LOCAL_MODEL_NAME
+
+    def __init__(self) -> None:
         self._model = None
 
-    def _load_model(self):
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
+    def load(self):
+        """Load the model from disk. Raises FileNotFoundError when absent."""
+        if self._model is not None:
+            return self._model
+        if not local_model_present():
+            raise FileNotFoundError(
+                f"Embedding model {LOCAL_MODEL_NAME} is not installed "
+                f"in {models_dir()} — run 'mycelos embeddings setup'"
+            )
+        from sentence_transformers import SentenceTransformer
+        target = models_dir() / LOCAL_MODEL_NAME.replace("/", "__")
+        self._model = SentenceTransformer(str(target), local_files_only=True)
+        return self._model
 
-    def compute(self, text: str) -> list[float]:
-        self._load_model()
-        return self._model.encode(text).tolist()
+    def compute(self, text: str, *, is_query: bool = False) -> list[float]:
+        model = self.load()
+        prefix = _QUERY_PREFIX if is_query else _PASSAGE_PREFIX
+        # SentenceTransformer.encode declares list[Tensor] | ndarray | Tensor;
+        # with the default convert_to_numpy=True (unchanged here) a single
+        # string input always yields a 1-D ndarray, so list(...) is floats.
+        return list(model.encode(prefix + text))
+
+    def compute_batch(self, texts: list[str], *, is_query: bool = False) -> list[list[float]]:
+        model = self.load()
+        prefix = _QUERY_PREFIX if is_query else _PASSAGE_PREFIX
+        # Same convert_to_numpy=True default: a list input yields a 2-D
+        # ndarray, so each row converts cleanly to list[float].
+        vectors = model.encode([prefix + t for t in texts])
+        return [list(v) for v in vectors]
 
 
 class FallbackProvider(EmbeddingProvider):
     """No embeddings available — search uses FTS5 only."""
     name = "none"
     dimension = 0
+    model_id = ""
 
 
-def get_embedding_provider(openai_key: str | None = None,
-                            proxy_client: Any = None,
-                            eu_mode: bool = False) -> EmbeddingProvider:
-    """Get the best available embedding provider.
+class EUModeViolation(Exception):
+    """Raised when configuration demands a non-EU provider under EU mode."""
 
-    When ``eu_mode`` is on, the OpenAI provider (which POSTs note text to
-    api.openai.com) is never selected — local embeddings or FTS5-only.
+
+_VALID_PROVIDERS = ("openai", "local", "none")
+
+
+def select_provider_name(
+    explicit: str | None,
+    eu_mode: bool,
+    has_openai_credential: bool,
+    local_model_present: bool,
+) -> str:
+    """Decide which embedding provider to use. Pure, fail-closed.
+
+    Order: explicit setting > EU mode > real OpenAI credential > local
+    model > none. Every uncertainty resolves downward: an explicit choice
+    whose prerequisite is missing degrades rather than reaching out to the
+    network at request time.
     """
-    if openai_key and proxy_client and not eu_mode:
+    if explicit in _VALID_PROVIDERS:
+        if explicit == "openai":
+            if eu_mode:
+                raise EUModeViolation(
+                    "embedding_provider=openai is not allowed while EU mode is on"
+                )
+            return "openai" if has_openai_credential else "none"
+        if explicit == "local":
+            return "local" if local_model_present else "none"
+        return "none"
+    if eu_mode:
+        return "local" if local_model_present else "none"
+    if has_openai_credential:
+        return "openai"
+    if local_model_present:
+        return "local"
+    return "none"
+
+
+def get_embedding_provider(
+    *,
+    explicit: str | None = None,
+    eu_mode: bool = False,
+    has_openai_credential: bool = False,
+    proxy_client: Any = None,
+) -> EmbeddingProvider:
+    """Build the provider the configuration actually allows.
+
+    Raises EUModeViolation when the configuration explicitly demands a
+    non-EU provider under EU mode. Any other unmet prerequisite degrades
+    to FallbackProvider (FTS-only search) — never a network download.
+    """
+    choice = select_provider_name(
+        explicit, eu_mode, bool(has_openai_credential and proxy_client),
+        local_model_present(),
+    )
+    if choice == "openai":
         return OpenAIEmbeddingProvider(proxy_client)
-    try:
+    if choice == "local":
         provider = LocalEmbeddingProvider()
-        provider._load_model()
+        try:
+            provider.load()
+        except Exception as e:
+            logger.warning("Local embedding model unavailable (%s) — FTS5 only", e)
+            return FallbackProvider()
         return provider
-    except Exception as e:
-        logger.info("No embedding provider available (%s) — using FTS5 only", e)
-        return FallbackProvider()
+    logger.info("No embedding provider selected — search uses FTS5 only")
+    return FallbackProvider()
 
 
 def serialize_embedding(embedding: list[float]) -> bytes:

@@ -36,6 +36,26 @@ Closed the remaining gaps from the June claims audit:
   secondary note, so it stays visible and restorable during the 30-day
   tombstone window.
 
+### Local embeddings are the reliable default
+
+- **Provider selection is deterministic and fail-closed.** Previously any
+  proxy client counted as an OpenAI key, so a setup without an OpenAI
+  credential still selected the OpenAI provider and every embedding call
+  silently returned nothing — semantic search was dead without a single
+  error. Selection now asks for a real credential and degrades
+  openai → local → none, with EU mode never reaching a US provider.
+- **Multilingual model.** Local embeddings use
+  `intfloat/multilingual-e5-small` with correct E5 role prefixes
+  (`query:` / `passage:`) instead of the English-centric MiniLM — noticeably
+  better recall on German notes.
+- **No implicit downloads.** The model is installed explicitly via
+  `mycelos embeddings setup`; a missing model degrades to FTS-only search
+  instead of pulling ~120 MB inside a request. `mycelos embeddings status`
+  and `mycelos doctor` report provider, model, and backfill state.
+- **Automatic re-embedding.** Changing provider, model, or dimension now
+  rebuilds every note's vector instead of leaving the vector index silently
+  empty.
+
 ## Week 25 (2026) — OKF export (proof-of-concept)
 
 Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
