@@ -45,7 +45,6 @@ def handler_env(storage: SQLiteStorage):
     """
     kb = _FakeKB(topics=["topics/work/vorfina", "topics/work/vorfina/mandanten",
                          "topics/private"])
-    kb.created_topics = []
     broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
                           "related_note_paths": [], "new_topic_name": None})
     app = _FakeApp(storage, broker, kb)
@@ -113,8 +112,50 @@ def test_new_folder_directly_under_attachment_always_asks(handler_env) -> None:
     row = storage.fetchone(
         "SELECT kind FROM organizer_suggestions WHERE note_path=?",
         ("notes/mail-1",))
-    assert row is not None and row["kind"] == "new_topic"
+    # 'new_topic_confirm', NOT 'new_topic' — must never be eligible for
+    # the 24h auto-accept sweep (should_auto_accept only checks kind +
+    # confidence, it has no notion of "always ask").
+    assert row is not None and row["kind"] == "new_topic_confirm"
     assert kb.created_topics == []      # nothing created without confirmation
+
+
+def test_scoped_new_topic_confirm_survives_stale_auto_accept(handler_env) -> None:
+    """Regression: a scoped new-folder suggestion must NOT be auto-accepted
+    after 24h, however high its confidence — and if it ever were applied,
+    it must land under the attachment, never at root. Reproduces the
+    Critical bypass: 'new_topic' was in _AUTO_ACCEPTABLE_KINDS, so the
+    stale sweep created the topic at root via _apply_suggestion's
+    f"topics/{slugify(name)}", outside the source's permitted subtree and
+    without ever asking the user."""
+    handler, storage, kb, broker, svc = handler_env
+    svc.attach("gmail", "topics/work/vorfina")
+    _seed_note(storage, "notes/mail-1", connector="gmail")
+    broker.answer = [{"note_path": "notes/mail-1",
+                      "topic_path": None,
+                      "confidence": 1.0,
+                      "related_note_paths": [],
+                      "new_topic_name": "Schmidt"}]
+    handler.run(user_id="default")
+
+    row = storage.fetchone(
+        "SELECT id, kind, status FROM organizer_suggestions WHERE note_path=?",
+        ("notes/mail-1",))
+    assert row["kind"] == "new_topic_confirm"
+    assert row["status"] == "pending"
+
+    # Backdate it past the 24h staleness window, then run the sweep.
+    storage.execute(
+        "UPDATE organizer_suggestions SET created_at=datetime('now', '-25 hours') "
+        "WHERE id=?", (row["id"],),
+    )
+    accepted = handler._auto_accept_stale(storage, kb, "default")
+
+    assert accepted == 0
+    assert kb.created_topics == []      # topic was NOT created at all
+    assert kb.moved == []               # note was NOT moved
+    still_pending = storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (row["id"],))
+    assert still_pending["status"] == "pending"   # still awaiting the user
 
 
 def test_note_without_source_keeps_full_tree(handler_env) -> None:

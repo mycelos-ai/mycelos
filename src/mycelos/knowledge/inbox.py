@@ -15,7 +15,7 @@ from mycelos.knowledge.note import slugify
 from mycelos.storage.database import SQLiteStorage
 
 
-_KINDS = ("move", "new_topic", "link", "refine_type", "merge")
+_KINDS = ("move", "new_topic", "new_topic_confirm", "link", "refine_type", "merge")
 
 
 class InboxService:
@@ -120,6 +120,14 @@ class InboxService:
                             "status": "pending",
                             "_synthetic": True,
                         })
+
+            elif kind == "new_topic_confirm":
+                # Always needs an explicit user decision (opens a new main
+                # category under a scoped source's attachment) — never part
+                # of the auto-grouped "is_new" bucket that accept-all would
+                # apply unattended. Surfaced in the ungrouped list instead,
+                # same treatment as merge.
+                links.append(row)
 
             elif kind in ("link", "refine_type", "merge"):
                 links.append(row)

@@ -12,6 +12,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from mycelos.knowledge.inbox import InboxService
+from mycelos.knowledge.note import slugify
+from mycelos.knowledge.source_attachment import (
+    fallback_path,
+    is_permitted,
+    needs_confirmation,
+    permitted_paths,
+)
+from mycelos.knowledge.source_attachment import SourceAttachmentService
 from mycelos.prompts import PromptLoader
 from mycelos.knowledge.organizer import (
     Classification,
@@ -41,7 +49,6 @@ class KnowledgeOrganizerHandler:
 
     def __init__(self, app: Any) -> None:
         self._app = app
-        from mycelos.knowledge.source_attachment import SourceAttachmentService
         self._attachments = SourceAttachmentService(
             app.storage,
             notifier=getattr(app, "config_notifier", None),
@@ -148,10 +155,6 @@ class KnowledgeOrganizerHandler:
         # permitted subtrees only. Notes without a source (hand-written,
         # chat capture) keep the full tree, and a source with no
         # attachments configured is unscoped rather than blocked.
-        from mycelos.knowledge.source_attachment import (
-            fallback_path, is_permitted, needs_confirmation, permitted_paths,
-        )
-
         def _source_of(note: dict) -> str | None:
             raw = note.get("source")
             if not raw:
@@ -215,17 +218,24 @@ class KnowledgeOrganizerHandler:
                     suggested += 1
                     continue
                 if result.new_topic_name:
-                    from mycelos.knowledge.note import slugify
-                    proposed = f"{fallback_path(attachments)}/" \
-                               f"{slugify(result.new_topic_name)}"
+                    scoped_parent = fallback_path(attachments)
+                    proposed = f"{scoped_parent}/{slugify(result.new_topic_name)}"
                     if needs_confirmation(proposed, attachments):
                         # A new main category under an attachment is the
-                        # user's decision, whatever the confidence.
+                        # user's decision, whatever the confidence. Kind is
+                        # 'new_topic_confirm', NOT 'new_topic' — it must
+                        # never be picked up by the 24h auto-accept sweep
+                        # (should_auto_accept only checks kind + confidence
+                        # floor, it has no notion of "always ask"). The
+                        # scoped parent travels in the payload so a later
+                        # confirmed accept creates the topic inside scope,
+                        # never at root.
                         inbox.add(
                             note_path=note["path"],
-                            kind="new_topic",
+                            kind="new_topic_confirm",
                             payload={"name": result.new_topic_name,
-                                     "members": [note["path"]]},
+                                     "members": [note["path"]],
+                                     "parent": scoped_parent},
                             confidence=result.confidence,
                         )
                         self._mark_state(storage, note["path"], "suggested")

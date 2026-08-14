@@ -426,18 +426,24 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
     topics_created = 0
     failed = 0
     skipped_merges = 0
+    skipped_new_topic_confirm = 0
 
     for group in groups:
         if group.get("topic") is None:
-            # Ungrouped suggestions: links are applied; merges are
-            # destructive and NEVER part of accept-all — the user
-            # confirms each one individually.
+            # Ungrouped suggestions: links are applied; merges and
+            # new_topic_confirm are never part of accept-all — both
+            # require the user to confirm each one individually (merge is
+            # destructive, new_topic_confirm opens a new main category
+            # under a scoped source's attachment).
             for s in group["notes"]:
                 if s.get("_synthetic"):
                     continue
                 kind = s.get("kind")
                 if kind == "merge":
                     skipped_merges += 1
+                    continue
+                if kind == "new_topic_confirm":
+                    skipped_new_topic_confirm += 1
                     continue
                 if kind == "link":
                     try:
@@ -493,13 +499,15 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
             "organizer.accept_all",
             user_id=user_id,
             details={"accepted": accepted, "topics_created": topics_created,
-                     "failed": failed, "skipped_merges": skipped_merges},
+                     "failed": failed, "skipped_merges": skipped_merges,
+                     "skipped_new_topic_confirm": skipped_new_topic_confirm},
         )
     except Exception:
         pass
 
     return {"accepted": accepted, "topics_created": topics_created,
-            "failed": failed, "skipped_merges": skipped_merges}
+            "failed": failed, "skipped_merges": skipped_merges,
+            "skipped_new_topic_confirm": skipped_new_topic_confirm}
 
 
 @router.post("/api/organizer/suggestions/{sid}/accept")
@@ -522,11 +530,14 @@ async def organizer_accept(sid: int, request: Request) -> Any:
                 return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
             if not kb.move_to_topic(sug["note_path"], target):
                 return JSONResponse({"error": "apply failed: note not found"}, status_code=500)
-        elif kind == "new_topic":
+        elif kind in ("new_topic", "new_topic_confirm"):
             name = payload.get("name")
             if not name:
                 return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
-            new_path = kb.create_topic(name)
+            # new_topic_confirm carries the scoped parent (the attachment
+            # the source is bound to) so a confirmed accept still creates
+            # the folder inside scope, never at root.
+            new_path = kb.create_topic(name, parent=payload.get("parent"))
             for member in payload.get("members", []):
                 if not kb.move_to_topic(member, new_path):
                     return JSONResponse(
