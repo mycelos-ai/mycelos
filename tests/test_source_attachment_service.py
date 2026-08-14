@@ -195,3 +195,39 @@ def test_delete_topic_removes_attachments(app) -> None:
     svc.attach("gmail", topic)
     kb.delete_topic(topic)
     assert svc.list_attachments("gmail") == []
+
+
+def test_hard_delete_sweep_removes_attachments_on_archived_topic(app) -> None:
+    """A topic can disappear without ever going through delete_topic:
+    archive_note has no type='topic' guard, so a topic archived via the
+    note_archive tool / gateway PATCH shortcut is hard-deleted by the
+    organizer's 30-day sweep exactly like any other archived note — bypassing
+    delete_topic entirely. The attachment cleanup must happen at the sweep
+    too, or it silently survives pointing at a path that no longer exists."""
+    import freezegun
+
+    from mycelos.agents.handlers.knowledge_organizer_handler import (
+        KnowledgeOrganizerHandler,
+    )
+
+    kb = app.knowledge_base
+    svc = SourceAttachmentService(app.storage)
+    topic = kb.create_topic("Verschwunden")
+    svc.attach("gmail", topic)
+
+    kb.archive_note(topic)
+    # Backdate past the 30-day hard-delete threshold.
+    app.storage.execute(
+        "UPDATE knowledge_notes SET organizer_seen_at=datetime('now', '-31 days') "
+        "WHERE path=?",
+        (topic,),
+    )
+
+    with freezegun.freeze_time():
+        handler = KnowledgeOrganizerHandler(app)
+        handler.run(user_id="default")
+
+    note = app.storage.fetchone(
+        "SELECT path FROM knowledge_notes WHERE path=?", (topic,))
+    assert note is None                              # note row is gone
+    assert svc.list_attachments("gmail") == []        # attachment cleaned up too

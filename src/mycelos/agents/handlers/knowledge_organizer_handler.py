@@ -116,6 +116,14 @@ class KnowledgeOrganizerHandler:
                 storage.execute(
                     "DELETE FROM organizer_suggestions WHERE note_path=?", (path,)
                 )
+                # A hard-deleted path may have been a topic with sources
+                # attached to it (archive_note has no type='topic' guard, so
+                # a topic can reach this sweep the same way a note can) —
+                # drop those attachments too, or they'd silently point at a
+                # path that no longer exists.
+                storage.execute(
+                    "DELETE FROM source_attachments WHERE topic_path=?", (path,)
+                )
                 self._audit(user_id, "organizer.hard_delete", {"path": path})
                 hard_deleted += 1
 
