@@ -10,11 +10,6 @@ root attachment and means "anywhere".
 """
 from __future__ import annotations
 
-import logging
-from typing import Any
-
-logger = logging.getLogger("mycelos.knowledge")
-
 
 def _covers(attachment: str, path: str) -> bool:
     """True when `path` is `attachment` itself or lives beneath it.
@@ -36,9 +31,6 @@ def permitted_paths(attachments: list[str], all_topics: list[str]) -> list[str]:
         for attachment in attachments
         if _covers(attachment, path)
     }
-    # An attachment may point at a topic that no longer exists; keep the
-    # ones that do so the caller can still offer them.
-    permitted |= {a for a in attachments if a and a in all_topics}
     return sorted(permitted)
 
 

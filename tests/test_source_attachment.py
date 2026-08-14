@@ -90,3 +90,16 @@ def test_needs_confirmation_under_root_attachment() -> None:
     """Root's direct children are top-level topics — a structural decision."""
     assert needs_confirmation("topics/newthing", [""]) is True
     assert needs_confirmation("topics/newthing/sub", [""]) is False
+
+
+def test_stale_attachment_contributes_nothing() -> None:
+    """A dangling attachment (topic deleted) permits nothing — the caller
+    falls back via fallback_path rather than filing into a gone topic."""
+    assert permitted_paths(["topics/deleted"], TOPICS) == []
+    assert permitted_paths(["topics/deleted", "topics/private"], TOPICS) == ["topics/private"]
+
+
+def test_overlapping_attachments_are_deduplicated() -> None:
+    got = permitted_paths(["topics/work", "topics/work/vorfina"], TOPICS)
+    assert len(got) == len(set(got))
+    assert got == sorted(got)
