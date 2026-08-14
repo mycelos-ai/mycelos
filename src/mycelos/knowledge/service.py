@@ -143,31 +143,63 @@ class KnowledgeBase:
         return parse_frontmatter(file_path.read_text(encoding="utf-8")).content
 
     def _init_embedding_provider(self):
-        """Initialize the best available embedding provider."""
-        from mycelos.knowledge.embeddings import get_embedding_provider
-        openai_key = None
-        try:
-            if getattr(self._app, 'proxy_client', None):
-                # Check if OpenAI credential exists via a lightweight call
-                openai_key = "available"  # proxy handles the actual key
-        except Exception:
-            pass
-        proxy = getattr(self._app, 'proxy_client', None)
+        """Gather configuration facts and let embeddings.py decide."""
+        from mycelos.knowledge.embeddings import (
+            EUModeViolation, FallbackProvider, get_embedding_provider,
+        )
+        proxy = getattr(self._app, "proxy_client", None)
+        has_credential = self._has_openai_credential(proxy)
         eu_mode = False
         try:
             from mycelos.llm.eu_mode import get_eu_mode
             eu_mode = get_eu_mode(self._app, "default")
         except Exception:
             pass
-        return get_embedding_provider(openai_key=openai_key, proxy_client=proxy, eu_mode=eu_mode)
+        explicit = None
+        try:
+            row = self._app.storage.fetchone(
+                "SELECT value FROM knowledge_config WHERE key = 'embedding_provider_setting'"
+            )
+            explicit = row["value"] if row else None
+        except Exception:
+            pass
+        try:
+            return get_embedding_provider(
+                explicit=explicit, eu_mode=eu_mode,
+                has_openai_credential=has_credential, proxy_client=proxy,
+            )
+        except EUModeViolation as e:
+            logger.error("Embedding configuration refused: %s", e)
+            return FallbackProvider()
+
+    @staticmethod
+    def _has_openai_credential(proxy) -> bool:
+        """Ask the credential proxy whether an OpenAI credential is actually
+        stored — never inferred from the proxy object merely existing.
+
+        Uses the same metadata-only ``credential_list()`` RPC that
+        ``DelegatingCredentialProxy.list_services`` uses elsewhere, so the
+        plaintext key never has to leave the SecurityProxy container. Fails
+        closed: any exception (proxy unreachable, malformed response, no
+        proxy at all) means "no credential".
+        """
+        if proxy is None:
+            return False
+        try:
+            credentials = proxy.credential_list()
+            return any(c.get("service") == "openai" for c in credentials)
+        except Exception:
+            return False
 
     def _ensure_vec_table(self):
         """Create sqlite-vec virtual table if provider has embeddings.
 
-        If the provider dimension changed (e.g., switched from local 384 to
-        OpenAI 1536), drops and recreates the table. Existing embeddings
-        become invalid — FTS5 search is used as fallback until they're
-        recomputed.
+        If the provider's dimension, name, or model identity changed since
+        the table was last built (e.g. local 384 → OpenAI 1536, or a
+        same-dimension model swap like MiniLM → e5-small), drops and
+        recreates the table, then re-embeds every note from scratch —
+        single-user deployment, so old vectors are disposable rather than
+        migrated.
         """
         if self._embedding_provider.dimension == 0:
             return
@@ -178,21 +210,49 @@ class KnowledgeBase:
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
             dim = self._embedding_provider.dimension
+            provider_name = self._embedding_provider.name
+            model_id = self._embedding_provider.model_id
 
-            # Check if dimension changed (stored in knowledge_config table)
+            # Check if provider identity changed (stamped in knowledge_config).
             stored_dim = None
+            stored_provider = None
+            stored_model = None
             try:
                 row = self._app.storage.fetchone(
                     "SELECT value FROM knowledge_config WHERE key = 'embedding_dimension'"
                 )
                 if row:
                     stored_dim = int(row["value"])
+                row = self._app.storage.fetchone(
+                    "SELECT value FROM knowledge_config WHERE key = 'embedding_provider'"
+                )
+                if row:
+                    stored_provider = row["value"]
+                row = self._app.storage.fetchone(
+                    "SELECT value FROM knowledge_config WHERE key = 'embedding_model'"
+                )
+                if row:
+                    stored_model = row["value"]
             except Exception:
                 pass
 
-            if stored_dim and stored_dim != dim:
-                # Dimension changed — drop and recreate
-                logger.info("Embedding dimension changed (%d → %d) — recreating vector table", stored_dim, dim)
+            # A mismatch in ANY stamp — including a same-dimension model
+            # swap that leaves stored_dim untouched — invalidates the
+            # existing vectors. This also covers the none→provider
+            # transition (stored_dim is None on a fresh install, or on a
+            # KB that only ever had FallbackProvider): missing stamps must
+            # trigger the backfill too, or notes written before `mycelos
+            # embeddings setup` never get vectors. A genuinely fresh KB
+            # with zero notes just backfills zero notes — harmless.
+            changed = (
+                stored_dim != dim or stored_provider != provider_name or stored_model != model_id
+            )
+            if changed:
+                logger.info(
+                    "Embedding config changed (dim %s → %d, provider %s → %s, model %s → %s) — "
+                    "recreating vector table",
+                    stored_dim, dim, stored_provider, provider_name, stored_model, model_id,
+                )
                 try:
                     conn.execute("DROP TABLE IF EXISTS knowledge_vec")
                     conn.commit()
@@ -216,13 +276,57 @@ class KnowledgeBase:
             )
             self._app.storage.execute(
                 "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
-                ("embedding_provider", self._embedding_provider.name),
+                ("embedding_provider", provider_name),
             )
+            self._app.storage.execute(
+                "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
+                ("embedding_model", model_id),
+            )
+
+            if changed:
+                self._backfill_embeddings()
         except Exception as e:
             logger.warning("sqlite-vec not available: %s", e)
             # Fallback: no vector search
             from mycelos.knowledge.embeddings import FallbackProvider
             self._embedding_provider = FallbackProvider()
+
+    def _backfill_embeddings(self) -> int:
+        """Re-embed every note after a provider/model/dimension change.
+
+        Single-user deployment: old vectors are disposable, so this is a
+        full rebuild rather than an incremental migration. Failures log a
+        warning and stop the loop rather than crashing startup — the
+        vector arm simply stays partial and hybrid search degrades to FTS.
+        """
+        if self._embedding_provider.dimension == 0:
+            return 0
+        notes = self._app.storage.fetchall(
+            "SELECT id, path, title FROM knowledge_notes WHERE type != 'topic'"
+        )
+        if not notes:
+            return 0
+        from mycelos.knowledge.embeddings import serialize_embedding
+        done = 0
+        batch_size = 32
+        for start in range(0, len(notes), batch_size):
+            chunk = notes[start:start + batch_size]
+            texts = [f"{n['title']} {self._note_body(n['path'])}" for n in chunk]
+            try:
+                vectors = self._embedding_provider.compute_batch(texts)
+            except Exception as e:
+                logger.warning("Embedding backfill failed at offset %d: %s", start, e)
+                break
+            for note, vector in zip(chunk, vectors):
+                if not vector:
+                    continue
+                self._app.storage.execute(
+                    "INSERT OR REPLACE INTO knowledge_vec(rowid, embedding) VALUES (?, ?)",
+                    (note["id"], serialize_embedding(vector)),
+                )
+                done += 1
+        logger.info("Re-embedded %d notes with %s", done, self._embedding_provider.name)
+        return done
 
     # ─── Write ─────────────────────────────────────────────────────────────────
 
@@ -1132,11 +1236,14 @@ class KnowledgeBase:
         is available or the vector query fails — never falls back to keyword
         search, so callers (e.g. duplicate detection) can rely on the
         threshold actually being honored.
+
+        Always embeds ``text`` as a query (E5 ``query: `` prefix) — every
+        caller passes search/duplicate-lookup text, never a document body.
         """
         if self._embedding_provider.dimension == 0:
             return []
         try:
-            embedding = self._embedding_provider.compute(text)
+            embedding = self._embedding_provider.compute(text, is_query=True)
             if not embedding:
                 return []
             from mycelos.knowledge.embeddings import serialize_embedding

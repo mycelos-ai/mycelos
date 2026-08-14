@@ -439,6 +439,92 @@ def check_sqlite_vec(app: "App") -> dict[str, Any]:
         }
 
 
+def check_embeddings(app: "App") -> dict[str, Any]:
+    """Check the embedding provider, local model presence, and vector
+    backfill progress.
+
+    Reports the same facts as `mycelos embeddings status`. Warns when no
+    provider is selected while notes exist (search degraded to FTS5-only),
+    and when the vector row count trails the note count by a wide margin
+    (backfill pending, e.g. after a provider/model change).
+    """
+    from mycelos.knowledge.embeddings import (
+        LOCAL_MODEL_DIMENSION,
+        LOCAL_MODEL_NAME,
+        local_model_present,
+        models_dir,
+    )
+
+    try:
+        provider_name = app.knowledge_base._embedding_provider.name
+    except Exception as e:
+        return {
+            "category": "embeddings",
+            "status": "unknown",
+            "details": f"could not determine embedding provider: {e}",
+        }
+
+    model_present = local_model_present()
+
+    try:
+        note_row = app.storage.fetchone(
+            "SELECT COUNT(*) AS c FROM knowledge_notes WHERE status != 'archived'"
+        )
+        note_count = note_row["c"] if note_row else 0
+    except Exception:
+        note_count = 0
+
+    try:
+        vec_row = app.storage.fetchone("SELECT COUNT(*) AS c FROM knowledge_vec")
+        vector_count = vec_row["c"] if vec_row else 0
+    except Exception:
+        vector_count = 0
+
+    base = {
+        "category": "embeddings",
+        "provider": provider_name,
+        "model": LOCAL_MODEL_NAME,
+        "model_present": model_present,
+        "models_dir": str(models_dir()),
+        "dimension": LOCAL_MODEL_DIMENSION,
+        "vector_count": vector_count,
+        "note_count": note_count,
+    }
+
+    if provider_name == "none" and note_count > 0:
+        return {
+            **base,
+            "status": "warning",
+            "details": (
+                f"No embedding provider selected with {note_count} note(s) present "
+                f"— search is FTS5-only. Run: mycelos embeddings setup"
+            ),
+        }
+
+    # Backfill pending: vector rows trail notes by more than half. Only
+    # meaningful once there's an active provider and at least a few notes —
+    # a brand-new KB with 1-2 notes and a slightly lagging indexer isn't
+    # worth flagging.
+    if provider_name != "none" and note_count >= 5 and vector_count < note_count // 2:
+        return {
+            **base,
+            "status": "warning",
+            "details": (
+                f"Vector backfill pending: {vector_count} vector row(s) vs "
+                f"{note_count} note(s). Access the knowledge base to trigger re-embedding."
+            ),
+        }
+
+    return {
+        **base,
+        "status": "ok",
+        "details": (
+            f"provider={provider_name}, model_present={model_present}, "
+            f"vectors={vector_count}/{note_count}"
+        ),
+    }
+
+
 def check_organizer(app: "App") -> dict[str, Any]:
     """Check knowledge organizer queue and last run."""
     pending_row = app.storage.fetchone(
@@ -538,6 +624,7 @@ def run_health_checks(
     results.extend([
         check_storage(app),
         check_sqlite_vec(app),
+        check_embeddings(app),
         check_credentials(app),
         check_telegram(app),
         check_connectors(app),

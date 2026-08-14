@@ -78,18 +78,18 @@ def test_eu_residency_error_is_raisable():
 class TestEmbeddingProviderEuGate:
     def test_eu_mode_never_selects_openai_embeddings(self):
         """With EU mode on, get_embedding_provider must not return the OpenAI
-        provider (which POSTs note text to api.openai.com), even when an
-        OpenAI key + proxy exist."""
+        provider (which POSTs note text to api.openai.com), even when a real
+        OpenAI credential + proxy exist."""
         from mycelos.knowledge.embeddings import get_embedding_provider
         provider = get_embedding_provider(
-            openai_key="available", proxy_client=object(), eu_mode=True
+            has_openai_credential=True, proxy_client=object(), eu_mode=True
         )
         assert provider.name in ("local", "none")
 
     def test_eu_mode_off_keeps_openai_when_available(self):
         from mycelos.knowledge.embeddings import get_embedding_provider
         provider = get_embedding_provider(
-            openai_key="available", proxy_client=object(), eu_mode=False
+            has_openai_credential=True, proxy_client=object(), eu_mode=False
         )
         assert provider.name == "openai"
 
