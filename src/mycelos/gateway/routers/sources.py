@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from mycelos.gateway.routers._helpers import resolve_user_id
+from mycelos.knowledge.connector_ingest import INGEST_SOURCES
 from mycelos.knowledge.source_attachment import (
     SourceAttachmentService, permitted_paths,
 )
@@ -23,8 +24,21 @@ def _service(request: Request) -> SourceAttachmentService:
     )
 
 
+def _unknown_source(source_id: str) -> JSONResponse | None:
+    """Fail closed: a typo in source_id must never scope silently to nothing.
+
+    INGEST_SOURCES is the single registry of ingest source ids (used by the
+    scheduler and the manual-ingest endpoint alike) — the authority here too.
+    """
+    if source_id not in INGEST_SOURCES:
+        return JSONResponse({"error": "unknown source"}, status_code=422)
+    return None
+
+
 @router.get("/api/sources/{source_id}")
 def get_source(source_id: str, request: Request) -> Any:
+    # No validation here: a known-but-unconfigured source is a legitimate
+    # read (empty attachments, empty rule), not an error.
     mycelos = request.app.state.mycelos
     user_id = resolve_user_id(request)
     svc = _service(request)
@@ -47,6 +61,8 @@ def get_source(source_id: str, request: Request) -> Any:
 
 @router.post("/api/sources/{source_id}/attachments")
 async def attach(source_id: str, request: Request) -> Any:
+    if (err := _unknown_source(source_id)) is not None:
+        return err
     body = await request.json()
     topic_path = (body or {}).get("topic_path")
     if topic_path is None:
@@ -76,6 +92,8 @@ async def detach(source_id: str, request: Request) -> Any:
 
 @router.put("/api/sources/{source_id}/rule")
 async def set_rule(source_id: str, request: Request) -> Any:
+    if (err := _unknown_source(source_id)) is not None:
+        return err
     body = await request.json()
     rule_text = (body or {}).get("rule_text")
     if rule_text is None:

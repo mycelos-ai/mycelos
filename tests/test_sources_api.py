@@ -66,6 +66,31 @@ def test_get_source_reports_subtree_size(api_client) -> None:
     assert data["attachments"][0]["covers"] >= 1
 
 
+def test_attach_rejects_unknown_source(api_client) -> None:
+    """Fail closed: a typo in source_id must not silently scope to nothing."""
+    client, _ = api_client
+    resp = client.post("/api/sources/gmial/attachments", json={"topic_path": ""})
+    assert resp.status_code == 422
+
+
+def test_attach_accepts_known_source(api_client) -> None:
+    client, _ = api_client
+    resp = client.post("/api/sources/gmail/attachments", json={"topic_path": ""})
+    assert resp.status_code == 200
+
+
+def test_set_rule_rejects_unknown_source(api_client) -> None:
+    client, _ = api_client
+    resp = client.put("/api/sources/Gmail/rule", json={"rule_text": "x"})
+    assert resp.status_code == 422
+
+
+def test_set_rule_accepts_known_source(api_client) -> None:
+    client, _ = api_client
+    resp = client.put("/api/sources/gmail/rule", json={"rule_text": "Invoices to Vorfina."})
+    assert resp.status_code == 200
+
+
 def test_detach(api_client) -> None:
     client, app_obj = api_client
     topic = app_obj.knowledge_base.create_topic("Vorfina")
