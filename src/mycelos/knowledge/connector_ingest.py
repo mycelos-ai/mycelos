@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("mycelos.knowledge")
@@ -145,6 +146,34 @@ YT_SUMMARY_CONNECTOR = "yt-summary"
 _HIGH_WATER_KEY = "ingest.yt-summary.since"
 MAX_SYNC_PAGES = 50          # hard stop against a runaway producer
 
+# The producer (a Raspberry Pi without an RTC) can have forward clock skew,
+# and a malformed/adversarial timestamp could otherwise claim any value.
+# Never let the high-water mark advance beyond "now" plus this tolerance —
+# an item past the clamp is still imported, it just cannot move the mark.
+HIGH_WATER_CLOCK_SKEW_TOLERANCE = timedelta(hours=1)
+
+
+def _clamp_high_water_mark(ts: str) -> str:
+    """Cap a candidate high-water mark at consumer-now + skew tolerance.
+
+    Comparison and storage of the mark are both plain lexicographic string
+    operations, so the clamp must itself produce a string that sorts
+    correctly against ISO-8601 timestamps (offset-aware, zero-padded).
+    An unparseable `ts` is clamped away entirely (never advances the mark)
+    rather than risking a non-ISO string entering the comparison chain.
+    """
+    limit = datetime.now(timezone.utc) + HIGH_WATER_CLOCK_SKEW_TOLERANCE
+    normalized = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed > limit:
+        return limit.isoformat()
+    return ts
+
 
 def _stored_timestamp(storage: Any, connector: str, external_id: str) -> str | None:
     """The provenance timestamp currently stored for this external id."""
@@ -157,11 +186,19 @@ def _stored_timestamp(storage: Any, connector: str, external_id: str) -> str | N
     return row["ts"] if row else None
 
 
-def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> None:
+def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> bool:
     """Update an existing note's content/tags and refresh its provenance.
 
     Note: kb.update() has no title parameter, so a title change upstream
     does not retitle the note (deliberate — see task brief).
+
+    Returns False when the content write did not happen (row missing, or
+    kb.update() reports the note file is gone) — the caller must not treat
+    that as a successful update. The provenance timestamp is rewritten
+    ONLY when kb.update() actually returned True: rewriting it unconditionally
+    would advance "source.timestamp" past content that was never written,
+    so the next run's dedup check (stored timestamp == new timestamp) would
+    wrongly conclude the note is already current and skip it forever.
     """
     row = app.storage.fetchone(
         "SELECT path, source FROM knowledge_notes "
@@ -170,9 +207,11 @@ def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> None:
         (connector, note["external_id"]),
     )
     if row is None:
-        return
+        return False
     path = row["path"]
-    kb.update(path, content=note["content"], tags=note["tags"])
+    updated = kb.update(path, content=note["content"], tags=note["tags"])
+    if not updated:
+        return False
 
     source = json.loads(row["source"]) if row["source"] else {}
     source.update({
@@ -186,6 +225,7 @@ def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> None:
         "UPDATE knowledge_notes SET source = ? WHERE path = ?",
         (json.dumps(source), path),
     )
+    return True
 
 
 def ingest_yt_summary(
@@ -206,7 +246,8 @@ def ingest_yt_summary(
     mcp = mcp or app.mcp_manager
     kb = app.knowledge_base
     counts = {"fetched": 0, "created": 0, "updated": 0,
-              "skipped_unchanged": 0, "skipped_malformed": 0}
+              "skipped_unchanged": 0, "skipped_malformed": 0,
+              "failed_updates": 0}
 
     row = app.storage.fetchone(
         "SELECT value FROM knowledge_config WHERE key = ?", (_HIGH_WATER_KEY,))
@@ -234,16 +275,21 @@ def ingest_yt_summary(
                 counts["skipped_malformed"] += 1
                 continue
             ts = note["timestamp"]
-            if ts > newest_ts:
-                newest_ts = ts
+            clamped_ts = _clamp_high_water_mark(ts)
+            if clamped_ts and clamped_ts > newest_ts:
+                newest_ts = clamped_ts
             if external_id_exists(app.storage, YT_SUMMARY_CONNECTOR,
                                   note["external_id"]):
                 if _stored_timestamp(app.storage, YT_SUMMARY_CONNECTOR,
                                      note["external_id"]) == ts:
                     counts["skipped_unchanged"] += 1
                     continue
-                _update_existing(app, kb, YT_SUMMARY_CONNECTOR, note)
-                counts["updated"] += 1
+                if _update_existing(app, kb, YT_SUMMARY_CONNECTOR, note):
+                    counts["updated"] += 1
+                else:
+                    # Content write failed (note file missing) — provenance
+                    # was left untouched, so the item is re-offered next run.
+                    counts["failed_updates"] += 1
             else:
                 kb.write(
                     title=note["title"], content=note["content"],

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,45 @@ def test_changed_item_updates_content_in_place(app) -> None:
     assert "Rewritten after resummarize" in body
 
 
+def test_update_with_missing_note_file_leaves_timestamp_and_counts_failure(app) -> None:
+    """DB row present, .md file gone (e.g. deleted out-of-band): kb.update()
+    returns False. The provenance timestamp must NOT be rewritten to the new
+    value — doing so would make the next run's dedup check (stored ts ==
+    new ts) wrongly believe the note is already current, hiding the failed
+    write forever behind "skipped_unchanged"."""
+    ingest_yt_summary(app, mcp=_FakeMCP([
+        {"items": [_item()], "next_cursor": "", "has_more": False}]))
+    row = app.storage.fetchone(
+        "SELECT path, source FROM knowledge_notes WHERE title='Retrieval 101'")
+    note_file = app.knowledge_base._knowledge_dir / (row["path"] + ".md")
+    note_file.unlink()
+
+    result = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": [_item(timestamp="2026-08-14T10:00:00+00:00",
+                        content="## Summary\n\nRewritten after resummarize.")],
+        "next_cursor": "", "has_more": False}]))
+
+    assert result["failed_updates"] == 1
+    assert result["updated"] == 0
+
+    after = app.storage.fetchone(
+        "SELECT source FROM knowledge_notes WHERE title='Retrieval 101'")
+    # Timestamp unchanged — old value preserved so the item is re-offered.
+    assert json.loads(after["source"])["timestamp"] == \
+           json.loads(row["source"])["timestamp"]
+    assert json.loads(after["source"])["timestamp"] != "2026-08-14T10:00:00+00:00"
+
+    # A subsequent run with the same (still-new) item retries the update
+    # instead of skipping it as "unchanged" — because the stored timestamp
+    # was never advanced past the failed write.
+    result2 = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": [_item(timestamp="2026-08-14T10:00:00+00:00",
+                        content="## Summary\n\nRewritten after resummarize.")],
+        "next_cursor": "", "has_more": False}]))
+    assert result2["skipped_unchanged"] == 0
+    assert result2["failed_updates"] == 1
+
+
 def test_pagination_consumes_all_pages(app) -> None:
     mcp = _FakeMCP([
         {"items": [_item(id="1:a", title="A")], "next_cursor": "c1", "has_more": True},
@@ -145,6 +185,78 @@ def test_malformed_item_is_counted_and_does_not_abort_the_batch(app) -> None:
     assert result["created"] == 1
 
 
+def test_non_dict_item_is_skipped_malformed_and_does_not_abort_the_run(app) -> None:
+    """items: ["oops", ...] must not raise AttributeError out of the loop —
+    that would abort the whole run on a single poisoned item, and every
+    future run would re-fetch and crash on it again (permanent block)."""
+    result = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": ["oops", _item(id="1:ok", title="OK")],
+        "next_cursor": "", "has_more": False}]))
+    assert result["skipped_malformed"] == 1
+    assert result["created"] == 1
+
+
+def test_bad_tags_type_is_skipped_malformed_and_does_not_abort_the_run(app) -> None:
+    """items: [{..., tags: 123}] must not raise TypeError out of the loop."""
+    result = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": [_item(id="1:badtags", tags=123), _item(id="1:ok", title="OK")],
+        "next_cursor": "", "has_more": False}]))
+    # tags=123 is coerced to [] by the mapper, not rejected — both items
+    # import successfully; the point of the test is that nothing raises.
+    assert result["created"] == 2
+    assert result.get("skipped_malformed", 0) == 0
+    note = app.storage.fetchone(
+        "SELECT source FROM knowledge_notes "
+        "WHERE json_extract(source, '$.external_id')='1:badtags'")
+    assert note is not None
+
+
+def test_garbage_timestamp_is_skipped_malformed_and_mark_unchanged(app) -> None:
+    """"~~~" sorts lexicographically above any ISO digit string — if it
+    reached the raw string compare it would permanently poison the mark."""
+    mark_before = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
+    result = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": [_item(timestamp="~~~")],
+        "next_cursor": "", "has_more": False}]))
+    assert result["skipped_malformed"] == 1
+    assert result["created"] == 0
+    mark_after = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
+    assert (mark_after["value"] if mark_after else "") == \
+           (mark_before["value"] if mark_before else "")
+
+
+def test_far_future_timestamp_is_imported_but_does_not_advance_mark_past_clamp(app) -> None:
+    """A forward-skewed producer clock (e.g. a Pi without an RTC) must not
+    be able to push the high-water mark past consumer-now + tolerance —
+    the item itself is still imported, only the mark is capped."""
+    from mycelos.knowledge.connector_ingest import HIGH_WATER_CLOCK_SKEW_TOLERANCE
+
+    result = ingest_yt_summary(app, mcp=_FakeMCP([{
+        "items": [_item(timestamp="9999-01-01T00:00:00+00:00")],
+        "next_cursor": "", "has_more": False}]))
+    assert result["created"] == 1
+
+    note = app.storage.fetchone(
+        "SELECT source FROM knowledge_notes WHERE title='Retrieval 101'")
+    assert json.loads(note["source"])["timestamp"] == "9999-01-01T00:00:00+00:00"
+
+    mark = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
+    stored = datetime.fromisoformat(mark["value"])
+    limit = datetime.now(timezone.utc) + HIGH_WATER_CLOCK_SKEW_TOLERANCE
+    assert stored <= limit
+    assert stored.year < 9999
+
+    # And the clamp holds even after the poisoned run: a fresh sync must
+    # not receive "9999-..." as `since` (which would starve it forever).
+    mcp2 = _FakeMCP([{"items": [], "next_cursor": "", "has_more": False}])
+    ingest_yt_summary(app, mcp=mcp2)
+    since_sent = mcp2.calls[0]["arguments"]["since"]
+    assert since_sent < "9999-01-01T00:00:00+00:00"
+
+
 class _InfiniteFakeMCP:
     """Always reports has_more=True with a fresh cursor and one item per
     page — a runaway backlog bigger than MAX_SYNC_PAGES."""
@@ -156,7 +268,10 @@ class _InfiniteFakeMCP:
     def call_tool(self, name: str, arguments: dict) -> dict:
         self.calls.append({"name": name, "arguments": arguments})
         self._n += 1
-        ts = f"2026-08-{self._n:02d}T00:00:00+00:00"
+        # Valid, monotonically increasing ISO dates (well in the past, so
+        # the clock-skew clamp in ingest_yt_summary never kicks in here).
+        ts = (datetime(2020, 1, 1, tzinfo=timezone.utc)
+              + timedelta(days=self._n)).isoformat()
         return {
             "items": [_item(id=f"1:page{self._n}", title=f"Page {self._n}",
                             timestamp=ts)],
@@ -177,7 +292,8 @@ def test_page_cap_is_flagged_truncated_and_mark_never_exceeds_processed(app) -> 
 
     mark = app.storage.fetchone(
         "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
-    newest_processed = f"2026-08-{MAX_SYNC_PAGES:02d}T00:00:00+00:00"
+    newest_processed = (datetime(2020, 1, 1, tzinfo=timezone.utc)
+                         + timedelta(days=MAX_SYNC_PAGES)).isoformat()
     assert mark["value"] == newest_processed   # never advances past what was consumed
 
 

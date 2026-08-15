@@ -81,6 +81,55 @@ def test_missing_id_or_title_raises() -> None:
         okf_item_to_note(_item(title=""))
 
 
+def test_garbage_timestamp_raises() -> None:
+    """A non-ISO timestamp must never reach the caller: the ingest loop's
+    high-water mark does a raw string compare, so garbage like "~~~"
+    (which lexicographically beats any ISO digit string) would otherwise
+    permanently poison it."""
+    with pytest.raises(ValueError):
+        okf_item_to_note(_item(timestamp="~~~"))
+
+
+def test_empty_timestamp_raises() -> None:
+    with pytest.raises(ValueError):
+        okf_item_to_note(_item(timestamp=""))
+
+
+def test_far_future_timestamp_is_accepted_by_the_mapper() -> None:
+    """The mapper only validates parseability; whether a far-future value
+    may advance the high-water mark is the ingest loop's job (clamped
+    there), not the mapper's."""
+    note = okf_item_to_note(_item(timestamp="9999-01-01T00:00:00+00:00"))
+    assert note["timestamp"] == "9999-01-01T00:00:00+00:00"
+
+
+def test_trailing_z_timestamp_is_accepted() -> None:
+    note = okf_item_to_note(_item(timestamp="2026-08-13T09:12:00Z"))
+    assert note["timestamp"] == "2026-08-13T09:12:00Z"
+
+
+def test_non_dict_item_raises_value_error() -> None:
+    """A non-dict item (e.g. items: ["oops"]) must raise ValueError, the
+    type the ingest loop already catches — not AttributeError, which
+    would escape the loop and abort the whole sync run."""
+    with pytest.raises(ValueError):
+        okf_item_to_note("oops")
+    with pytest.raises(ValueError):
+        okf_item_to_note(None)
+    with pytest.raises(ValueError):
+        okf_item_to_note(["a", "list"])
+
+
+def test_non_list_tags_are_coerced_to_empty_list() -> None:
+    """A bare string is iterable char-by-char in a naive [str(t) for t in
+    tags] comprehension ("abc" -> ["a","b","c"]) — that must not happen."""
+    assert okf_item_to_note(_item(tags="abc"))["tags"] == []
+    assert okf_item_to_note(_item(tags=123))["tags"] == []
+    assert okf_item_to_note(_item(tags=None))["tags"] == []
+    assert okf_item_to_note(_item(tags={"a": 1}))["tags"] == []
+    assert okf_item_to_note(_item(tags=["ai", "ml"]))["tags"] == ["ai", "ml"]
+
+
 def test_content_is_copied_verbatim_never_interpreted() -> None:
     """Item text is data. The mapper must not strip, rewrite or react to
     instruction-looking content — that is the organizer's (framed) job."""

@@ -79,6 +79,23 @@ continuously.
   `truncated` in its result and audit entry rather than looking like a
   completed run — so if a run stops at the limit, the user knows to
   check back and re-run.
+- **Timestamps are validated and clock-skew clamped.** An unparseable or
+  missing item timestamp is now rejected (`skipped_malformed`) instead
+  of being compared as a raw string — previously one garbage or
+  far-future value could permanently poison the high-water mark and
+  silently stop the sync. A candidate mark is also capped at
+  consumer-now plus a one-hour tolerance for the producer's clock skew;
+  the affected item still imports, only the mark stops advancing.
+- **A failed content write no longer advances provenance.** If the note
+  file behind an update went missing, the sync used to rewrite the
+  stored timestamp anyway, making the item look up-to-date forever. It
+  now leaves the old timestamp in place and counts `failed_updates`, so
+  the item is retried on the next run.
+- **A malformed item no longer aborts the whole sync.** A non-mapping
+  item or a non-list `tags` field used to raise past the loop's error
+  handling and block every future run on the same poisoned item; both
+  are now handled defensively (`skipped_malformed` / tags coerced to
+  `[]`).
 
 ## Week 25 (2026) — OKF export (proof-of-concept)
 
