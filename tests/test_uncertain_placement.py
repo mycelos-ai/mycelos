@@ -32,6 +32,26 @@ def test_column_exists_on_fresh_database(storage) -> None:
     assert "placement_confidence" in cols
 
 
+def _declared_type(storage: SQLiteStorage) -> str:
+    """The declared type of knowledge_notes.placement_confidence."""
+    row = next(
+        r
+        for r in storage.fetchall("PRAGMA table_info(knowledge_notes)")
+        if r["name"] == "placement_confidence"
+    )
+    return row["type"]
+
+
+def test_column_type_is_real_on_fresh_database(storage) -> None:
+    """The column must hold numbers, not strings.
+
+    Under TEXT affinity SQLite stores a bound float as '0.6', so
+    row["placement_confidence"] == 0.6 is False. Pin the declared type so
+    schema.sql and the migration cannot drift apart.
+    """
+    assert _declared_type(storage) == "REAL"
+
+
 def test_column_defaults_to_null(app) -> None:
     """A note nobody classified carries no confidence, not a fake zero."""
     path = app.knowledge_base.write(title="Hand written", content="x", topic="notes")
@@ -73,6 +93,10 @@ def test_migration_adds_column_to_an_existing_database(tmp_path: Path) -> None:
     assert row is not None, "the migration must not lose existing rows"
     assert row["title"] == "Pre existing"
     assert row["placement_confidence"] is None
+
+    # A migrated database must declare the same type as a fresh one, or a
+    # float written here would read back as a string on one of them.
+    assert _declared_type(reopened) == "REAL"
 
     # Idempotent: opening the same file again must not error.
     again = SQLiteStorage(db_path)

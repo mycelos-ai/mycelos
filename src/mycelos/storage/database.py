@@ -115,6 +115,12 @@ class SQLiteStorage:
             # Typed graph edges: wikilink | parent | related | merged_from.
             ("knowledge_links", "kind", "TEXT"),
         ]
+        # This loop is unconditional and runs on every connect. That matters:
+        # re-applying schema.sql only happens when one of the check-tables
+        # above is missing, so a column added to schema.sql alone never
+        # reaches an existing database. SQLite has no ADD COLUMN IF NOT
+        # EXISTS; the SELECT ... LIMIT 0 probe is what makes each entry
+        # idempotent. Add new columns here, not to schema.sql only.
         for table, column, col_type in _MIGRATIONS:
             try:
                 self._conn.execute(f"SELECT {column} FROM {table} LIMIT 0")
@@ -226,27 +232,6 @@ class SQLiteStorage:
             """
         )
         self._conn.commit()
-
-        # knowledge_notes.placement_confidence — the organizer's confidence at
-        # the moment it filed a note. Runs unconditionally: re-applying
-        # schema.sql only happens when one of the check-tables above is
-        # missing, so a column added to schema.sql alone never reaches an
-        # existing database. SQLite has no ADD COLUMN IF NOT EXISTS, so probe
-        # PRAGMA table_info first, which makes this block idempotent.
-        try:
-            cols = {
-                row["name"]
-                for row in self._conn.execute(
-                    "PRAGMA table_info(knowledge_notes)"
-                ).fetchall()
-            }
-            if cols and "placement_confidence" not in cols:
-                self._conn.execute(
-                    "ALTER TABLE knowledge_notes ADD COLUMN placement_confidence REAL"
-                )
-                self._conn.commit()
-        except sqlite3.OperationalError:
-            pass  # Table absent or a concurrent writer already added it.
 
     def initialize(self) -> None:
         """Create database and apply schema."""
