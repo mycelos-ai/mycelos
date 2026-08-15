@@ -458,3 +458,31 @@ CREATE TABLE IF NOT EXISTS tool_usage (
     last_used  TEXT,
     PRIMARY KEY (user_id, agent_id, tool_name)
 );
+
+-- Source attachments — which folders a source may file into. Declarative
+-- state (Constitution Rule 2): mutations go through
+-- SourceAttachmentService, which creates a config generation.
+-- topic_path is deliberately NOT a foreign key: topics get renamed and
+-- merged, and a dangling attachment must degrade to root rather than
+-- break ingest. '' (empty) means root = anywhere.
+CREATE TABLE IF NOT EXISTS source_attachments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+    topic_path  TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (source_id, user_id, topic_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_attachments_source
+    ON source_attachments(source_id, user_id);
+
+-- One free-text rule per source. The primary key enforces the
+-- "one rule set per source" invariant that makes multi-attachment safe.
+CREATE TABLE IF NOT EXISTS source_rules (
+    source_id   TEXT NOT NULL,
+    user_id     TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+    rule_text   TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (source_id, user_id)
+);

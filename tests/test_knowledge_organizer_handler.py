@@ -19,10 +19,14 @@ class _FakeBroker:
     def __init__(self, response_payload: dict) -> None:
         self.calls: list = []
         self._payload = response_payload
+        # When set, overrides _payload for every subsequent call — lets a
+        # test script a specific batch-array answer (list of per-note dicts).
+        self.answer: list | dict | None = None
 
     def complete(self, messages, **kwargs):
         self.calls.append((messages, kwargs))
-        return _FakeLLMResponse(json.dumps(self._payload))
+        payload = self.answer if self.answer is not None else self._payload
+        return _FakeLLMResponse(json.dumps(payload))
 
 
 class _FakeAudit:
@@ -40,6 +44,7 @@ class _FakeKB:
         self._duplicates = duplicates or {}
         self.moved: list = []
         self.linked: list = []
+        self.created_topics: list = []   # records (name, parent) calls
         self._knowledge_dir = Path("/fake")
         # note paths whose file is treated as absent — mirrors
         # KnowledgeBase.append_related_link's real no-op-on-missing-file behavior
@@ -51,6 +56,12 @@ class _FakeKB:
     def move_to_topic(self, path: str, target: str) -> bool:
         self.moved.append((path, target))
         return True
+
+    def create_topic(self, name: str, tags: list[str] | None = None,
+                      parent: str | None = None) -> str:
+        self.created_topics.append((name, parent))
+        from mycelos.knowledge.note import slugify
+        return f"{parent}/{slugify(name)}" if parent else f"topics/{slugify(name)}"
 
     def find_duplicates(self, path: str, threshold: float = 0.92, top_k: int = 3) -> list[dict]:
         return self._duplicates.get(path, [])

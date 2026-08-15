@@ -38,7 +38,10 @@ def test_accept_suggestion_marks_accepted(storage: SQLiteStorage) -> None:
 
     row = storage.fetchone("SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
     assert row["status"] == "accepted"
-    assert inbox.list_pending() == {"move": [], "new_topic": [], "link": [], "refine_type": [], "merge": []}
+    assert inbox.list_pending() == {
+        "move": [], "new_topic": [], "new_topic_confirm": [],
+        "link": [], "refine_type": [], "merge": [],
+    }
 
 
 def test_dismiss_suggestion_marks_dismissed(storage: SQLiteStorage) -> None:

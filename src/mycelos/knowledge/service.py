@@ -902,6 +902,15 @@ class KnowledgeBase:
                 (note_id, new_name),
             )
 
+        # Source attachments point at paths, not ids — re-point them so a
+        # renamed folder keeps feeding from its sources. OR IGNORE: if the
+        # source is already attached to the new path, the UNIQUE constraint
+        # would otherwise raise.
+        self._app.storage.execute(
+            "UPDATE OR IGNORE source_attachments SET topic_path=? WHERE topic_path=?",
+            (new_path, path),
+        )
+
         self._app.audit.log(
             "knowledge.topic.renamed",
             details={"old_path": path, "new_path": new_path, "new_name": new_name},
@@ -934,6 +943,20 @@ class KnowledgeBase:
         self._indexer.repoint_links(source, target)
         self._indexer.remove_note(source)
 
+        # Move source attachments to the target topic. OR IGNORE: if the
+        # source is already attached to both source and target, the UNIQUE
+        # constraint would otherwise raise on the collision.
+        self._app.storage.execute(
+            "UPDATE OR IGNORE source_attachments SET topic_path=? WHERE topic_path=?",
+            (target, source),
+        )
+        # A row that collided with an existing attachment on the target is
+        # now redundant — drop the leftovers still pointing at the
+        # merged-away topic (UPDATE OR IGNORE leaves them behind).
+        self._app.storage.execute(
+            "DELETE FROM source_attachments WHERE topic_path=?", (source,)
+        )
+
         self._app.audit.log(
             "knowledge.topic.merged",
             details={"source": source, "target": target, "moved": len(children)},
@@ -955,6 +978,12 @@ class KnowledgeBase:
 
         # Delete DB row (indexer handles FTS cleanup)
         self._indexer.remove_note(path)
+
+        # A deleted topic must not leave a source silently pointing at a
+        # gone path.
+        self._app.storage.execute(
+            "DELETE FROM source_attachments WHERE topic_path=?", (path,)
+        )
 
         self._app.audit.log(
             "knowledge.topic.deleted",
