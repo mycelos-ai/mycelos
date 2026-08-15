@@ -464,6 +464,11 @@ def _record_scheduled_failure(
     Never raises: bookkeeping must not break the scheduler loop, which still
     has to mark the task executed to avoid a retry storm.
 
+    The row keeps `kind='scheduled_task'`, the same kind the success path
+    writes. `WorkflowAgent` sets it when it starts the run; this function only
+    sets it on the rows it has to create itself, when the agent never got that
+    far.
+
     Note: `task_id` is not stored on the row. `workflow_runs.task_id`
     references `tasks(id)`, and a scheduled task lives in `scheduled_tasks` —
     passing it there fails the foreign key. It is used for logging only.
@@ -480,14 +485,11 @@ def _record_scheduled_failure(
         if existing is None:
             app.workflow_run_manager.start(
                 workflow_id=workflow_id, run_id=run_id,
+                routine_key=workflow_id, kind="scheduled_task",
             )
             existing = app.workflow_run_manager.get(run_id)
         if existing is not None and existing.get("status") == "running":
             app.workflow_run_manager.fail(run_id, error=cause)
-        app.storage.execute(
-            "UPDATE workflow_runs SET kind = 'scheduled_task' WHERE id = ?",
-            (run_id,),
-        )
     except Exception:
         logger.warning(
             "Could not record failure for scheduled run %s (task %s)",
@@ -558,6 +560,10 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 app=app,
                 workflow_def=workflow,
                 run_id=run_id,
+                # A scheduled run says so whether it succeeds or fails. The
+                # kind used to be stamped on the failure path only, so a task
+                # that worked showed no history under its own kind.
+                kind="scheduled_task",
             )
             result = agent.execute(inputs=inputs)
 

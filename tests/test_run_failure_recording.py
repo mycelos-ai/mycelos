@@ -629,3 +629,125 @@ def test_scheduled_workflow_success_records_no_extra_failure(app: App) -> None:
     runs = app.workflow_run_manager.list_runs(workflow_id="sched-ok-wf")
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
+
+
+def test_scheduled_workflow_success_records_the_scheduled_kind(app: App) -> None:
+    """A scheduled run that succeeds is a scheduled run, not a plain workflow.
+
+    The kind used to be written on the failure path only, so a nightly task
+    that worked for a month left thirty rows labelled 'workflow'. Its own
+    history then read as empty while the rows sat under the wrong label.
+    """
+    _register(app, "sched-kind-ok-wf")
+    task_id = app.schedule_manager.add("sched-kind-ok-wf", "*/5 * * * *")
+    _make_due(app, task_id)
+
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("All done.")):
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-kind-ok-wf")
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["kind"] == "scheduled_task"
+
+
+def test_scheduled_success_and_failure_share_one_kind(app: App) -> None:
+    """The same task's good and bad runs must land under the same kind.
+
+    Split across two kinds, a per-kind success rate reads 0% for scheduled
+    tasks and inflated for workflows, from the same table.
+    """
+    _register(app, "sched-both-wf")
+    task_id = app.schedule_manager.add("sched-both-wf", "*/5 * * * *")
+
+    _make_due(app, task_id)
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("Fine.")):
+        check_scheduled_workflows(app)
+
+    _make_due(app, task_id)
+    with patch.object(app.llm, "complete", side_effect=RuntimeError("provider unreachable")):
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-both-wf")
+    assert len(runs) == 2
+    assert {r["status"] for r in runs} == {"completed", "failed"}
+    assert {r["kind"] for r in runs} == {"scheduled_task"}, (
+        "one task's runs must not split across two kinds"
+    )
+    assert {r["routine_key"] for r in runs} == {"sched-both-wf"}
+
+
+def test_scheduled_failure_without_agent_row_shares_the_same_kind(app: App) -> None:
+    """The fallback row the scheduler writes itself matches the agent's row.
+
+    When the agent never got far enough to write a row, `jobs.py` writes one.
+    That row must look like the one a successful run leaves, or the same task
+    is again two different things in the table.
+    """
+    _register(app, "sched-fallback-wf")
+    task_id = app.schedule_manager.add("sched-fallback-wf", "*/5 * * * *")
+
+    _make_due(app, task_id)
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("Fine.")):
+        check_scheduled_workflows(app)
+
+    _make_due(app, task_id)
+    with patch("mycelos.workflows.agent.WorkflowAgent") as MockAgent:
+        MockAgent.return_value.execute.side_effect = RuntimeError("boom")
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-fallback-wf")
+    assert len(runs) == 2
+    assert {r["kind"] for r in runs} == {"scheduled_task"}
+    assert {r["routine_key"] for r in runs} == {"sched-fallback-wf"}
+
+
+def test_workflow_run_started_from_chat_stays_a_plain_workflow(app: App) -> None:
+    """Only the scheduler claims the scheduled kind. Everything else is a workflow."""
+    wf = _register(app, "chat-kind-wf")
+    agent = WorkflowAgent(app=app, workflow_def=wf, run_id="run-chat-kind")
+
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("Done.")):
+        agent.execute()
+
+    run = app.workflow_run_manager.get("run-chat-kind")
+    assert run["kind"] == "workflow"
+    assert run["status"] == "completed"
+
+
+def test_adhoc_run_keeps_workflow_kind_and_null_workflow_id(app: App) -> None:
+    """An ad-hoc run is a workflow with no workflow_id, not a new kind."""
+    adhoc = {"id": "adhoc-kind", "plan": "Do it.", "allowed_tools": []}
+    agent = WorkflowAgent(app=app, workflow_def=adhoc, run_id="run-adhoc-kind")
+
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("Done.")):
+        agent.execute()
+
+    run = app.workflow_run_manager.get("run-adhoc-kind")
+    assert run["kind"] == "workflow"
+    assert run["workflow_id"] is None
+    assert run["routine_key"] == "adhoc-kind"
+
+
+def test_run_manager_start_defaults_to_the_workflow_kind(app: App) -> None:
+    """Every caller that says nothing keeps the kind it had before."""
+    _register(app, "default-kind-wf")
+    app.workflow_run_manager.start(workflow_id="default-kind-wf", run_id="run-default-kind")
+
+    run = app.workflow_run_manager.get("run-default-kind")
+    assert run["kind"] == "workflow"
+
+
+def test_run_manager_start_rejects_an_unknown_kind(app: App) -> None:
+    """The column's CHECK stays the backstop; the parameter does not bypass it.
+
+    A typo'd kind writes a row that every kind-filtered read misses, so it
+    must raise rather than land.
+    """
+    _register(app, "bogus-kind-wf")
+    with pytest.raises(Exception):
+        app.workflow_run_manager.start(
+            workflow_id="bogus-kind-wf", run_id="run-bogus-kind", kind="nightly",
+        )
+
+    assert app.workflow_run_manager.get("run-bogus-kind") is None

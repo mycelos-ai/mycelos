@@ -60,6 +60,7 @@ class WorkflowAgent:
         run_id: str,
         max_rounds: int = 20,
         session_id: str | None = None,
+        kind: str = "workflow",
     ) -> None:
         self.app = app
         self._workflow_def = workflow_def
@@ -83,6 +84,10 @@ class WorkflowAgent:
         self.allowed_tools: list[str] = raw_tools
         self.run_id = run_id
         self.session_id = session_id
+        # Which routine this run belongs to. Chat and ad-hoc runs are plain
+        # workflows; the scheduler passes 'scheduled_task' so the run row says
+        # so on the success path too, not only when the run fails.
+        self.kind = kind
         self.max_rounds = max_rounds
         self.conversation: list[dict] = []
         self._total_tokens = 0
@@ -262,6 +267,7 @@ class WorkflowAgent:
                 run_id=self.run_id,
                 session_id=self.session_id,
                 routine_key=self._workflow_id,
+                kind=self.kind,
             )
             return
         except Exception:

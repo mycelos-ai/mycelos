@@ -37,6 +37,7 @@ class WorkflowRunManager:
         run_id: str | None = None,
         session_id: str | None = None,
         routine_key: str | None = None,
+        kind: str = "workflow",
     ) -> str:
         """Start a new workflow run.
 
@@ -54,6 +55,13 @@ class WorkflowRunManager:
                 link runs back to the originating session in the admin UI. Stays
                 null for headless/scheduled runs.
             routine_key: Identity for runs with no `workflow_id`.
+            kind: Which routine this run belongs to. Defaults to 'workflow',
+                the ad-hoc and chat-started case. The scheduler passes
+                'scheduled_task' so a scheduled run carries the same kind
+                whether it succeeds or fails — a per-kind history that only
+                held the failures would read as if nothing ever worked. The
+                column's CHECK constraint remains the backstop for a value
+                outside the four known kinds.
 
         Returns:
             The new run ID.
@@ -62,10 +70,10 @@ class WorkflowRunManager:
         self._storage.execute(
             """INSERT INTO workflow_runs
                (id, workflow_id, task_id, user_id, budget_limit, completed_steps,
-                artifacts, session_id, routine_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                artifacts, session_id, routine_key, kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, workflow_id, task_id, user_id, budget_limit, "[]", "{}",
-             session_id, routine_key),
+             session_id, routine_key, kind),
         )
         return run_id
 
