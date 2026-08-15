@@ -7,8 +7,10 @@ frames note content as data-not-instructions.
 """
 from __future__ import annotations
 
-# Note types Mycelos knows; anything else degrades to "note".
-_KNOWN_TYPES = frozenset({"note", "task", "reminder", "topic"})
+# Content types allowed in imports. Structural types (topic, reminder) must never
+# be created by external items — they anchor directory nodes and trigger special
+# processing. Imported items are always leaf content, never structure.
+_CONTENT_TYPES = frozenset({"note", "task"})
 
 
 def okf_item_to_note(item: dict) -> dict:
@@ -16,8 +18,8 @@ def okf_item_to_note(item: dict) -> dict:
 
     Returns {title, content, type, tags, external_id, url, timestamp}.
     Raises ValueError when the item lacks the identity fields an
-    idempotent import depends on. Unknown keys are ignored, never
-    written blindly.
+    idempotent import depends on. Unknown type values are degraded to
+    "note"; unknown keys are ignored, never written blindly.
     """
     external_id = str(item.get("id") or "").strip()
     title = str(item.get("title") or "").strip()
@@ -27,7 +29,7 @@ def okf_item_to_note(item: dict) -> dict:
         raise ValueError("OKF item without title")
 
     note_type = item.get("type")
-    if note_type not in _KNOWN_TYPES:
+    if note_type not in _CONTENT_TYPES:
         note_type = "note"
 
     url = str(item.get("resource") or "").strip()
@@ -49,10 +51,10 @@ def okf_item_to_note(item: dict) -> dict:
         parts.append(body)
     highlights = item.get("highlights") or []
     lines = [
-        f"- {h.get('text', '').strip()}"
-        + (f" — {h.get('reason', '').strip()}" if h.get("reason") else "")
+        f"- {str(h.get('text') or '').strip()}"
+        + (f" — {str(h.get('reason') or '').strip()}" if h.get("reason") else "")
         for h in highlights
-        if isinstance(h, dict) and h.get("text")
+        if isinstance(h, dict) and str(h.get("text") or "").strip()
     ]
     if lines:
         parts.append("## Highlights\n\n" + "\n".join(lines))

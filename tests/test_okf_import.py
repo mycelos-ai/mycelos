@@ -57,6 +57,14 @@ def test_unknown_type_falls_back_to_note() -> None:
     assert okf_item_to_note(_item(type="note"))["type"] == "note"
 
 
+def test_structural_types_are_never_accepted_from_imports() -> None:
+    """An external item must not be able to create a topic (structural
+    node) or a reminder by claiming the type — imports create content."""
+    assert okf_item_to_note(_item(type="topic"))["type"] == "note"
+    assert okf_item_to_note(_item(type="reminder"))["type"] == "note"
+    assert okf_item_to_note(_item(type="task"))["type"] == "task"
+
+
 def test_null_and_empty_fields_do_not_break_mapping() -> None:
     note = okf_item_to_note(_item(
         summary_model=None, duration_seconds=None, language=None,
