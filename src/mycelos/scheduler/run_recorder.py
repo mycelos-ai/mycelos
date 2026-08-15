@@ -109,6 +109,26 @@ CAUSES: dict[str, str] = {
 # not a sanitizer: see :meth:`RunRecorder._safe_cause` for why.
 _ALLOWED_CAUSES = frozenset(CAUSES.values())
 
+# What :func:`~mycelos.scheduler.jobs.sweep_orphaned_workflow_runs` stamps on a
+# row still marked 'running' when the system next starts.
+#
+# It lives here rather than beside the sweep because two packages read it and
+# only one writes it. `scheduler.jobs` is the scheduler's whole job surface —
+# every connector, the briefing, the reminder tick — while this module imports
+# nothing but `protocols` and `workflows.run_cause`. A reader that needs one
+# string should not have to import all of that, so the constant sits in the
+# leaf both sides already depend on.
+#
+# The wording states only what is known. A row still 'running' at startup tells
+# us the run did not finish; a crash, a kill and a clean restart are
+# indistinguishable from here. Claiming a restart sent the reader looking at
+# infrastructure when the cause was usually a crash, and a wrong cause is worse
+# than no cause.
+ORPHANED_RUN_CAUSE = (
+    "The run did not finish and its outcome is unknown. It was still marked "
+    "running when the system next started."
+)
+
 # Count keys we are willing to store. Everything else is dropped: a count is
 # a number, and a dict that carries a title or a body is not a count. The
 # allowlist is the guarantee — a connector that grows a new field cannot leak

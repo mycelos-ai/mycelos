@@ -11,7 +11,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+from mycelos.scheduler.run_recorder import (
+    CAUSES,
+    ORPHANED_RUN_CAUSE,
+    RunRecorder,
+)
 
 logger = logging.getLogger("mycelos.scheduler")
 
@@ -275,12 +279,6 @@ def briefing_tick(
         return {"sent": False, "error": str(e)}
 
 
-ORPHANED_RUN_CAUSE = (
-    "The run did not finish and its outcome is unknown. It was still marked "
-    "running when the system next started."
-)
-
-
 def sweep_orphaned_workflow_runs(app: Any) -> int:
     """Mark runs stuck in 'running' as failed, with an honest cause.
 
@@ -291,6 +289,10 @@ def sweep_orphaned_workflow_runs(app: Any) -> int:
     is worse than no cause, so this states what is actually known.
 
     Runs that recorded their own cause are already 'failed' and untouched.
+
+    The cause itself lives in :data:`~mycelos.scheduler.run_recorder.ORPHANED_RUN_CAUSE`,
+    beside the other fixed causes, because the inbox reads it and should not
+    have to import this module to do so.
     """
     try:
         cursor = app.storage.execute(

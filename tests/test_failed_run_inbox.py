@@ -24,11 +24,12 @@ import pytest
 
 from mycelos.knowledge.inbox import InboxService
 from mycelos.knowledge.inbox_model import InboxModel
-from mycelos.scheduler.jobs import (
+from mycelos.scheduler.jobs import sweep_orphaned_workflow_runs
+from mycelos.scheduler.run_recorder import (
+    CAUSES,
     ORPHANED_RUN_CAUSE,
-    sweep_orphaned_workflow_runs,
+    RunRecorder,
 )
-from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
 
 
 @pytest.fixture
@@ -204,14 +205,25 @@ def test_an_hourly_routine_failing_all_day_is_one_entry(app) -> None:
 
     An entry per tick would make an hourly sync its own landfill, which is
     the inbox failure mode this redesign exists to remove.
+
+    The count assertion is the load-bearing half. A ``count()`` that added
+    the failure count instead of one would put **24** on the home badge
+    while ``/api/inbox`` returned a single entry — a number that disagrees
+    with the list, which is the count people learn to ignore. Every other
+    count assertion in this file runs against a routine that failed once,
+    where the two implementations are indistinguishable.
     """
     for hour in range(24):
         run_id = _failed_sync(app, "yt-summary")
         _stamp(app, run_id, f"2026-08-14T{hour:02d}:00:00.000Z")
 
-    entries = _failed_runs(_model(app).list_entries("default"))
+    model = _model(app)
+    entries = _failed_runs(model.list_entries("default"))
     assert len(entries) == 1
     assert entries[0]["source"]["failure_count"] == 24
+    # The badge shows what the list shows: one, not twenty-four.
+    assert model.count("default") == 1
+    assert model.count("default") == len(model.list_entries("default"))
 
 
 def test_the_entry_carries_the_latest_cause(app) -> None:
@@ -362,11 +374,19 @@ def test_a_retry_that_crashes_does_not_hide_the_entry_forever(app) -> None:
 
 
 def test_the_sweep_stamps_the_cause_the_entry_reads(app) -> None:
-    """Pins the coupling: the read side recognises the sweep's exact text.
+    """The sweep writes the constant the read side compares against.
 
-    If the sweep's wording changes without this module's allowlist
-    changing, the orphan case silently degrades to "no cause safe to show"
-    and stops being distinguishable from a real failure.
+    It does **not** guard against a reworded cause, and cannot: both sides
+    reference :data:`ORPHANED_RUN_CAUSE` by import, so rewording it moves
+    both at once and renaming it is a ``NameError`` rather than a silent
+    degradation. That is the point — the coupling is by reference, so
+    drift is impossible by construction rather than caught by a test.
+
+    What this pins is one step weaker and still worth holding: the sweep
+    writes *that* constant to the ``error`` column and nothing else, and a
+    row carrying it renders as ``outcome == 'unknown'``. A sweep that
+    stamped some other text would leave the orphan indistinguishable from
+    a real failure, and this catches that.
     """
     _running_sync(app, "gmail")
     sweep_orphaned_workflow_runs(app)
@@ -556,6 +576,99 @@ def test_an_unrecognised_stored_cause_is_not_rendered_verbatim(app) -> None:
     assert "Sparkasse" not in entry["why"]
     assert ".py" not in entry["why"]
     assert entry["why"]                    # still says something
+
+
+# The rendered ``why`` for every cause a ``source_sync`` row can carry, plus
+# the two shapes that carry none. Written out in full rather than composed
+# from CAUSES, because composing it would reproduce whatever bug the renderer
+# has and assert that it is consistent with itself.
+_EXPECTED_WHY: dict[str | None, str] = {
+    CAUSES["source_failed"]: (
+        "The last 'gmail' sync failed. The sync reached the source but it did "
+        "not return the data. The server log has the reason this time."
+    ),
+    CAUSES["source_rejected"]: (
+        "The last 'gmail' sync failed. The source rejected the request. Check "
+        "that the connector is still authorised, then run the sync again."
+    ),
+    CAUSES["source_unreachable"]: (
+        "The last 'gmail' sync failed. The source could not be reached. It may "
+        "be offline or the connector may no longer be running."
+    ),
+    CAUSES["response_unreadable"]: (
+        "The last 'gmail' sync failed. The response from the source could not "
+        "be read. The connector returned something this sync does not "
+        "understand."
+    ),
+    # The three that must NOT be appended, each falling to the cause-free
+    # line. See `_RENDERABLE_CAUSES` for why each one is excluded.
+    CAUSES["unrecognised"]: (
+        "The last 'gmail' sync failed. No cause was recorded that is safe to "
+        "show here; the server log has the detail."
+    ),
+    CAUSES["briefing_undeliverable"]: (
+        "The last 'gmail' sync failed. No cause was recorded that is safe to "
+        "show here; the server log has the detail."
+    ),
+    CAUSES["briefing_failed"]: (
+        "The last 'gmail' sync failed. No cause was recorded that is safe to "
+        "show here; the server log has the detail."
+    ),
+    None: (
+        "The last 'gmail' sync failed. No cause was recorded that is safe to "
+        "show here; the server log has the detail."
+    ),
+    ORPHANED_RUN_CAUSE: (
+        "The last 'gmail' sync did not finish and its outcome is unknown — it "
+        "was still running when the system next started. Run it again to find "
+        "out where it stands."
+    ),
+}
+
+
+@pytest.mark.parametrize("cause", list(_EXPECTED_WHY))
+def test_every_cause_renders_as_one_sentence_a_person_would_write(
+    app, cause
+) -> None:
+    """The whole ``why`` line, pinned per cause — not a substring of it.
+
+    ``_failed_run_why`` composes a cause after "The last 'gmail' sync
+    failed.", so a cause that opens with its own "The run failed." produces
+    a doubled sentence, and one that names the briefing names a routine
+    that is not the one that failed. Both read as a concatenation bug on a
+    surface whose only value is being believable.
+
+    Asserting the full string is the point. A substring check on the cause
+    passes happily while the sentence in front of it is broken, which is
+    how the doubled line shipped in the first place.
+    """
+    _failed_sync(app, "gmail")
+    app.storage.execute(
+        "UPDATE workflow_runs SET error = ? WHERE routine_key = 'gmail'",
+        (cause,),
+    )
+    entry = _failed_runs(_model(app).list_entries("default"))[0]
+    assert entry["why"] == _EXPECTED_WHY[cause]
+    # No cause doubles the opening clause of another.
+    assert entry["why"].count("sync failed") <= 1
+    assert "The run failed." not in entry["why"]
+    assert "briefing" not in entry["why"].lower()
+
+
+def test_no_cause_is_left_unreviewed(app) -> None:
+    """A cause added to the recorder must be judged as a rendered sentence.
+
+    ``_EXPECTED_WHY`` is written out by hand, so a new cause reaches the
+    user unreviewed unless something fails. This is that something: it
+    fails until the author has looked at the line their cause produces and
+    decided whether it belongs in ``_RENDERABLE_CAUSES``.
+    """
+    unreviewed = set(CAUSES.values()) - set(_EXPECTED_WHY)
+    assert not unreviewed, (
+        "a new run cause has no pinned rendering — add it to _EXPECTED_WHY "
+        "and decide whether it reads as a sentence after \"The last 'x' sync "
+        "failed.\""
+    )
 
 
 def test_the_sweeps_cause_is_recognised_not_dropped(app) -> None:

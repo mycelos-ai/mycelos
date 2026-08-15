@@ -34,8 +34,13 @@ from datetime import date
 from typing import Any
 
 from mycelos.knowledge.inbox_policy import collapse_key, needs_human
-from mycelos.scheduler.jobs import ORPHANED_RUN_CAUSE
-from mycelos.scheduler.run_recorder import CAUSES
+# One edge from `knowledge` into `scheduler`, and it lands on a leaf:
+# `run_recorder` imports only `protocols` and `workflows.run_cause`, so this
+# does not pull the scheduler's job surface — every connector, the briefing,
+# the reminder tick — into the read model. Importing the constants is the
+# alternative to copying their text, which would rot silently the first time
+# a cause was reworded on one side only.
+from mycelos.scheduler.run_recorder import CAUSES, ORPHANED_RUN_CAUSE
 from mycelos.storage.database import SQLiteStorage
 
 logger = logging.getLogger("mycelos.inbox_model")
@@ -91,11 +96,35 @@ _FAILED_RUN_KIND = "source_sync"
 _OUTCOME_FAILED = "failed"
 _OUTCOME_UNKNOWN = "unknown"
 
-# The only cause strings this surface will show. Every one is a fixed
-# string this package authored: the recorder's fixed causes, plus the
-# orphan sweep's. A value outside the set is dropped rather than rendered
-# — see :func:`_renderable_cause`.
-_RENDERABLE_CAUSES = frozenset(CAUSES.values()) | {ORPHANED_RUN_CAUSE}
+# The only cause strings this surface will show, and it is deliberately
+# narrower than "every fixed cause this package authored".
+#
+# `_failed_run_why` renders a cause *after* "The last 'x' sync failed.", so a
+# cause only belongs here if the pair reads as something a person would write.
+# Three of the recorder's seven do not:
+#
+# * ``unrecognised`` opens "The run failed.", which produces "The last 'gmail'
+#   sync failed. The run failed. No cause was recorded…" — a doubled sentence
+#   that reads like a concatenation bug on a surface whose whole value is
+#   being believable. Dropping it falls to the cause-free line, which carries
+#   the same information once.
+# * ``briefing_undeliverable`` and ``briefing_failed`` name the briefing. Only
+#   ``kind='source_sync'`` rows reach this read model, so on an entry titled
+#   "The 'gmail' sync failed" they would name a routine that is not the one
+#   that failed. The scheduler writes them only to ``kind='briefing'`` rows
+#   today, but this allowlist exists precisely for rows the scheduler did not
+#   write.
+#
+# The orphan sweep's cause is not here either, and does not need to be: an
+# orphaned run takes the `_OUTCOME_UNKNOWN` branch, which composes its own
+# sentence and never appends a stored cause. It stays in the set only so
+# `_run_outcome` can recognise it by value.
+_RENDERABLE_CAUSES = frozenset({
+    CAUSES["source_failed"],
+    CAUSES["source_rejected"],
+    CAUSES["source_unreachable"],
+    CAUSES["response_unreadable"],
+})
 
 # Kinds whose confidence must not be rendered. A merge is never automatic
 # at any confidence, so showing a number would imply a decision the value
@@ -178,6 +207,10 @@ def _renderable_cause(stored_cause: str | None) -> str | None:
     The inbox is a rendering surface, so it renders only strings it can
     attribute. Anything else is dropped and the entry falls back to a
     cause-free line. Honest and vague beats readable and leaking.
+
+    It is also narrower than "attributable": a cause this package wrote is
+    still dropped when it does not read as a sentence in this entry's frame.
+    See :data:`_RENDERABLE_CAUSES` for which three, and why.
     """
     text = (stored_cause or "").strip()
     return text if text in _RENDERABLE_CAUSES else None
