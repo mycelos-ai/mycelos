@@ -143,3 +143,39 @@ def test_malformed_item_is_counted_and_does_not_abort_the_batch(app) -> None:
         "next_cursor": "", "has_more": False}]))
     assert result["skipped_malformed"] == 1
     assert result["created"] == 1
+
+
+class _InfiniteFakeMCP:
+    """Always reports has_more=True with a fresh cursor and one item per
+    page — a runaway backlog bigger than MAX_SYNC_PAGES."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self._n = 0
+
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        self.calls.append({"name": name, "arguments": arguments})
+        self._n += 1
+        ts = f"2026-08-{self._n:02d}T00:00:00+00:00"
+        return {
+            "items": [_item(id=f"1:page{self._n}", title=f"Page {self._n}",
+                            timestamp=ts)],
+            "next_cursor": f"c{self._n}",
+            "has_more": True,
+        }
+
+
+def test_page_cap_is_flagged_truncated_and_mark_never_exceeds_processed(app) -> None:
+    from mycelos.knowledge.connector_ingest import MAX_SYNC_PAGES
+
+    mcp = _InfiniteFakeMCP()
+    result = ingest_yt_summary(app, mcp=mcp)
+
+    assert len(mcp.calls) == MAX_SYNC_PAGES
+    assert result["truncated"] is True
+    assert result["created"] == MAX_SYNC_PAGES
+
+    mark = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
+    newest_processed = f"2026-08-{MAX_SYNC_PAGES:02d}T00:00:00+00:00"
+    assert mark["value"] == newest_processed   # never advances past what was consumed

@@ -214,6 +214,7 @@ def ingest_yt_summary(
 
     cursor = ""
     newest_ts = since
+    truncated = True  # flips to False only when a page reports has_more=False
     for _ in range(MAX_SYNC_PAGES):
         result = mcp.call_tool(
             f"{YT_SUMMARY_CONNECTOR}.export_since",
@@ -258,7 +259,22 @@ def ingest_yt_summary(
 
         cursor = result.get("next_cursor", "")
         if not result.get("has_more"):
+            truncated = False
             break
+
+    if truncated:
+        # Hit MAX_SYNC_PAGES with more pages still available. The cursor
+        # walk consumed so far is contiguous from `since`, so newest_ts is
+        # still a safe high-water mark for exactly what was processed —
+        # advancing it does not skip anything. But it must not look like a
+        # complete sync: flag it so the caller (and the next run) knows a
+        # backlog remains behind the cap.
+        counts["truncated"] = True
+        logger.warning(
+            "yt-summary ingest hit MAX_SYNC_PAGES=%d with more pages pending; "
+            "mark advanced to last fully-consumed page, resume next run",
+            MAX_SYNC_PAGES,
+        )
 
     if newest_ts:
         app.storage.execute(
