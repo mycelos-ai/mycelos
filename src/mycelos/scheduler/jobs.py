@@ -420,7 +420,25 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 logger.info(
                     "Scheduled workflow '%s' completed successfully", workflow_id
                 )
-            elif result.status == "failed":
+            elif result.status == "needs_clarification":
+                # A cron run is headless. Nobody is there to answer, so a
+                # question is not a pause — it is the end of the run, and the
+                # cause is that it needed an answer it could not get. The
+                # question text is the LLM's, built from the run's data, so it
+                # never reaches the row.
+                logger.warning(
+                    "Scheduled workflow '%s' stopped to ask a question", workflow_id
+                )
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    "The workflow stopped to ask a question, but a scheduled "
+                    "run has nobody to answer it. Give the workflow the "
+                    "missing input, or run it from chat.",
+                )
+            else:
+                # 'failed' and any status a future version of execute() adds.
+                # An unrecognised ending is still an ending; recording it with
+                # a generic cause beats leaving no row at all.
                 logger.warning(
                     "Scheduled workflow '%s' failed: %s", workflow_id, result.error
                 )

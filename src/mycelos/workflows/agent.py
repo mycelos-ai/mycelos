@@ -215,17 +215,20 @@ class WorkflowAgent:
                 each tool call. This enables real-time progress in the UI.
 
         Raises:
-            Exception: Whatever the plan's LLM call or tools raised. The run
-                row is marked 'failed' with a sanitized cause first.
+            BaseException: Whatever the plan's LLM call or tools raised. The
+                run row is marked 'failed' with a sanitized cause first.
         """
         self._start_run()
         try:
             return self._execute_plan(inputs=inputs, on_progress=on_progress)
-        except Exception as exc:
-            # The row must say the run ended. Recording is best-effort; the
-            # original exception always wins so the caller still sees it.
+        except BaseException as exc:
+            # BaseException, not Exception: a Ctrl-C, a SystemExit from a
+            # shutdown handler and a GeneratorExit all end the run just as
+            # finally as a RuntimeError does, and each one used to leave the
+            # row 'running' forever. We record and re-raise unconditionally,
+            # so an interrupt still interrupts.
             logger.exception("Workflow run %s failed", self.run_id)
-            self._record_failure(describe_exception(exc))
+            self._record_failure(exc)
             raise
 
     def _start_run(self) -> None:
@@ -303,28 +306,84 @@ class WorkflowAgent:
             )
             return False
 
-    def _record_failure(self, cause: str) -> None:
+    def _record_failure(self, cause: "BaseException | str") -> None:
         """Mark the run failed with a sanitized cause. Never raises.
 
+        When given an exception, the cause is built *here*, inside the guard,
+        rather than by the caller. `describe_exception` applies regexes to
+        attacker-influenced text and calls into the security sanitizer; when
+        that raises outside the guard, no recording happens at all and the row
+        stays 'running'. The fallback is the exception type, which cannot fail
+        to render. A caller that already authored a fixed cause string (the
+        max-rounds path) passes it through unchanged.
+
+        This is the end of a run, and the start of a run is fatal when it
+        cannot be recorded (`_start_run`). The two ends are guarded to the
+        same standard but not by the same mechanism, because raising here
+        would replace the *real* cause of the failure with a storage error
+        and rob the caller of the exception it must see. Instead an
+        unrecordable ending is escalated: `logger.error` plus an audit event,
+        so a run that ended with no row is visible rather than a warning in a
+        log nobody greps.
+
         Args:
-            cause: User-facing cause text. No traceback, no paths, no content.
+            cause: The exception that ended the run, or a cause string the
+                caller authored itself.
         """
+        if isinstance(cause, str):
+            cause_text = cause
+        else:
+            try:
+                cause_text = describe_exception(cause)
+            except BaseException:
+                # The sanitizer failed on this message. The type is always
+                # safe to render, and an honest bare type beats no row.
+                logger.exception(
+                    "Cannot describe the cause of workflow run %s", self.run_id,
+                )
+                cause_text = type(cause).__name__
+
+        recorded = False
         try:
-            self.app.workflow_run_manager.fail(self.run_id, error=cause)
+            self.app.workflow_run_manager.fail(self.run_id, error=cause_text)
+            recorded = True
         except Exception:
-            logger.warning(
-                "Failed to record failure for workflow run %s", self.run_id,
-                exc_info=True,
+            logger.error(
+                "Cannot record the end of workflow run %s — the run ended with "
+                "no row to say so", self.run_id, exc_info=True,
             )
+            self._audit_unrecorded_ending()
+
         try:
             self.app.storage.execute(
                 "UPDATE workflow_runs SET cost = ?, conversation = ? WHERE id = ?",
                 (self._total_cost, json.dumps(self.conversation), self.run_id),
             )
         except Exception:
-            logger.warning(
+            # The status is the invariant; cost and conversation are not.
+            # Only escalate when the status write failed too.
+            log = logger.warning if recorded else logger.error
+            log(
                 "Failed to persist state for failed workflow run %s", self.run_id,
                 exc_info=True,
+            )
+
+    def _audit_unrecorded_ending(self) -> None:
+        """Record that a run ended without a row. Never raises.
+
+        The audit log is a second, independent surface. When storage cannot
+        write the run row, the audit write may well fail too — but it is the
+        only remaining place the gap can be seen, so we try.
+        """
+        try:
+            self.app.audit.log(
+                "workflow.run_unrecorded",
+                details={"run_id": self.run_id, "routine_key": self._workflow_id},
+            )
+        except Exception:
+            logger.error(
+                "Cannot audit the unrecorded ending of workflow run %s",
+                self.run_id, exc_info=True,
             )
 
     def _execute_plan(

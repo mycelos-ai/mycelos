@@ -114,6 +114,85 @@ def test_describe_exception_strips_content(exc, must_not_contain) -> None:
         assert fragment not in cause, f"{fragment!r} leaked into {cause!r}"
 
 
+@pytest.mark.parametrize(
+    "message, leaked",
+    [
+        # An IBAN is written in groups of four everywhere a human sees one:
+        # a bank export, a CSV, a note, every German banking UI. Matching
+        # only the solid token catches the form nobody writes.
+        ("Buchung IBAN DE89370400440532013000 abgelehnt", "DE89370400440532013000"),
+        ("Buchung IBAN DE89 3704 0044 0532 0130 00 abgelehnt", "3704"),
+        ("Buchung IBAN DE89-3704-0044-0532-0130-00 abgelehnt", "3704"),
+        ("IBAN DE89 3704-0044 0532 0130.00 gemischt", "3704"),
+        ("AT61 1904 3002 3457 3201 rejected", "1904"),
+        ("transfer to NL91ABNA0417164300 failed", "ABNA"),
+        # The same defect class, other identifier families.
+        ("Karte 4111 1111 1111 1111 abgelehnt", "4111"),
+        ("Steuernummer 123/456/78901 ungueltig", "78901"),
+        ("USt-IdNr DE 123 456 789 ungueltig", "456"),
+        ("Versicherungsnummer 12 345678 A 901 ungueltig", "345678"),
+        ("Telefon 089 12345678 nicht erreichbar", "12345678"),
+    ],
+)
+def test_describe_exception_strips_grouped_identifiers(message, leaked) -> None:
+    """A structured identifier leaks in its human-readable form, or not at all.
+
+    The first case is the solid token the original test pinned. The rest are
+    the separator styles that actually occur — each one leaked verbatim
+    before this was fixed.
+    """
+    from mycelos.workflows.run_cause import describe_exception
+
+    cause = describe_exception(ValueError(message))
+    assert leaked not in cause, f"{leaked!r} leaked into {cause!r}"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Balanced, the easy case.
+        'parse failed at "Gehalt Anna Mueller 9200 EUR"',
+        "parse failed at 'Gehalt Anna Mueller 9200 EUR'",
+        "parse failed at `Gehalt Anna Mueller 9200 EUR`",
+        # Unbalanced: truncated upstream, or a payload that runs to the end.
+        # We cannot know where the payload stops, so the tail must go.
+        'parse failed at "Gehalt Anna Mueller 9200 EUR im Meeting',
+        "parse failed at 'Gehalt Anna Mueller 9200 EUR im Meeting",
+        "parse failed at `Gehalt Anna Mueller 9200 EUR im Meeting",
+        # Nested, either way round.
+        'nested "outer Anna Mueller inner" span',
+        "nested 'outer \"Anna Mueller\" inner' span",
+        # German and French typographic quotes: any message built from German
+        # text uses these, and they were not in the pattern set at all.
+        "note „Gehalt Anna Mueller 9200“ ungueltig",
+        "note “Gehalt Anna Mueller 9200” ungueltig",
+        "note «Gehalt Anna Mueller 9200» ungueltig",
+        "note ‚Gehalt Anna Mueller 9200‘ ungueltig",
+    ],
+)
+def test_describe_exception_strips_quoted_spans(message) -> None:
+    """A quoted span never survives, closed or not, in any quote style."""
+    from mycelos.workflows.run_cause import describe_exception
+
+    cause = describe_exception(ValueError(message))
+    assert "Anna" not in cause, f"content leaked into {cause!r}"
+    assert "Mueller" not in cause
+    assert "9200" not in cause
+
+
+def test_quoted_span_redaction_does_not_eat_prose() -> None:
+    """A possessive apostrophe is prose, not a quote.
+
+    Treating every apostrophe as an opening delimiter destroyed the cause and
+    leaked the word before it: "Anna's note about Stefan's salary" became
+    "Anna<value>s salary". Only an apostrophe at a word boundary opens a span.
+    """
+    from mycelos.workflows.run_cause import describe_exception
+
+    cause = describe_exception(ValueError("the host's certificate has expired"))
+    assert cause == "ValueError: the host's certificate has expired"
+
+
 def test_describe_exception_keeps_a_useful_cause() -> None:
     """Redaction must not reduce every cause to the bare type."""
     from mycelos.workflows.run_cause import describe_exception
@@ -218,6 +297,92 @@ def test_recording_failure_does_not_hide_the_original_exception(app: App) -> Non
                          side_effect=RuntimeError("recording broke")):
         with pytest.raises(RuntimeError, match="original"):
             agent.execute()
+
+
+# --- SF-1: an interrupt is an ending too ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc_class", [KeyboardInterrupt, SystemExit, GeneratorExit],
+)
+def test_base_exception_records_failed_run(app: App, exc_class) -> None:
+    """Ctrl-C ends the run, so the row must say the run ended.
+
+    `except Exception` does not catch these. Each one left the row 'running'
+    with error=None — the exact state the invariant forbids — and only the
+    orphan sweep, which runs at gateway start, would ever relabel it.
+    """
+    wf = _register(app, f"interrupt-wf-{exc_class.__name__}")
+    run_id = f"run-interrupt-{exc_class.__name__}"
+    agent = WorkflowAgent(app=app, workflow_def=wf, run_id=run_id)
+
+    with patch.object(app.llm, "complete", side_effect=exc_class()):
+        with pytest.raises(exc_class):
+            agent.execute()
+
+    run = app.workflow_run_manager.get(run_id)
+    assert run is not None, "an interrupted run must leave a row"
+    assert run["status"] == "failed", "an interrupt ends the run"
+    assert exc_class.__name__ in run["error"], "the cause must be honest"
+
+
+def test_keyboard_interrupt_still_interrupts(app: App) -> None:
+    """Recording must not turn a Ctrl-C into a swallowed exception."""
+    wf = _register(app, "interrupt-propagate-wf")
+    agent = WorkflowAgent(app=app, workflow_def=wf, run_id="run-interrupt-propagate")
+
+    with patch.object(app.llm, "complete", side_effect=KeyboardInterrupt()):
+        with pytest.raises(KeyboardInterrupt):
+            agent.execute()
+
+
+# --- SF-3: the recording path is guarded as a whole -------------------------
+
+
+def test_sanitizer_failure_still_records_the_run(app: App) -> None:
+    """If the sanitizer raises, the row still ends 'failed' with the type.
+
+    `describe_exception` used to be called outside the guard, so an error in
+    the sanitizer left the row 'running'. The exception type always renders.
+    """
+    wf = _register(app, "sanitizer-boom-wf")
+    agent = WorkflowAgent(app=app, workflow_def=wf, run_id="run-sanitizer-boom")
+
+    with patch.object(app.llm, "complete", side_effect=ValueError("original")), \
+            patch("mycelos.workflows.agent.describe_exception",
+                  side_effect=RuntimeError("sanitizer broke")):
+        with pytest.raises(ValueError, match="original"):
+            agent.execute()
+
+    run = app.workflow_run_manager.get("run-sanitizer-boom")
+    assert run is not None
+    assert run["status"] == "failed", "a broken sanitizer must not leave the row running"
+    assert run["error"] == "ValueError", "the type is the fallback cause"
+
+
+def test_recorder_failure_is_escalated_and_audited(app: App) -> None:
+    """A run that ends with no row is loud, not a warning nobody greps.
+
+    The start of a run is fatal when it cannot be recorded. The end cannot
+    raise — that would replace the real cause with a storage error — so it
+    escalates instead: logger.error plus an audit event.
+    """
+    wf = _register(app, "escalate-wf")
+    agent = WorkflowAgent(app=app, workflow_def=wf, run_id="run-escalate")
+
+    with patch.object(app.llm, "complete", side_effect=RuntimeError("original")), \
+            patch.object(app.workflow_run_manager, "fail",
+                         side_effect=RuntimeError("storage down")):
+        with pytest.raises(RuntimeError, match="original"):
+            agent.execute()
+
+    events = app.audit.query(event_type="workflow.run_unrecorded")
+    assert len(events) == 1, "an unrecorded ending must be visible somewhere"
+    details = events[0]["details"]
+    if isinstance(details, str):
+        import json as _json
+        details = _json.loads(details)
+    assert details["run_id"] == "run-escalate"
 
 
 def test_max_rounds_path_unchanged(app: App) -> None:
@@ -402,6 +567,54 @@ def test_scheduled_workflow_without_plan_records_failure(app: App) -> None:
     assert runs[0]["status"] == "failed"
     assert "plan" in runs[0]["error"].lower()
     _assert_no_personal_data(runs[0]["error"])
+
+
+def test_scheduled_needs_clarification_records_failure(app: App) -> None:
+    """A headless run that stops to ask a question has ended.
+
+    Nobody is there to answer a cron run, so a question is a dead end, not a
+    pause. It left no row at all, which is a run that ended with nothing to
+    say so.
+    """
+    _register(app, "sched-ask-wf")
+    task_id = app.schedule_manager.add("sched-ask-wf", "*/5 * * * *")
+    _make_due(app, task_id)
+
+    from mycelos.workflows.agent import WorkflowAgentResult
+
+    with patch("mycelos.workflows.agent.WorkflowAgent") as MockAgent:
+        MockAgent.return_value.execute.return_value = WorkflowAgentResult(
+            status="needs_clarification",
+            error="Which note about Anna Mueller did you mean?",
+        )
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-ask-wf")
+    assert len(runs) == 1, "a headless question must still leave a row"
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["error"], "the row must state why the run ended"
+    # The question is LLM text built from the run's data — it is not a cause.
+    _assert_no_personal_data(runs[0]["error"])
+
+
+def test_scheduled_unknown_status_records_failure(app: App) -> None:
+    """An ending this code does not recognise is still an ending."""
+    _register(app, "sched-odd-wf")
+    task_id = app.schedule_manager.add("sched-odd-wf", "*/5 * * * *")
+    _make_due(app, task_id)
+
+    from mycelos.workflows.agent import WorkflowAgentResult
+
+    with patch("mycelos.workflows.agent.WorkflowAgent") as MockAgent:
+        MockAgent.return_value.execute.return_value = WorkflowAgentResult(
+            status="something_new", error=None,
+        )
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-odd-wf")
+    assert len(runs) == 1, "an unrecognised status must not vanish"
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["error"]
 
 
 def test_scheduled_workflow_success_records_no_extra_failure(app: App) -> None:
