@@ -225,19 +225,15 @@ class InboxModel:
         entries.extend(self._suggestion_entries())
         entries.extend(self._unclassifiable_entries())
 
-        obligations = self._obligation_entries()
-        # A due reminder is also an overdue task. One commitment is one
-        # entry: listing it twice would make the count lie.
-        seen_paths = {
-            e["source"].get("path") for e in entries if e["source"].get("path")
-        }
-        for entry in obligations:
-            path = entry["source"].get("path")
-            if path and path in seen_paths:
-                continue
-            if path:
-                seen_paths.add(path)
-            entries.append(entry)
+        # Obligations are added whole. De-duplication happens only inside
+        # Class 3 (a due reminder is also an overdue task, and one
+        # commitment is one entry) — never across classes. A note can
+        # carry a pending suggestion and a due reminder at the same time:
+        # the suggestion is the system's guess, the reminder is the
+        # user's own instruction. Dropping the second because the first
+        # shares a path would make a commitment disappear while the count
+        # stays constant.
+        entries.extend(self._obligation_entries())
 
         collapsed = self._collapse(entries)
         # Obligations first — a lapsing commitment outranks a decision that
@@ -478,6 +474,10 @@ class InboxModel:
         The first entry of a group survives and carries the count, so the
         group keeps a real id and a real timestamp instead of a synthetic
         one that resolves to nothing.
+
+        The run id has exactly one home: the note provenance. An entry
+        never carries a top-level one, so there is a single field to
+        write when the ingest starts recording runs.
         """
         result: list[dict[str, Any]] = []
         groups: dict[str, dict[str, Any]] = {}
@@ -486,7 +486,7 @@ class InboxModel:
             source = entry.get("source") or {}
             key = collapse_key({
                 "kind": entry["kind"],
-                "run_id": entry.get("run_id") or source.get("run_id"),
+                "run_id": source.get("run_id"),
                 "source": source.get("source") or source.get("connector"),
             })
             if key is None:

@@ -40,11 +40,22 @@ def _seed_reminder(app, path: str, title: str = "Call the tax office") -> None:
 
 
 def test_move_suggestions_never_appear(app) -> None:
-    """Legacy rows from before the policy change must not resurface."""
+    """Legacy rows from before the policy change must not resurface.
+
+    The payload carries both legacy markers (``reason='low_confidence'``
+    and ``alternatives``), which is what the old writer produced. Without
+    them the row is promoted to a scope violation and this test would
+    pass for the wrong reason — it must exercise the ``needs_human``
+    filter, not the payload sniff.
+    """
     path = app.knowledge_base.write(title="X", content="y", topic="notes")
-    InboxService(app.storage).add(path, "move", {"target": "topics/a"}, 0.6)
+    InboxService(app.storage).add(
+        path, "move",
+        {"target": "topics/a", "alternatives": ["topics/b"],
+         "reason": "low_confidence"},
+        0.6)
     entries = InboxModel(app.storage, app=app).list_entries("default")
-    assert all(e["kind"] != "move" for e in entries)
+    assert entries == []
 
 
 # ---- Class 2: consequence ----------------------------------------------
@@ -73,11 +84,19 @@ def test_merge_shows_no_confidence(app) -> None:
 
 def test_many_merges_stay_many_entries(app) -> None:
     """The hardest rule in the spec: ten merges are ten irreversible
-    decisions, never one summary line."""
+    decisions, never one summary line.
+
+    The notes share one run in their provenance, so ``collapse_key``
+    reaches the kind check instead of short-circuiting on a missing run
+    id. Without the shared run this test would pass even if merges were
+    declared collapsible.
+    """
     inbox = InboxService(app.storage)
+    provenance = {"kind": "connector", "source": "yt-summary",
+                  "run_id": "run-7"}
     for i in range(5):
         path = app.knowledge_base.write(
-            title=f"Dup {i}", content="y", topic="notes")
+            title=f"Dup {i}", content="y", topic="notes", source=provenance)
         inbox.add(path, "merge", {"duplicate_path": f"notes/z-{i}"}, 0.95)
     entries = InboxModel(app.storage, app=app).list_entries("default")
     merges = [e for e in entries if e["kind"] == "merge"]
@@ -188,6 +207,42 @@ def test_a_task_is_listed_once_even_when_it_is_also_a_reminder(app) -> None:
     assert len([e for e in entries if e["source"].get("path") == "notes/both"]) == 1
 
 
+def test_an_obligation_survives_a_suggestion_on_the_same_note(app) -> None:
+    """A suggestion must never swallow a commitment.
+
+    The organizer classifies task notes like any other note, so a note
+    can carry a pending merge and a due reminder at the same time. They
+    are two different things: the merge is the system's guess, the
+    reminder is the user's own instruction. De-duplicating across the
+    classes would drop the reminder while the count stays constant —
+    nothing would signal that a commitment vanished.
+    """
+    _seed_reminder(app, "notes/vat", title="File the VAT return")
+    InboxService(app.storage).add(
+        "notes/vat", "merge", {"duplicate_path": "notes/vat-old"}, 0.95)
+
+    model = InboxModel(app.storage, app=app)
+    entries = model.list_entries("default")
+    kinds = [e["kind"] for e in entries if e["source"].get("path") == "notes/vat"]
+
+    assert "reminder" in kinds, "the reminder was swallowed by the suggestion"
+    assert "merge" in kinds
+    assert len(kinds) == 2
+    assert model.count("default") == 2
+
+
+def test_an_overdue_task_survives_an_unclassifiable_note(app) -> None:
+    """The sibling case: 'the organizer gave up' is not 'nothing is due'."""
+    app.storage.execute(
+        "INSERT INTO knowledge_notes (path, title, type, status, due, "
+        "organizer_state) VALUES ('notes/vat', 'File the VAT return', 'task', "
+        "'open', ?, 'manual')", (_yesterday(),))
+    model = InboxModel(app.storage, app=app)
+    kinds = {e["kind"] for e in model.list_entries("default")}
+    assert kinds == {"unclassifiable", "overdue_task"}
+    assert model.count("default") == 2
+
+
 def test_future_tasks_do_not_appear(app) -> None:
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     app.storage.execute(
@@ -217,8 +272,7 @@ def test_a_collapsible_group_becomes_one_entry(app) -> None:
          "actions": [{"id": "accept", "label": "Accept"}],
          "source": {"path": f"notes/{i}", "run_id": "run-1",
                     "source": "yt-summary"},
-         "created_at": "2026-08-15T10:00:00Z", "collapsed_count": 1,
-         "run_id": "run-1"}
+         "created_at": "2026-08-15T10:00:00Z", "collapsed_count": 1}
         for i in range(7)
     ]
     got = model._collapse(raw)
@@ -236,7 +290,6 @@ def test_two_runs_stay_two_entries(app) -> None:
                 "title": "N", "why": "w", "confidence": 0.6, "actions": [],
                 "source": {"run_id": run, "source": "yt-summary"},
                 "created_at": "2026-08-15T10:00:00Z", "collapsed_count": 1,
-                "run_id": run,
             })
     got = model._collapse(raw)
     assert len(got) == 2
@@ -276,8 +329,7 @@ def test_entries_without_a_group_key_stand_alone(app) -> None:
         {"id": i, "kind": "merge", "class": "consequence", "title": "M",
          "why": "w", "confidence": None, "actions": [],
          "source": {"run_id": "run-1", "source": "yt-summary"},
-         "created_at": "2026-08-15T10:00:00Z", "collapsed_count": 1,
-         "run_id": "run-1"}
+         "created_at": "2026-08-15T10:00:00Z", "collapsed_count": 1}
         for i in range(4)
     ]
     assert len(model._collapse(raw)) == 4
