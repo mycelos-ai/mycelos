@@ -125,18 +125,23 @@ def _actions_for(kind: str) -> list[dict[str, str]]:
 def _suggestion_kind(row_kind: str, payload: dict[str, Any]) -> str:
     """The kind to present, which is not always the kind that was stored.
 
-    The organizer handler writes a scope violation as ``kind='move'`` with
-    a fallback target and nothing else: the deterministic rejection path
-    reuses the move row rather than owning a kind of its own
-    (``InboxService`` does not accept ``scope_violation``). At the storage
-    level that row is indistinguishable from a legacy low-confidence move
-    except by its payload — a legacy row carries
-    ``reason='low_confidence'`` and an ``alternatives`` list, a scope
-    violation carries only ``target``.
+    **Read-side shim, for old rows only.** The handler writes a scope
+    violation as ``kind='scope_violation'`` today, and that row returns
+    from here unchanged — the security-adjacent path does not depend on a
+    payload heuristic.
 
-    Read the payload, not the kind. A wrong guess here either hides a real
-    consequence or resurrects the 150-entry landfill, so both markers must
-    be absent before a move row is promoted.
+    Rows already in a live database are the reason this function stays.
+    Before the kind existed, the rejection was written as ``kind='move'``
+    with a fallback target and nothing else, which at the storage level is
+    indistinguishable from a legacy low-confidence move except by its
+    payload: a legacy move carries ``reason='low_confidence'`` and an
+    ``alternatives`` list, a rejection carries only ``target``.
+
+    For those rows, read the payload, not the kind. A wrong guess either
+    hides a real consequence or resurrects the 150-entry landfill, so both
+    legacy markers must be absent before a move row is promoted.
+
+    The table is deliberately not migrated: see the Week 33 CHANGELOG.
     """
     if row_kind != "move":
         return row_kind

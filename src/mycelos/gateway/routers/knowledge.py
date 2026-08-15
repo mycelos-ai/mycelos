@@ -427,6 +427,7 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
     failed = 0
     skipped_merges = 0
     skipped_new_topic_confirm = 0
+    skipped_scope_violations = 0
 
     for group in groups:
         if group.get("topic") is None:
@@ -444,6 +445,12 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
                     continue
                 if kind == "new_topic_confirm":
                     skipped_new_topic_confirm += 1
+                    continue
+                if kind == "scope_violation":
+                    # A rejected out-of-scope answer is never resolved in
+                    # bulk. Accepting it as a no-op would clear the only
+                    # signal that a rule or an attachment is wrong.
+                    skipped_scope_violations += 1
                     continue
                 if kind == "link":
                     try:
@@ -500,14 +507,16 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
             user_id=user_id,
             details={"accepted": accepted, "topics_created": topics_created,
                      "failed": failed, "skipped_merges": skipped_merges,
-                     "skipped_new_topic_confirm": skipped_new_topic_confirm},
+                     "skipped_new_topic_confirm": skipped_new_topic_confirm,
+                     "skipped_scope_violations": skipped_scope_violations},
         )
     except Exception:
         pass
 
     return {"accepted": accepted, "topics_created": topics_created,
             "failed": failed, "skipped_merges": skipped_merges,
-            "skipped_new_topic_confirm": skipped_new_topic_confirm}
+            "skipped_new_topic_confirm": skipped_new_topic_confirm,
+            "skipped_scope_violations": skipped_scope_violations}
 
 
 @router.post("/api/organizer/suggestions/{sid}/accept")
@@ -524,7 +533,10 @@ async def organizer_accept(sid: int, request: Request) -> Any:
     payload = sug["payload"]
 
     try:
-        if kind == "move":
+        if kind in ("move", "scope_violation"):
+            # A scope_violation carries the in-scope fallback folder the
+            # rejected answer was replaced with. Accepting it means "file
+            # it there" — the same apply as a move, one note at a time.
             target = payload.get("target")
             if not target:
                 return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)

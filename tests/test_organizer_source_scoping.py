@@ -85,6 +85,28 @@ def test_answer_outside_permitted_set_is_rejected(handler_env) -> None:
     assert row["c"] >= 1          # never silently misfiled
 
 
+def test_rejected_answer_is_stored_as_a_scope_violation(handler_env) -> None:
+    """The rejection owns a kind of its own.
+
+    It used to be written as ``kind='move'``, which forced the inbox read
+    model to recover the real kind by sniffing the payload. A payload
+    heuristic must not decide whether a security-adjacent entry is shown.
+    """
+    handler, storage, kb, broker, svc = handler_env
+    svc.attach("gmail", "topics/work/vorfina")
+    _seed_note(storage, "notes/mail-1", connector="gmail")
+    broker.answer = [{"note_path": "notes/mail-1",
+                      "topic_path": "topics/private",   # outside!
+                      "confidence": 0.99,
+                      "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    row = storage.fetchone(
+        "SELECT kind FROM organizer_suggestions WHERE note_path=?",
+        ("notes/mail-1",))
+    assert row["kind"] == "scope_violation"
+
+
 def test_answer_inside_permitted_set_is_applied(handler_env) -> None:
     handler, storage, kb, broker, svc = handler_env
     svc.attach("gmail", "topics/work/vorfina")

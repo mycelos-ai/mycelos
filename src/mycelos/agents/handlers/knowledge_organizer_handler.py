@@ -216,9 +216,13 @@ class KnowledgeOrganizerHandler:
                     # Deterministic rejection — never trust the answer.
                     self._audit(user_id, "organizer.scope_violation",
                                 {"path": note["path"], "proposed": target})
+                    # Its own kind, not 'move': the inbox must select this
+                    # entry by kind, never by sniffing the payload. The
+                    # payload carries the in-scope fallback folder, so
+                    # accepting the entry files the note there.
                     inbox.add(
                         note_path=note["path"],
-                        kind="move",
+                        kind="scope_violation",
                         payload={"target": fallback_path(attachments)},
                         confidence=0.0,
                     )

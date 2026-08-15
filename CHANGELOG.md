@@ -2,6 +2,37 @@
 
 ## Week 33 (2026)
 
+### The inbox only holds what needs you
+
+A 499-note import used to put roughly 150 placement suggestions into the
+inbox — a list nobody reads, which makes the count meaningless and hides
+the entries that mattered. The inbox now distinguishes three classes by
+one question: what happens if you ignore this forever?
+
+- **Uncertain placements are filed, not queued.** A note classified below
+  the silent-apply floor lands in the proposed folder immediately and is
+  marked with its confidence. It is searchable and linked at once; the
+  marker makes the shaky ones reviewable as a set under
+  `GET /api/inbox/placements`, shakiest first. Reviewing is an
+  opportunity, not a debt.
+- **The inbox keeps decisions with consequences** — merges (destructive),
+  new main categories (structural), unclassifiable notes, scope
+  violations, failed source runs — plus your own obligations: due
+  reminders and overdue tasks.
+- **The count means something again.** It covers only those two classes,
+  so a 3 means exactly three things want a human.
+- **The scope boundary is unchanged.** A note from a scoped source is
+  still only ever filed inside its permitted subtrees, uncertain or not;
+  an out-of-scope answer is still rejected deterministically.
+- **A rejected out-of-scope answer is its own entry kind.** It used to be
+  stored as a `move`, which forced the inbox to guess from the payload
+  whether a row was an optimization or a rejection. It is now written as
+  `scope_violation`, selected by kind, and excluded from accept-all.
+  Legacy `move` rows in existing databases are inert: the policy filters
+  them out of the inbox and they carry no `placement_confidence`, so they
+  appear in neither view. Their disposition is deferred — deciding it
+  needs a `DRY_RUN=yes` count first.
+
 ### Sources attach to folders and carry a rule
 
 A source (Gmail, yt-summary, …) now attaches to one or more folders and

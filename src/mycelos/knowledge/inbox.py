@@ -15,7 +15,12 @@ from mycelos.knowledge.note import slugify
 from mycelos.storage.database import SQLiteStorage
 
 
-_KINDS = ("move", "new_topic", "new_topic_confirm", "link", "refine_type", "merge")
+# ``scope_violation`` is the deterministic rejection of a classifier answer
+# that pointed outside a source's permitted subtrees. It owns a kind of its
+# own so the inbox read model can select it by kind instead of recovering it
+# from the payload — a heuristic has no place on a security-adjacent path.
+_KINDS = ("move", "new_topic", "new_topic_confirm", "link", "refine_type",
+          "merge", "scope_violation")
 
 
 class InboxService:
@@ -129,7 +134,10 @@ class InboxService:
                 # same treatment as merge.
                 links.append(row)
 
-            elif kind in ("link", "refine_type", "merge"):
+            elif kind in ("link", "refine_type", "merge", "scope_violation"):
+                # scope_violation joins merge and new_topic_confirm in the
+                # ungrouped list: it is a rejection the user must resolve,
+                # never something accept-all may apply unattended.
                 links.append(row)
 
         result = sorted(topic_groups.values(), key=lambda g: g["topic_name"].lower())

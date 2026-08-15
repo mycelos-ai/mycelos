@@ -127,10 +127,27 @@ def test_unclassifiable_notes_appear(app) -> None:
     assert any(e["kind"] == "unclassifiable" for e in entries)
 
 
-def test_scope_violations_appear_despite_being_stored_as_move(app) -> None:
-    """The handler writes a scope violation with kind='move' — the only
-    move row it still produces. Filtering on the kind alone would hide a
-    real consequence entry."""
+def test_scope_violation_written_as_its_own_kind_appears(app) -> None:
+    """The current writer: ``kind='scope_violation'`` on the row itself.
+
+    The read side must not depend on the payload for rows written today —
+    a payload heuristic does not belong on the security-adjacent path."""
+    path = app.knowledge_base.write(title="Mail", content="y", topic="notes")
+    InboxService(app.storage).add(
+        path, "scope_violation", {"target": "topics/work/vorfina"}, 0.0)
+    entries = InboxModel(app.storage, app=app).list_entries("default")
+    entry = next(e for e in entries if e["kind"] == "scope_violation")
+    assert entry["class"] == "consequence"
+    assert entry["why"]
+
+
+def test_legacy_scope_violation_stored_as_move_still_appears(app) -> None:
+    """The read-side shim, for rows already in a live database.
+
+    Before ``scope_violation`` became a kind of its own, the handler wrote
+    the rejection as ``kind='move'`` with only a fallback target. Those
+    rows must keep surfacing — dropping them would hide a real consequence
+    entry that is already on disk."""
     path = app.knowledge_base.write(title="Mail", content="y", topic="notes")
     InboxService(app.storage).add(
         path, "move", {"target": "topics/work/vorfina"}, 0.0)
@@ -138,6 +155,25 @@ def test_scope_violations_appear_despite_being_stored_as_move(app) -> None:
     entry = next(e for e in entries if e["kind"] == "scope_violation")
     assert entry["class"] == "consequence"
     assert entry["why"]
+
+
+def test_both_scope_violation_shapes_surface_identically(app) -> None:
+    """One row written the new way, one the old way — same kind, same
+    class, same actions. The shim is a compatibility read, not a second
+    behavior."""
+    kb = app.knowledge_base
+    new_path = kb.write(title="New", content="y", topic="notes")
+    old_path = kb.write(title="Old", content="y", topic="notes")
+    inbox = InboxService(app.storage)
+    inbox.add(new_path, "scope_violation", {"target": "topics/work"}, 0.0)
+    inbox.add(old_path, "move", {"target": "topics/work"}, 0.0)
+
+    entries = InboxModel(app.storage, app=app).list_entries("default")
+    by_kind = [e for e in entries if e["kind"] == "scope_violation"]
+    assert len(by_kind) == 2
+    assert {e["class"] for e in by_kind} == {"consequence"}
+    assert by_kind[0]["actions"] == by_kind[1]["actions"]
+    assert by_kind[0]["confidence"] is None and by_kind[1]["confidence"] is None
 
 
 def test_legacy_low_confidence_move_rows_stay_hidden(app) -> None:
