@@ -56,6 +56,30 @@ Closed the remaining gaps from the June claims audit:
   rebuilds every note's vector instead of leaving the vector index silently
   empty.
 
+## Week 33 (2026)
+
+### yt-summary flows into the brain
+
+Mycelos now syncs summaries from yt-summary through its `export_since`
+MCP tool — the first external tool feeding the knowledge base
+continuously.
+
+- **Incremental and idempotent.** Sync resumes from a high-water mark,
+  pages through changes, and keys on the item id: re-running never
+  duplicates, and a summary updated in yt-summary (resummarize, new
+  highlights) updates the existing note in place — topic placement,
+  links and organizer state survive.
+- **Fail closed.** An error writes nothing and does not advance the
+  high-water mark; re-fetching beats skipping.
+- **Scheduled for free.** The source registers in the existing ingest
+  registry, so the generic API route and the auto-ingest scheduler pick
+  it up without new wiring. Attach the source to a folder to scope where
+  its notes may land.
+- **Truncation is observable.** A sync that reaches the page cap reports
+  `truncated` in its result and audit entry rather than looking like a
+  completed run — so if a run stops at the limit, the user knows to
+  check back and re-run.
+
 ## Week 25 (2026) — OKF export (proof-of-concept)
 
 Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
