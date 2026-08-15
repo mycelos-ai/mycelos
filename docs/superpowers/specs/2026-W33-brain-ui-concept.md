@@ -166,7 +166,18 @@ A fourth property is deferred but shapes the ceiling: nothing leaves the brain t
 
 What already exists and can be built on: the typed link graph (`knowledge_links.kind`), the force-directed graph UI and `get_graph_data()` endpoint, hybrid search, provenance fields (`created_by`, `source`), the organizer with confidence scores and the suggestions table, the ingest registry.
 
-**For Routines specifically, more exists than the interface suggests.** `workflows/models.py` defines `Workflow` and `WorkflowStep` with conditions, policies, model tiers, `max_cost` and notification config; `workflows/workflow_registry.py` and `parser.py` manage and read them. `scheduler/jobs.py` already runs `reminder_tick_check`, `auto_ingest_check`, `briefing_tick`, `check_scheduled_workflows`, `execute_background_workflow`, `notify_completed_workflows`, plus sweeps for orphaned runs and stale background tasks. `scheduler/schedule_manager.py` owns the schedules. The `workflow_runs` / `workflow_events` tables carry execution history. Surfacing this is largely a read-and-render job, not a build.
+**For Routines specifically, more exists than the interface suggests — but less than this paragraph originally claimed.** `workflows/workflow_registry.py` and `parser.py` manage workflow definitions; `WorkflowAgent` executes them and populates `workflow_runs`. `scheduler/jobs.py` already runs `reminder_tick_check`, `auto_ingest_check`, `briefing_tick`, `check_scheduled_workflows`, `execute_background_workflow`, `notify_completed_workflows`, plus sweeps for orphaned runs and stale background tasks. `scheduler/schedule_manager.py` owns the schedules for workflow-backed tasks.
+
+> **Correction (2026-W33, verified against the code).** This paragraph previously ended "surfacing this is largely a read-and-render job, not a build." That is true for roughly a quarter of the work and false for the rest. The findings that matter for planning:
+>
+> - **`workflow_events` is a dead table** — zero writers, zero readers. Only `workflow_runs` carries history, and only for runs that pass through `WorkflowAgent`.
+> - **Three of the four routine kinds write no run rows at all.** Scheduled tasks record `run_count` but no outcome; the briefing records one date string; source syncs record nothing durable. Package 2's finding stands: an inbox `failed_run` entry cannot be built on today's schema.
+> - **Source syncs are not an entity.** No table, no id, no schedule record, no per-source pause — the cadence is a hardcoded hourly decorator and the only switch is one global `auto_ingest_enabled` boolean covering every source.
+> - **`WorkflowStep`'s conditions, policies, model tiers and `max_cost` are inert.** The executor is an LLM tool-calling loop over `plan`/`allowed_tools`/`success_criteria`; the `steps` column is never executed. A UI that renders steps renders fiction.
+> - **Cost is a facade.** `budget_per_run` is read into a dead variable, `check_budget` has no caller, and `llm_usage` has no `run_id` to join on.
+> - **The API is read-only.** No run-now or pause HTTP route exists for workflows or scheduled tasks.
+>
+> The "Modeling consequence" paragraph under Surface 5 is the accurate estimate. Naming/i18n genuinely is cheap: ~62 YAML values across two parallel locale files plus ~4 hardcoded HTML strings.
 
 **For Channels:** the `channels` table and `channels/telegram.py` exist; voice input runs through `speech/transcription.py`. Missing for the concept above: a per-note record of the arrival channel (today's provenance names the source/connector, not the way in).
 
