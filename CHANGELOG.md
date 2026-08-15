@@ -2,6 +2,49 @@
 
 ## Week 33 (2026)
 
+### Every routine run leaves a record
+
+A sync that stopped running used to be invisible: source syncs wrote
+nothing durable, so a dead connector looked exactly like a quiet one.
+Runs of all four kinds — workflows, scheduled tasks, the briefing and
+source syncs — now write to one table, and a run that ends for any reason
+says so.
+
+- **Failed source syncs reach the inbox.** A failed sync becomes a
+  consequence entry naming the source and the cause. `POST
+  /api/inbox/runs/{source}/retry` runs it again from there, and the entry
+  disappears when a run succeeds — nothing has to be dismissed. A retry
+  that fails again reports the failure and keeps the entry. A source that
+  keeps failing stays one entry with a failure count rather than one per
+  tick.
+- **Failures are recorded honestly.** A crash used to leave a run marked
+  "running" forever, relabelled after a restart as though the gateway had
+  been restarted under it. Real causes are now recorded when they happen.
+- **A run whose outcome is genuinely unknown says that.** A row still
+  marked "running" when the system next starts cannot be told apart from a
+  crash, a kill or a redeploy, so it is reported as an unknown outcome
+  rather than a guess. That sweep runs once at startup and not on a timer:
+  until the next restart, a crashed run stays "running" and shows nothing.
+- **Causes carry no content.** The stored cause names what failed and why
+  — never a traceback, a file path, or the data that failed to parse. It
+  is chosen from a fixed set by failure mode; a connector's own error text
+  and an exception's message never reach the column, the inbox or an audit
+  event.
+- `workflow_events`, a table with no writer and no reader, is removed.
+
+**Only source syncs produce an inbox entry.** A failing briefing does not.
+It retries every five minutes — about 288 times a day — and none of those
+failures creates an entry or an audit event, so a briefing that stops
+being delivered is still only visible in the run table and the server log.
+This is deliberate for now: a briefing clears itself daily, so an entry
+would appear and vanish on its own, and there is no retry route to offer.
+It is a real gap and it is open. Failing workflows and scheduled tasks
+likewise write run rows but no entry; they have their own surfaces.
+
+Not in this release: the Routines interface, run-now and pause over HTTP,
+per-source schedules, and cost accounting. Source syncs still share one
+global switch and a fixed hourly cadence.
+
 ### The inbox only holds what needs you
 
 A 499-note import used to put roughly 150 placement suggestions into the
@@ -18,10 +61,9 @@ one question: what happens if you ignore this forever?
 - **The inbox keeps decisions with consequences** — merges (destructive),
   new main categories (structural), unclassifiable notes and scope
   violations — plus your own obligations: due reminders and overdue
-  tasks. Failed source runs are a planned kind: the policy accepts them,
-  but nothing records a run yet, so no such entry appears today. Run
-  history lands with Routines, and the entry with it. Until then a
-  failing connector is reported by `mycelos doctor`.
+  tasks. Failed source runs were a planned kind here, waiting for
+  something to record a run; "Every routine run leaves a record" below
+  builds it, so the entry is real.
 - **Every entry has a working exit.** A note the organizer gave up on
   goes back into its queue with `POST /api/inbox/notes/{path}/retry` —
   after you file it yourself, or after a provider outage. Nothing has to
