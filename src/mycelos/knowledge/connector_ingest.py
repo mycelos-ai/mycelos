@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("mycelos.knowledge")
@@ -141,7 +142,198 @@ def ingest_gmail(
     return summary
 
 
+YT_SUMMARY_CONNECTOR = "yt-summary"
+_HIGH_WATER_KEY = "ingest.yt-summary.since"
+MAX_SYNC_PAGES = 50          # hard stop against a runaway producer
+
+# The producer (a Raspberry Pi without an RTC) can have forward clock skew,
+# and a malformed/adversarial timestamp could otherwise claim any value.
+# Never let the high-water mark advance beyond "now" plus this tolerance —
+# an item past the clamp is still imported, it just cannot move the mark.
+HIGH_WATER_CLOCK_SKEW_TOLERANCE = timedelta(hours=1)
+
+
+def _clamp_high_water_mark(ts: str) -> str:
+    """Cap a candidate high-water mark at consumer-now + skew tolerance.
+
+    Comparison and storage of the mark are both plain lexicographic string
+    operations, so the clamp must itself produce a string that sorts
+    correctly against ISO-8601 timestamps (offset-aware, zero-padded).
+    An unparseable `ts` is clamped away entirely (never advances the mark)
+    rather than risking a non-ISO string entering the comparison chain.
+    """
+    limit = datetime.now(timezone.utc) + HIGH_WATER_CLOCK_SKEW_TOLERANCE
+    normalized = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed > limit:
+        return limit.isoformat()
+    return ts
+
+
+def _stored_timestamp(storage: Any, connector: str, external_id: str) -> str | None:
+    """The provenance timestamp currently stored for this external id."""
+    row = storage.fetchone(
+        "SELECT json_extract(source, '$.timestamp') AS ts FROM knowledge_notes "
+        "WHERE json_extract(source, '$.connector') = ? "
+        "AND json_extract(source, '$.external_id') = ?",
+        (connector, external_id),
+    )
+    return row["ts"] if row else None
+
+
+def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> bool:
+    """Update an existing note's content/tags and refresh its provenance.
+
+    Note: kb.update() has no title parameter, so a title change upstream
+    does not retitle the note (deliberate — see task brief).
+
+    Returns False when the content write did not happen (row missing, or
+    kb.update() reports the note file is gone) — the caller must not treat
+    that as a successful update. The provenance timestamp is rewritten
+    ONLY when kb.update() actually returned True: rewriting it unconditionally
+    would advance "source.timestamp" past content that was never written,
+    so the next run's dedup check (stored timestamp == new timestamp) would
+    wrongly conclude the note is already current and skip it forever.
+    """
+    row = app.storage.fetchone(
+        "SELECT path, source FROM knowledge_notes "
+        "WHERE json_extract(source, '$.connector') = ? "
+        "AND json_extract(source, '$.external_id') = ?",
+        (connector, note["external_id"]),
+    )
+    if row is None:
+        return False
+    path = row["path"]
+    updated = kb.update(path, content=note["content"], tags=note["tags"])
+    if not updated:
+        return False
+
+    source = json.loads(row["source"]) if row["source"] else {}
+    source.update({
+        "kind": "connector",
+        "connector": connector,
+        "external_id": note["external_id"],
+        "url": note["url"],
+        "timestamp": note["timestamp"],
+    })
+    app.storage.execute(
+        "UPDATE knowledge_notes SET source = ? WHERE path = ?",
+        (json.dumps(source), path),
+    )
+    return True
+
+
+def ingest_yt_summary(
+    app: Any,
+    user_id: str = "default",
+    max_items: int = DEFAULT_MAX_ITEMS,
+    mcp: Any = None,
+) -> dict:
+    """Pull summaries from yt-summary into the knowledge base.
+
+    Incremental: resumes from the stored high-water mark and advances it
+    only after a fully successful run (fail closed — re-fetching beats
+    skipping). Idempotent by external id; changed items update the
+    existing note in place so topic placement and links survive.
+    """
+    from mycelos.knowledge.okf_import import okf_item_to_note
+
+    mcp = mcp or app.mcp_manager
+    kb = app.knowledge_base
+    counts = {"fetched": 0, "created": 0, "updated": 0,
+              "skipped_unchanged": 0, "skipped_malformed": 0,
+              "failed_updates": 0}
+
+    row = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key = ?", (_HIGH_WATER_KEY,))
+    since = row["value"] if row else ""
+
+    cursor = ""
+    newest_ts = since
+    truncated = True  # flips to False only when a page reports has_more=False
+    for _ in range(MAX_SYNC_PAGES):
+        result = mcp.call_tool(
+            f"{YT_SUMMARY_CONNECTOR}.export_since",
+            {"since": since, "cursor": cursor, "limit": min(max_items, 100)},
+        )
+        result = _unwrap_result(result)
+        if not isinstance(result, dict) or result.get("error"):
+            err = result.get("error") if isinstance(result, dict) else "bad response"
+            logger.warning("yt-summary ingest failed: %s", err)
+            return {"error": str(err), **counts}
+
+        for item in result.get("items", []):
+            counts["fetched"] += 1
+            try:
+                note = okf_item_to_note(item)
+            except ValueError:
+                counts["skipped_malformed"] += 1
+                continue
+            ts = note["timestamp"]
+            clamped_ts = _clamp_high_water_mark(ts)
+            if clamped_ts and clamped_ts > newest_ts:
+                newest_ts = clamped_ts
+            if external_id_exists(app.storage, YT_SUMMARY_CONNECTOR,
+                                  note["external_id"]):
+                if _stored_timestamp(app.storage, YT_SUMMARY_CONNECTOR,
+                                     note["external_id"]) == ts:
+                    counts["skipped_unchanged"] += 1
+                    continue
+                if _update_existing(app, kb, YT_SUMMARY_CONNECTOR, note):
+                    counts["updated"] += 1
+                else:
+                    # Content write failed (note file missing) — provenance
+                    # was left untouched, so the item is re-offered next run.
+                    counts["failed_updates"] += 1
+            else:
+                kb.write(
+                    title=note["title"], content=note["content"],
+                    type=note["type"], tags=note["tags"],
+                    created_by="import",
+                    source={"kind": "connector",
+                            "connector": YT_SUMMARY_CONNECTOR,
+                            "external_id": note["external_id"],
+                            "url": note["url"],
+                            "timestamp": ts},
+                )
+                counts["created"] += 1
+
+        cursor = result.get("next_cursor", "")
+        if not result.get("has_more"):
+            truncated = False
+            break
+
+    if truncated:
+        # Hit MAX_SYNC_PAGES with more pages still available. The cursor
+        # walk consumed so far is contiguous from `since`, so newest_ts is
+        # still a safe high-water mark for exactly what was processed —
+        # advancing it does not skip anything. But it must not look like a
+        # complete sync: flag it so the caller (and the next run) knows a
+        # backlog remains behind the cap.
+        counts["truncated"] = True
+        logger.warning(
+            "yt-summary ingest hit MAX_SYNC_PAGES=%d with more pages pending; "
+            "mark advanced to last fully-consumed page, resume next run",
+            MAX_SYNC_PAGES,
+        )
+
+    if newest_ts:
+        app.storage.execute(
+            "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
+            (_HIGH_WATER_KEY, newest_ts),
+        )
+    app.audit.log("knowledge.ingest.yt_summary", user_id=user_id,
+                  details=counts)          # counts only — no item content
+    return counts
+
+
 # Registry for the API endpoint — more connectors land here (github, calendar).
 INGEST_SOURCES = {
     "gmail": ingest_gmail,
+    "yt-summary": ingest_yt_summary,
 }

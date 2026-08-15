@@ -84,6 +84,47 @@ Closed the remaining gaps from the June claims audit:
   rebuilds every note's vector instead of leaving the vector index silently
   empty.
 
+## Week 33 (2026)
+
+### yt-summary flows into the brain
+
+Mycelos now syncs summaries from yt-summary through its `export_since`
+MCP tool — the first external tool feeding the knowledge base
+continuously.
+
+- **Incremental and idempotent.** Sync resumes from a high-water mark,
+  pages through changes, and keys on the item id: re-running never
+  duplicates, and a summary updated in yt-summary (resummarize, new
+  highlights) updates the existing note in place — topic placement,
+  links and organizer state survive.
+- **Fail closed.** An error writes nothing and does not advance the
+  high-water mark; re-fetching beats skipping.
+- **Scheduled for free.** The source registers in the existing ingest
+  registry, so the generic API route and the auto-ingest scheduler pick
+  it up without new wiring. Attach the source to a folder to scope where
+  its notes may land.
+- **Truncation is observable.** A sync that reaches the page cap reports
+  `truncated` in its result and audit entry rather than looking like a
+  completed run — so if a run stops at the limit, the user knows to
+  check back and re-run.
+- **Timestamps are validated and clock-skew clamped.** An unparseable or
+  missing item timestamp is now rejected (`skipped_malformed`) instead
+  of being compared as a raw string — previously one garbage or
+  far-future value could permanently poison the high-water mark and
+  silently stop the sync. A candidate mark is also capped at
+  consumer-now plus a one-hour tolerance for the producer's clock skew;
+  the affected item still imports, only the mark stops advancing.
+- **A failed content write no longer advances provenance.** If the note
+  file behind an update went missing, the sync used to rewrite the
+  stored timestamp anyway, making the item look up-to-date forever. It
+  now leaves the old timestamp in place and counts `failed_updates`, so
+  the item is retried on the next run.
+- **A malformed item no longer aborts the whole sync.** A non-mapping
+  item or a non-list `tags` field used to raise past the loop's error
+  handling and block every future run on the same poisoned item; both
+  are now handled defensively (`skipped_malformed` / tags coerced to
+  `[]`).
+
 ## Week 25 (2026) — OKF export (proof-of-concept)
 
 Export the knowledge tree as a conformant Open Knowledge Format (OKF v0.1)
