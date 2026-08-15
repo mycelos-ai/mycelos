@@ -11,6 +11,8 @@ Spec: docs/superpowers/specs/2026-W33-inbox-design.md
 """
 from __future__ import annotations
 
+import json
+
 # Suggestion kinds whose consequences are irreversible, structural, or
 # invisible-if-ignored. Everything else is an optimization: it is applied
 # and marked uncertain instead of queuing for confirmation.
@@ -48,6 +50,11 @@ def collapse_key(entry: dict) -> str | None:
 
     Collapsing happens per run, per source, per kind — two sources in the
     same run stay two entries.
+
+    The key is an opaque string. It is built with JSON so that a
+    separator inside a value cannot fake a different grouping: a source
+    id is free text and may contain any character. A missing source and
+    an explicit None both mean "no source" and share one group.
     """
     kind = entry.get("kind", "")
     if not is_collapsible(kind):
@@ -55,4 +62,5 @@ def collapse_key(entry: dict) -> str | None:
     run_id = entry.get("run_id")
     if not run_id:
         return None
-    return f"{run_id}|{entry.get('source', '')}|{kind}"
+    source = entry.get("source") or ""
+    return json.dumps([run_id, source, kind])
