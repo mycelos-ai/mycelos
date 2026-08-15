@@ -16,6 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from mycelos.tools.registry import ToolRegistry
+from mycelos.workflows.run_cause import describe_exception
 
 if TYPE_CHECKING:
     from mycelos.app import App
@@ -203,12 +204,135 @@ class WorkflowAgent:
     ) -> WorkflowAgentResult:
         """Run the workflow plan. Returns WorkflowAgentResult.
 
+        Any exception that ends the run is recorded on the run row and then
+        re-raised. Recording never swallows: callers audit the exception
+        (`scheduler/jobs.py`) and chat surfaces it to the user.
+
         Args:
             inputs: Key-value inputs for the workflow plan.
             on_progress: Optional callback(step_id, status) called during
                 tool execution. Status is "running" before and "done" after
                 each tool call. This enables real-time progress in the UI.
+
+        Raises:
+            Exception: Whatever the plan's LLM call or tools raised. The run
+                row is marked 'failed' with a sanitized cause first.
         """
+        self._start_run()
+        try:
+            return self._execute_plan(inputs=inputs, on_progress=on_progress)
+        except Exception as exc:
+            # The row must say the run ended. Recording is best-effort; the
+            # original exception always wins so the caller still sees it.
+            logger.exception("Workflow run %s failed", self.run_id)
+            self._record_failure(describe_exception(exc))
+            raise
+
+    def _start_run(self) -> None:
+        """Make sure a run row exists before any work happens.
+
+        Deliberately fatal when no row can be established: a run with no row
+        is a run nobody can account for, and every surface that reports runs
+        reads rows. Failing here costs one execution; running unrecorded
+        costs the history.
+
+        A resume re-enters execute() for a run that already has a row. That
+        row satisfies the invariant, so the duplicate insert is tolerated —
+        only the absence of a row is fatal.
+
+        Raises:
+            Exception: Whatever the storage layer raised, unless a row for
+                this run already exists.
+        """
+        # An ad-hoc workflow_def (built in code, never registered) has no row
+        # in `workflows`, and the foreign key would reject it. Such a run is
+        # still a run: record it with a null workflow_id and keep its identity
+        # in routine_key. Task 1 made the column nullable for exactly this.
+        workflow_id: str | None = self._workflow_id
+        if not self._is_registered_workflow(workflow_id):
+            workflow_id = None
+
+        try:
+            self.app.workflow_run_manager.start(
+                workflow_id=workflow_id,
+                user_id="default",
+                run_id=self.run_id,
+                session_id=self.session_id,
+                routine_key=self._workflow_id,
+            )
+            return
+        except Exception:
+            existing = None
+            try:
+                existing = self.app.workflow_run_manager.get(self.run_id)
+            except Exception:
+                logger.warning(
+                    "Cannot read back workflow run %s", self.run_id, exc_info=True,
+                )
+            if existing is not None:
+                # Resume path: the row is already there, the invariant holds.
+                logger.debug("Workflow run %s already recorded", self.run_id)
+                return
+            logger.exception(
+                "Cannot record the start of workflow run %s — refusing to run "
+                "unrecorded", self.run_id,
+            )
+            raise
+
+    def _is_registered_workflow(self, workflow_id: str | None) -> bool:
+        """Check whether `workflow_id` exists in the workflows table.
+
+        Args:
+            workflow_id: The id to look up.
+
+        Returns:
+            True only when a matching row exists. False on any lookup error —
+            a null workflow_id records the run; a bad one rejects it.
+        """
+        if not workflow_id:
+            return False
+        try:
+            row = self.app.storage.fetchone(
+                "SELECT 1 AS present FROM workflows WHERE id = ?", (workflow_id,)
+            )
+            return row is not None
+        except Exception:
+            logger.warning(
+                "Cannot verify workflow '%s' before recording a run",
+                workflow_id, exc_info=True,
+            )
+            return False
+
+    def _record_failure(self, cause: str) -> None:
+        """Mark the run failed with a sanitized cause. Never raises.
+
+        Args:
+            cause: User-facing cause text. No traceback, no paths, no content.
+        """
+        try:
+            self.app.workflow_run_manager.fail(self.run_id, error=cause)
+        except Exception:
+            logger.warning(
+                "Failed to record failure for workflow run %s", self.run_id,
+                exc_info=True,
+            )
+        try:
+            self.app.storage.execute(
+                "UPDATE workflow_runs SET cost = ?, conversation = ? WHERE id = ?",
+                (self._total_cost, json.dumps(self.conversation), self.run_id),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist state for failed workflow run %s", self.run_id,
+                exc_info=True,
+            )
+
+    def _execute_plan(
+        self,
+        inputs: dict[str, Any] | None = None,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> WorkflowAgentResult:
+        """Run the LLM tool-calling loop. See :meth:`execute`."""
         # Build initial conversation if empty (fresh start)
         if not self.conversation:
             self.conversation = [
@@ -225,17 +349,6 @@ class WorkflowAgent:
                     "role": "user",
                     "content": "Execute the plan now.",
                 })
-
-        # Persist run start
-        try:
-            self.app.workflow_run_manager.start(
-                workflow_id=self._workflow_id,
-                user_id="default",
-                run_id=self.run_id,
-                session_id=self.session_id,
-            )
-        except Exception:
-            logger.warning("Failed to persist workflow run start", exc_info=True)
 
         tool_schemas = self.get_tool_schemas()
 
@@ -368,15 +481,7 @@ class WorkflowAgent:
         # Exceeded max rounds
         self._audit("workflow.max_rounds", {"max_rounds": self.max_rounds})
         error_msg = f"Max rounds ({self.max_rounds}) exceeded"
-        try:
-            self.app.workflow_run_manager.fail(self.run_id, error=error_msg)
-            # Persist cost and conversation for debugging
-            self.app.storage.execute(
-                "UPDATE workflow_runs SET cost = ?, conversation = ? WHERE id = ?",
-                (self._total_cost, json.dumps(self.conversation), self.run_id),
-            )
-        except Exception:
-            logger.warning("Failed to persist workflow failure", exc_info=True)
+        self._record_failure(error_msg)
         return WorkflowAgentResult(
             status="failed",
             error=error_msg,

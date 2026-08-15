@@ -128,13 +128,28 @@ def briefing_tick(
         return {"sent": False, "error": str(e)}
 
 
+ORPHANED_RUN_CAUSE = (
+    "The run did not finish and its outcome is unknown. It was still marked "
+    "running when the system next started."
+)
+
+
 def sweep_orphaned_workflow_runs(app: Any) -> int:
-    """Mark workflow_runs stuck in 'running' as failed (e.g., after crash)."""
+    """Mark runs stuck in 'running' as failed, with an honest cause.
+
+    A row still 'running' at startup tells us one thing only: the run did
+    not finish. A crash, a kill and a clean restart are indistinguishable
+    here. The old message claimed a restart, which sent the reader looking
+    at infrastructure when the real cause was usually a crash. A wrong cause
+    is worse than no cause, so this states what is actually known.
+
+    Runs that recorded their own cause are already 'failed' and untouched.
+    """
     try:
         cursor = app.storage.execute(
-            """UPDATE workflow_runs SET status = 'failed',
-               error = 'Orphaned: gateway restarted while workflow was running'
-            WHERE status = 'running'"""
+            """UPDATE workflow_runs SET status = 'failed', error = ?
+            WHERE status = 'running'""",
+            (ORPHANED_RUN_CAUSE,),
         )
         count = cursor.rowcount
         if count > 0:
@@ -282,11 +297,67 @@ def execute_background_workflow(
     return run_id
 
 
+def _record_scheduled_failure(
+    app: Any,
+    run_id: str,
+    workflow_id: str,
+    task_id: str,
+    cause: str,
+) -> None:
+    """Make sure a failed scheduled run leaves a row that says so.
+
+    `scheduled_tasks` has no outcome column — `run_count` increments the same
+    way for success and failure — so the run row is the only durable trace.
+    The agent records its own failures, but three paths never reach it: the
+    workflow has no plan, the agent could not be constructed, and the agent
+    returned a non-completed status without writing one.
+
+    Never raises: bookkeeping must not break the scheduler loop, which still
+    has to mark the task executed to avoid a retry storm.
+
+    Note: `task_id` is not stored on the row. `workflow_runs.task_id`
+    references `tasks(id)`, and a scheduled task lives in `scheduled_tasks` —
+    passing it there fails the foreign key. It is used for logging only.
+
+    Args:
+        app: The application.
+        run_id: The run this attempt used.
+        workflow_id: The scheduled workflow.
+        task_id: The scheduled task, for the log line only.
+        cause: User-facing cause. No traceback, no paths, no content.
+    """
+    try:
+        existing = app.workflow_run_manager.get(run_id)
+        if existing is None:
+            app.workflow_run_manager.start(
+                workflow_id=workflow_id, run_id=run_id,
+            )
+            existing = app.workflow_run_manager.get(run_id)
+        if existing is not None and existing.get("status") == "running":
+            app.workflow_run_manager.fail(run_id, error=cause)
+        app.storage.execute(
+            "UPDATE workflow_runs SET kind = 'scheduled_task' WHERE id = ?",
+            (run_id,),
+        )
+    except Exception:
+        logger.warning(
+            "Could not record failure for scheduled run %s (task %s)",
+            run_id, task_id[:8], exc_info=True,
+        )
+
+
 def check_scheduled_workflows(app: Any) -> list[str]:
     """Check for due scheduled workflows and execute them.
 
+    Every attempt that ends leaves a run row. A failure records a cause;
+    the task is still marked executed so a broken workflow cannot spin.
+
     Returns list of executed task IDs.
     """
+    import uuid
+
+    from mycelos.workflows.run_cause import describe_exception
+
     due = app.schedule_manager.get_due_tasks()
     executed: list[str] = []
 
@@ -302,9 +373,13 @@ def check_scheduled_workflows(app: Any) -> list[str]:
             task_id[:8],
         )
 
+        run_id = str(uuid.uuid4())[:16]
+
         try:
             workflow = app.workflow_registry.get(workflow_id)
             if workflow is None:
+                # No workflow means no run row can reference it — the task
+                # itself is the broken thing, and it is not executed.
                 logger.warning(
                     "Workflow '%s' not found for scheduled task %s",
                     workflow_id,
@@ -313,17 +388,23 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 continue
 
             # Execute via WorkflowAgent
-            import uuid
             from mycelos.workflows.agent import WorkflowAgent
 
             plan = workflow.get("plan")
             if not plan:
+                # Used to `continue` silently: no row, no error, no trace.
                 logger.warning(
                     "Workflow '%s' has no plan, skipping", workflow_id
                 )
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    "The workflow has no plan, so there was nothing to run. "
+                    "Re-register the workflow with a plan.",
+                )
+                app.schedule_manager.mark_executed(task_id)
+                executed.append(task_id)
                 continue
 
-            run_id = str(uuid.uuid4())[:16]
             agent = WorkflowAgent(
                 app=app,
                 workflow_def=workflow,
@@ -339,9 +420,13 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 logger.info(
                     "Scheduled workflow '%s' completed successfully", workflow_id
                 )
-            else:
+            elif result.status == "failed":
                 logger.warning(
                     "Scheduled workflow '%s' failed: %s", workflow_id, result.error
+                )
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    result.error or "The workflow run failed without a cause.",
                 )
 
             # Audit log
@@ -356,6 +441,9 @@ def check_scheduled_workflows(app: Any) -> list[str]:
 
         except Exception as e:
             logger.error("Error executing scheduled task %s: %s", task_id[:8], e)
+            _record_scheduled_failure(
+                app, run_id, workflow_id, task_id, describe_exception(e),
+            )
             # Still mark as executed to prevent infinite retry
             app.schedule_manager.mark_executed(task_id)
             executed.append(task_id)

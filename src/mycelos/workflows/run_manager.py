@@ -30,24 +30,30 @@ class WorkflowRunManager:
 
     def start(
         self,
-        workflow_id: str,
+        workflow_id: str | None,
         task_id: str | None = None,
         user_id: str = "default",
         budget_limit: float | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        routine_key: str | None = None,
     ) -> str:
         """Start a new workflow run.
 
         Args:
-            workflow_id: ID of the workflow to run.
-            task_id: Optional associated task ID.
+            workflow_id: ID of the workflow to run. May be None for an ad-hoc
+                workflow definition that was never registered; `routine_key`
+                then carries its identity.
+            task_id: Optional associated task ID. Must reference `tasks(id)` —
+                a scheduled task id belongs to `scheduled_tasks` and does not
+                go here.
             user_id: Owner of the run.
             budget_limit: Optional maximum cost allowed.
             run_id: Optional pre-assigned run ID (auto-generated if not provided).
             session_id: Optional chat session that initiated this run. Used to
                 link runs back to the originating session in the admin UI. Stays
                 null for headless/scheduled runs.
+            routine_key: Identity for runs with no `workflow_id`.
 
         Returns:
             The new run ID.
@@ -56,9 +62,10 @@ class WorkflowRunManager:
         self._storage.execute(
             """INSERT INTO workflow_runs
                (id, workflow_id, task_id, user_id, budget_limit, completed_steps,
-                artifacts, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, workflow_id, task_id, user_id, budget_limit, "[]", "{}", session_id),
+                artifacts, session_id, routine_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, workflow_id, task_id, user_id, budget_limit, "[]", "{}",
+             session_id, routine_key),
         )
         return run_id
 
