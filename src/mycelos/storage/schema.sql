@@ -161,9 +161,15 @@ CREATE TABLE IF NOT EXISTS workflows (
 --
 -- `error` is user-facing text: a cause, never a traceback, a file path or
 -- the content that failed to parse.
+--
+-- The CHECK on `kind` is not a style rule. A typo'd kind writes a row that
+-- every kind-filtered read misses, so a failed sync becomes invisible with
+-- no error anywhere. The four values are fixed by the design; keep this list
+-- identical to the one in database.py's rebuilt table.
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id              TEXT PRIMARY KEY,
-    kind            TEXT NOT NULL DEFAULT 'workflow',  -- workflow | scheduled_task | briefing | source_sync
+    kind            TEXT NOT NULL DEFAULT 'workflow'
+        CHECK (kind IN ('workflow', 'scheduled_task', 'briefing', 'source_sync')),
     routine_key     TEXT,                              -- identity when workflow_id is NULL
     workflow_id     TEXT REFERENCES workflows(id),     -- NULL for briefing / source_sync
     task_id         TEXT REFERENCES tasks(id),

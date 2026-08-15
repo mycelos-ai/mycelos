@@ -269,6 +269,12 @@ class SQLiteStorage:
             # Column order matches the new schema.sql definition. The copy
             # lists every column explicitly: SELECT * would depend on the
             # old table's order and silently misalign if it ever differed.
+            #
+            # This table definition must stay identical to schema.sql's, the
+            # CHECK on `kind` included. A migrated database that accepts a
+            # value a fresh one rejects is a difference no test on one path
+            # alone would show. Every copied row is 'workflow', so the CHECK
+            # holds for existing data.
             self._conn.execute("PRAGMA foreign_keys=OFF")
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -276,7 +282,9 @@ class SQLiteStorage:
                     """
                     CREATE TABLE workflow_runs_new (
                         id              TEXT PRIMARY KEY,
-                        kind            TEXT NOT NULL DEFAULT 'workflow',
+                        kind            TEXT NOT NULL DEFAULT 'workflow'
+                            CHECK (kind IN ('workflow', 'scheduled_task',
+                                            'briefing', 'source_sync')),
                         routine_key     TEXT,
                         workflow_id     TEXT REFERENCES workflows(id),
                         task_id         TEXT REFERENCES tasks(id),

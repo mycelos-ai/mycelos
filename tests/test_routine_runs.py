@@ -392,6 +392,175 @@ def test_reopening_a_fresh_database_is_idempotent(tmp_path: Path) -> None:
         s.close()
 
 
+# --- kind is constrained to the four legal values -------------------------
+#
+# A typo'd kind is the silent failure this package exists to prevent: the row
+# lands in the table but every kind-filtered read misses it, so a failed sync
+# looks exactly like a healthy one. The same four values must hold on a fresh
+# database and on a migrated one — if the two definitions drift, a value the
+# gateway accepts on one server is rejected on the next.
+
+_VALID_KINDS = ("workflow", "scheduled_task", "briefing", "source_sync")
+_INVALID_KINDS = ("source-sync", "sourcesync", "SOURCE_SYNC", "", "briefings")
+
+
+def _insert_kind(storage: SQLiteStorage, run_id: str, kind: str) -> None:
+    storage.execute(
+        "INSERT INTO workflow_runs (id, kind, routine_key) VALUES (?, ?, ?)",
+        (run_id, kind, "probe"),
+    )
+
+
+@pytest.mark.parametrize("kind", _VALID_KINDS)
+def test_fresh_database_accepts_every_legal_kind(storage, kind: str) -> None:
+    _insert_kind(storage, f"run-{kind}", kind)
+    row = storage.fetchone(
+        "SELECT kind FROM workflow_runs WHERE id=?", (f"run-{kind}",))
+    assert row["kind"] == kind
+
+
+@pytest.mark.parametrize("kind", _INVALID_KINDS)
+def test_fresh_database_rejects_an_illegal_kind(storage, kind: str) -> None:
+    """A typo, a wrong case and an empty string must all raise here, not
+    return a row nobody can find."""
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_kind(storage, "run-bad", kind)
+
+
+@pytest.mark.parametrize("kind", _VALID_KINDS)
+def test_migrated_database_accepts_every_legal_kind(
+    tmp_path: Path, kind: str
+) -> None:
+    db_path = tmp_path / f"kind-ok-{kind}.db"
+    _build_old_shape(db_path)
+    _seed_old_rows(db_path)
+
+    reopened = SQLiteStorage(db_path)
+    _insert_kind(reopened, f"run-{kind}", kind)
+    row = reopened.fetchone(
+        "SELECT kind FROM workflow_runs WHERE id=?", (f"run-{kind}",))
+    assert row["kind"] == kind
+    reopened.close()
+
+
+@pytest.mark.parametrize("kind", _INVALID_KINDS)
+def test_migrated_database_rejects_an_illegal_kind(
+    tmp_path: Path, kind: str
+) -> None:
+    """The rebuilt table must carry the same CHECK as schema.sql. Without it
+    a migrated database silently accepts what a fresh one refuses."""
+    db_path = tmp_path / "kind-bad.db"
+    _build_old_shape(db_path)
+    _seed_old_rows(db_path)
+
+    reopened = SQLiteStorage(db_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_kind(reopened, "run-bad", kind)
+    reopened.close()
+
+
+def test_migration_copies_old_rows_as_a_legal_kind(tmp_path: Path) -> None:
+    """The constraint must be satisfiable by the data already on disk: every
+    migrated row classifies as 'workflow'."""
+    db_path = tmp_path / "kind-migrated-rows.db"
+    _build_old_shape(db_path)
+    _seed_old_rows(db_path)
+
+    reopened = SQLiteStorage(db_path)
+    kinds = {
+        r["kind"]
+        for r in reopened.fetchall("SELECT DISTINCT kind FROM workflow_runs")
+    }
+    assert kinds == {"workflow"}
+    reopened.close()
+
+
+# --- the rebuild is all-or-nothing ----------------------------------------
+
+
+def test_a_crash_during_the_rebuild_leaves_the_database_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rebuild runs inside one transaction. Without it, a crash after the
+    DROP commits the new table as an orphan, and every later open then fails
+    with 'table workflow_runs_new already exists' — a permanently wedged
+    database, which is the worst outcome in this package.
+
+    Crash the rebuild, then assert the database is untouched and the next
+    open recovers.
+    """
+    db_path = tmp_path / "crash-during-rebuild.db"
+    _build_old_shape(db_path)
+    _seed_old_rows(db_path)
+
+    # sqlite3.Connection is immutable, so wrap the connection the storage
+    # opens. The rebuild script runs statement by statement and fails at the
+    # RENAME — after the new table was created and the old one dropped. That
+    # is the point where only the transaction can still save the database.
+    real_connect = sqlite3.connect
+
+    class _CrashingConnection:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self._conn = conn
+
+        def executescript(self, script: str):  # type: ignore[no-untyped-def]
+            if "workflow_runs_new" not in script:
+                return self._conn.executescript(script)
+            for statement in script.split(";"):
+                if not statement.strip():
+                    continue
+                if "RENAME TO" in statement:
+                    raise sqlite3.OperationalError("injected failure")
+                self._conn.execute(statement)
+            return None
+
+        def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+            return getattr(self._conn, name)
+
+        def __setattr__(self, name: str, value) -> None:  # type: ignore[no-untyped-def]
+            if name == "_conn":
+                object.__setattr__(self, name, value)
+            else:
+                setattr(self._conn, name, value)
+
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda *a, **kw: _CrashingConnection(real_connect(*a, **kw))
+    )
+
+    crashed = SQLiteStorage(db_path)
+    with pytest.raises(sqlite3.OperationalError):
+        crashed.fetchone("SELECT COUNT(*) AS c FROM workflow_runs")
+    crashed.close()
+
+    monkeypatch.undo()
+
+    # Nothing half-done: the original table is intact, both rows are there,
+    # and no orphan was left behind.
+    raw = sqlite3.connect(str(db_path))
+    raw.row_factory = sqlite3.Row
+    tables = {
+        r["name"]
+        for r in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "workflow_runs" in tables
+    assert "workflow_runs_new" not in tables, (
+        "an orphan workflow_runs_new wedges every future open"
+    )
+    assert raw.execute("SELECT COUNT(*) FROM workflow_runs").fetchone()[0] == 2
+    old_columns = {r["name"] for r in raw.execute("PRAGMA table_info(workflow_runs)")}
+    assert "kind" not in old_columns, "the rebuild must not half-apply"
+    raw.close()
+
+    # The next open recovers rather than wedging.
+    reopened = SQLiteStorage(db_path)
+    assert reopened.fetchone("SELECT COUNT(*) AS c FROM workflow_runs")["c"] == 2
+    cols = _columns(reopened)
+    assert "kind" in cols
+    assert "routine_key" in cols
+    assert not _table_exists(reopened, "workflow_runs_new")
+    reopened.close()
+
+
 # --- the dead table ------------------------------------------------------
 
 
