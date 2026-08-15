@@ -141,7 +141,137 @@ def ingest_gmail(
     return summary
 
 
+YT_SUMMARY_CONNECTOR = "yt-summary"
+_HIGH_WATER_KEY = "ingest.yt-summary.since"
+MAX_SYNC_PAGES = 50          # hard stop against a runaway producer
+
+
+def _stored_timestamp(storage: Any, connector: str, external_id: str) -> str | None:
+    """The provenance timestamp currently stored for this external id."""
+    row = storage.fetchone(
+        "SELECT json_extract(source, '$.timestamp') AS ts FROM knowledge_notes "
+        "WHERE json_extract(source, '$.connector') = ? "
+        "AND json_extract(source, '$.external_id') = ?",
+        (connector, external_id),
+    )
+    return row["ts"] if row else None
+
+
+def _update_existing(app: Any, kb: Any, connector: str, note: dict) -> None:
+    """Update an existing note's content/tags and refresh its provenance.
+
+    Note: kb.update() has no title parameter, so a title change upstream
+    does not retitle the note (deliberate — see task brief).
+    """
+    row = app.storage.fetchone(
+        "SELECT path, source FROM knowledge_notes "
+        "WHERE json_extract(source, '$.connector') = ? "
+        "AND json_extract(source, '$.external_id') = ?",
+        (connector, note["external_id"]),
+    )
+    if row is None:
+        return
+    path = row["path"]
+    kb.update(path, content=note["content"], tags=note["tags"])
+
+    source = json.loads(row["source"]) if row["source"] else {}
+    source.update({
+        "kind": "connector",
+        "connector": connector,
+        "external_id": note["external_id"],
+        "url": note["url"],
+        "timestamp": note["timestamp"],
+    })
+    app.storage.execute(
+        "UPDATE knowledge_notes SET source = ? WHERE path = ?",
+        (json.dumps(source), path),
+    )
+
+
+def ingest_yt_summary(
+    app: Any,
+    user_id: str = "default",
+    max_items: int = DEFAULT_MAX_ITEMS,
+    mcp: Any = None,
+) -> dict:
+    """Pull summaries from yt-summary into the knowledge base.
+
+    Incremental: resumes from the stored high-water mark and advances it
+    only after a fully successful run (fail closed — re-fetching beats
+    skipping). Idempotent by external id; changed items update the
+    existing note in place so topic placement and links survive.
+    """
+    from mycelos.knowledge.okf_import import okf_item_to_note
+
+    mcp = mcp or app.mcp_manager
+    kb = app.knowledge_base
+    counts = {"fetched": 0, "created": 0, "updated": 0,
+              "skipped_unchanged": 0, "skipped_malformed": 0}
+
+    row = app.storage.fetchone(
+        "SELECT value FROM knowledge_config WHERE key = ?", (_HIGH_WATER_KEY,))
+    since = row["value"] if row else ""
+
+    cursor = ""
+    newest_ts = since
+    for _ in range(MAX_SYNC_PAGES):
+        result = mcp.call_tool(
+            f"{YT_SUMMARY_CONNECTOR}.export_since",
+            {"since": since, "cursor": cursor, "limit": min(max_items, 100)},
+        )
+        result = _unwrap_result(result)
+        if not isinstance(result, dict) or result.get("error"):
+            err = result.get("error") if isinstance(result, dict) else "bad response"
+            logger.warning("yt-summary ingest failed: %s", err)
+            return {"error": str(err), **counts}
+
+        for item in result.get("items", []):
+            counts["fetched"] += 1
+            try:
+                note = okf_item_to_note(item)
+            except ValueError:
+                counts["skipped_malformed"] += 1
+                continue
+            ts = note["timestamp"]
+            if ts > newest_ts:
+                newest_ts = ts
+            if external_id_exists(app.storage, YT_SUMMARY_CONNECTOR,
+                                  note["external_id"]):
+                if _stored_timestamp(app.storage, YT_SUMMARY_CONNECTOR,
+                                     note["external_id"]) == ts:
+                    counts["skipped_unchanged"] += 1
+                    continue
+                _update_existing(app, kb, YT_SUMMARY_CONNECTOR, note)
+                counts["updated"] += 1
+            else:
+                kb.write(
+                    title=note["title"], content=note["content"],
+                    type=note["type"], tags=note["tags"],
+                    created_by="import",
+                    source={"kind": "connector",
+                            "connector": YT_SUMMARY_CONNECTOR,
+                            "external_id": note["external_id"],
+                            "url": note["url"],
+                            "timestamp": ts},
+                )
+                counts["created"] += 1
+
+        cursor = result.get("next_cursor", "")
+        if not result.get("has_more"):
+            break
+
+    if newest_ts:
+        app.storage.execute(
+            "INSERT OR REPLACE INTO knowledge_config (key, value) VALUES (?, ?)",
+            (_HIGH_WATER_KEY, newest_ts),
+        )
+    app.audit.log("knowledge.ingest.yt_summary", user_id=user_id,
+                  details=counts)          # counts only — no item content
+    return counts
+
+
 # Registry for the API endpoint — more connectors land here (github, calendar).
 INGEST_SOURCES = {
     "gmail": ingest_gmail,
+    "yt-summary": ingest_yt_summary,
 }
