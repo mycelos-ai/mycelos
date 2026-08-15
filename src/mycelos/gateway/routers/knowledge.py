@@ -575,6 +575,18 @@ async def organizer_accept(sid: int, request: Request) -> Any:
                 return JSONResponse({"error": "apply failed: merge failed"}, status_code=500)
         elif kind == "refine_type":
             pass
+        else:
+            # Fail closed (Constitution Rule 3). An unrecognised kind has
+            # no apply branch, so accepting it would mark the row handled
+            # while nothing happened — the exact fail-open that was closed
+            # for scope_violation. Every kind in INBOX_KINDS without a
+            # branch here (failed_run, unclassifiable) lands on this line
+            # and stays pending until it gets one.
+            logger.warning("organizer accept refused: no apply path for kind %s", kind)
+            return JSONResponse(
+                {"error": "unsupported suggestion kind", "kind": kind},
+                status_code=422,
+            )
     except Exception as exc:
         logger.warning("organizer accept failed for suggestion %s: %s", sid, exc)
         return JSONResponse({"error": "apply failed"}, status_code=500)

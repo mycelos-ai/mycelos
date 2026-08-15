@@ -258,3 +258,31 @@ def test_accept_all_counts_link_with_missing_source_as_failed(api_client) -> Non
     row = app_obj.storage.fetchone(
         "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
     assert row["status"] == "pending"
+
+
+def test_accepting_an_unknown_kind_fails_closed(api_client) -> None:
+    """No apply branch means no accept. Marking such a row accepted would
+    report a decision as handled while nothing was applied — the same
+    fail-open that was closed for scope_violation.
+
+    'failed_run' is inserted directly: it is in INBOX_KINDS (the policy is
+    ready for it) but has no producer and no apply branch yet, so it is
+    the real case this guard protects.
+    """
+    client, app_obj = api_client
+    path = _seed_note(app_obj)
+    cursor = app_obj.storage.execute(
+        "INSERT INTO organizer_suggestions (note_path, kind, payload, confidence) "
+        "VALUES (?, 'failed_run', '{}', 0.9)", (path,))
+    sid = int(cursor.lastrowid)
+
+    resp = client.post(f"/api/organizer/suggestions/{sid}/accept")
+    assert resp.status_code == 422
+    assert resp.json()["kind"] == "failed_run"
+
+    row = app_obj.storage.fetchone(
+        "SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
+    assert row["status"] == "pending"
+    # It is still shown, so it cannot be lost by the refusal.
+    assert any(e["kind"] == "failed_run"
+               for e in client.get("/api/inbox").json()["entries"])

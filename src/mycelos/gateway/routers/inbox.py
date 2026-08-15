@@ -15,6 +15,12 @@ suggestion id (``"suggestion:<id>"``) and the existing
 ``/api/organizer/suggestions/{id}/accept`` and ``.../dismiss`` routes
 apply it, with the fail-closed handling they already have.
 
+The one exception is the ``unclassifiable`` entry, which owns no
+suggestion row and therefore no accept route.
+``POST /api/inbox/notes/{path}/retry`` is its resolve: it hands the note
+back to the organizer queue. Every entry the inbox shows must have a
+working exit, or inbox zero stops being reachable.
+
 Every handler is a plain ``def``. They touch SQLite only, which is
 synchronous; ``async def`` would block the event loop without buying
 concurrency, which a prior review already caught once in this project.
@@ -141,3 +147,64 @@ def inbox_confirm_placement(path: str, request: Request) -> Any:
         # Audit must never break the write path.
         pass
     return {"ok": True, "path": path}
+
+
+@router.post("/api/inbox/notes/{path:path}/retry")
+def inbox_retry_note(path: str, request: Request) -> Any:
+    """Return an unclassifiable note to the organizer queue.
+
+    An ``unclassifiable`` entry owns no suggestion row — the handler parks
+    the note at ``organizer_state='manual'`` and stops — so the
+    accept/dismiss routes cannot reach it. This is its resolve action.
+
+    It covers both ways a user clears one: "I filed it myself, look at it
+    again" and "the provider was down, try again". Resetting the state to
+    ``'pending'`` and the attempt counter to 0 puts the note back in front
+    of the next organizer run, which is the only path that ends in a
+    filed note. Archiving — destroying the knowledge — was the previous
+    only exit and is not a resolution.
+
+    Fail closed (Constitution Rule 3): the note is reported resolved only
+    when the UPDATE actually changed a row. An unknown path is a 404 and
+    a failed write is a 500; neither claims success.
+    """
+    if not _is_safe_note_path(path):
+        # Fail closed and say nothing about why. No row is touched.
+        logger.warning("inbox: rejected unsafe note path")
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+
+    mycelos = request.app.state.mycelos
+    row = mycelos.storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", (path,)
+    )
+    if not row:
+        return JSONResponse({"error": "not_found", "path": path}, status_code=404)
+
+    try:
+        cursor = mycelos.storage.execute(
+            "UPDATE knowledge_notes SET organizer_state='pending', "
+            "organizer_attempts=0 WHERE path=?",
+            (path,),
+        )
+        changed = int(getattr(cursor, "rowcount", 0) or 0)
+    except Exception:
+        logger.warning("inbox: retry update failed", exc_info=True)
+        changed = 0
+
+    if changed < 1:
+        # The state did not change, so the entry is NOT resolved. Say so
+        # rather than returning a 200 the badge will contradict.
+        return JSONResponse({"error": "retry failed"}, status_code=500)
+
+    try:
+        mycelos.audit.log(
+            "knowledge.note_requeued",
+            user_id=resolve_user_id(request),
+            # Path and the previous state only. The title and the note
+            # body never enter an audit payload (Constitution Rule 1).
+            details={"path": path, "previous_state": row.get("organizer_state")},
+        )
+    except Exception:
+        # Audit must never break the write path.
+        pass
+    return {"ok": True, "path": path, "organizer_state": "pending"}

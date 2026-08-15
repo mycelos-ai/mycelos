@@ -53,9 +53,16 @@ _OBLIGATION_ACTIONS: list[dict[str, str]] = [
     {"id": "snooze", "label": "Snooze"},
     {"id": "open", "label": "Open"},
 ]
+# An unclassifiable note owns no suggestion row, so the accept/dismiss
+# routes cannot reach it. Its resolve action is 'retry', which hands the
+# note back to the organizer queue via
+# ``POST /api/inbox/notes/{path}/retry``. That is the exit for both
+# readings of the entry: "I filed it myself, look again" and "the
+# provider was down, try again". 'open' is client-side navigation to the
+# note, not a resolve — the same role it has for an obligation.
 _UNCLASSIFIABLE_ACTIONS: list[dict[str, str]] = [
-    {"id": "open", "label": "File it myself"},
-    {"id": "dismiss", "label": "Leave it"},
+    {"id": "retry", "label": "File it myself / try again"},
+    {"id": "open", "label": "Open"},
 ]
 
 # Kinds whose confidence must not be rendered. A merge is never automatic
@@ -181,6 +188,11 @@ def list_uncertain_placements(
     not a debt. Ordering ascending puts the least trustworthy placement
     at the top, which is the only order that makes a partial review
     worthwhile.
+
+    ``user_id`` is accepted but not used in a WHERE clause: the knowledge
+    base is single-tenant (``knowledge_notes`` has no owner column) and
+    every knowledge route behaves the same way. The parameter is here for
+    interface symmetry and for future scoping — it does not filter today.
     """
     try:
         rows = storage.fetchall(
@@ -225,7 +237,13 @@ class InboxModel:
     # -- public API -------------------------------------------------------
 
     def list_entries(self, user_id: str) -> list[dict[str, Any]]:
-        """Every Class 2 and Class 3 entry, collapsed and ordered."""
+        """Every Class 2 and Class 3 entry, collapsed and ordered.
+
+        ``user_id`` is accepted but not used in a WHERE clause: the
+        knowledge base is single-tenant (``knowledge_notes`` has no owner
+        column). The parameter is here for interface symmetry and for
+        future scoping — it does not filter today.
+        """
         entries: list[dict[str, Any]] = []
         entries.extend(self._suggestion_entries())
         entries.extend(self._unclassifiable_entries())
@@ -259,6 +277,11 @@ class InboxModel:
         separate ``COUNT(*)`` on purpose: two queries drift, and a count
         that disagrees with the list is worse than no count. Collapsing
         means a bulk import counts as one, which is the point.
+
+        ``user_id`` is accepted but not used in a WHERE clause: the
+        knowledge base is single-tenant (``knowledge_notes`` has no owner
+        column). The parameter is here for interface symmetry and for
+        future scoping — it does not filter today.
         """
         return len(self.list_entries(user_id))
 

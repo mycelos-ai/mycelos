@@ -202,6 +202,126 @@ def test_confirming_audits_the_path(api_client) -> None:
     assert "Shaky" not in row["details"]      # Rule 1: no note content
 
 
+# ---- POST /api/inbox/notes/{path}/retry ---------------------------------
+
+
+def _park_as_unclassifiable(app_obj, title: str = "Gave up") -> str:
+    """A note the organizer parked at its retry cap, as the handler leaves it."""
+    path = app_obj.knowledge_base.write(title=title, content="y", topic="notes")
+    app_obj.storage.execute(
+        "UPDATE knowledge_notes SET organizer_state='manual', organizer_attempts=3 "
+        "WHERE path=?", (path,))
+    return path
+
+
+def test_an_unclassifiable_entry_advertises_an_action_that_exists(api_client) -> None:
+    """The blocker: an entry that names an action mapping to no endpoint
+    can never be resolved, and the count never reaches zero."""
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj)
+
+    entry = next(e for e in client.get("/api/inbox").json()["entries"]
+                 if e["kind"] == "unclassifiable")
+    assert entry["id"] == f"note:{path}"
+    assert "retry" in [a["id"] for a in entry["actions"]]
+
+    # The advertised action maps to a route that is really mounted.
+    assert client.post(f"/api/inbox/notes/{path}/retry").status_code == 200
+
+
+def test_retry_resolves_the_entry_and_the_count_reaches_zero(api_client) -> None:
+    """The blocker's own scenario, end to end."""
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj)
+    assert client.get("/api/inbox/count").json()["count"] == 1
+
+    resp = client.post(f"/api/inbox/notes/{path}/retry")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    assert client.get("/api/inbox/count").json()["count"] == 0
+    assert client.get("/api/inbox").json()["entries"] == []
+
+
+def test_retry_requeues_the_note_without_destroying_it(api_client) -> None:
+    """Archiving was the old only exit. Resolving must not lose the note."""
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj)
+
+    client.post(f"/api/inbox/notes/{path}/retry")
+    row = app_obj.storage.fetchone(
+        "SELECT status, organizer_state, organizer_attempts FROM knowledge_notes "
+        "WHERE path=?", (path,))
+    assert row["status"] != "archived"
+    assert row["organizer_state"] == "pending"
+    assert row["organizer_attempts"] == 0
+
+
+def test_retry_fails_closed_when_the_state_change_fails(api_client, monkeypatch) -> None:
+    """Rule 3: if the UPDATE does not land, the entry is not resolved."""
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj)
+
+    def boom(sql: str, params: tuple = ()) -> None:
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(app_obj.storage, "execute", boom)
+    resp = client.post(f"/api/inbox/notes/{path}/retry")
+    assert resp.status_code == 500
+    assert resp.json()["error"] == "retry failed"
+
+    monkeypatch.undo()
+    row = app_obj.storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", (path,))
+    assert row["organizer_state"] == "manual"          # still parked
+    assert client.get("/api/inbox/count").json()["count"] == 1
+
+
+def test_retry_on_an_unknown_path_is_404(api_client) -> None:
+    client, _ = api_client
+    assert client.post("/api/inbox/notes/notes/nope/retry").status_code == 404
+
+
+def test_retry_audits_the_path_only(api_client) -> None:
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj, title="Secret Title")
+
+    client.post(f"/api/inbox/notes/{path}/retry")
+    row = app_obj.storage.fetchone(
+        "SELECT details FROM audit_events "
+        "WHERE event_type='knowledge.note_requeued' ORDER BY id DESC LIMIT 1")
+    assert row is not None
+    assert path in row["details"]
+    assert "Secret Title" not in row["details"]       # Rule 1: no note content
+
+
+@pytest.mark.parametrize("attempt", [
+    "..%2f..%2fetc%2fpasswd",
+    "%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+    "notes%2f..%2f..%2fx",
+    "..%5c..%5cwindows",
+])
+def test_retry_rejects_encoded_path_traversal(api_client, attempt: str) -> None:
+    """The same guard the confirm route has — a {path:path} route needs it."""
+    client, _ = api_client
+    resp = client.post(f"/api/inbox/notes/{attempt}/retry")
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "invalid path"}
+
+
+def test_retry_traversal_changes_no_row(api_client) -> None:
+    """Fail closed: a rejected path must not requeue anyone's note."""
+    client, app_obj = api_client
+    path = _park_as_unclassifiable(app_obj)
+
+    client.post("/api/inbox/notes/..%2f..%2fetc%2fpasswd/retry")
+    client.post("/api/inbox/notes//etc/passwd/retry")
+
+    row = app_obj.storage.fetchone(
+        "SELECT organizer_state FROM knowledge_notes WHERE path=?", (path,))
+    assert row["organizer_state"] == "manual"
+
+
 # ---- Path traversal on the {path:path} route ----------------------------
 
 

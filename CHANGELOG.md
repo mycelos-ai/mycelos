@@ -16,9 +16,16 @@ one question: what happens if you ignore this forever?
   `GET /api/inbox/placements`, shakiest first. Reviewing is an
   opportunity, not a debt.
 - **The inbox keeps decisions with consequences** — merges (destructive),
-  new main categories (structural), unclassifiable notes, scope
-  violations, failed source runs — plus your own obligations: due
-  reminders and overdue tasks.
+  new main categories (structural), unclassifiable notes and scope
+  violations — plus your own obligations: due reminders and overdue
+  tasks. Failed source runs are a planned kind: the policy accepts them,
+  but nothing records a run yet, so no such entry appears today. Run
+  history lands with Routines, and the entry with it. Until then a
+  failing connector is reported by `mycelos doctor`.
+- **Every entry has a working exit.** A note the organizer gave up on
+  goes back into its queue with `POST /api/inbox/notes/{path}/retry` —
+  after you file it yourself, or after a provider outage. Nothing has to
+  be archived to clear the count.
 - **The count means something again.** It covers only those two classes,
   so a 3 means exactly three things want a human.
 - **The scope boundary is unchanged.** A note from a scoped source is
