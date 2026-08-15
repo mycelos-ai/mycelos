@@ -1,12 +1,19 @@
 """Unified inbox read model — one list of what needs a human.
 
-Reads three kinds of state and shapes them into one ordered list:
+Reads four kinds of state and shapes them into one ordered list:
 
 * ``organizer_suggestions`` with ``status='pending'``, filtered through
   :func:`~mycelos.knowledge.inbox_policy.needs_human` (Class 2).
 * Notes the organizer gave up on (``organizer_state='manual'``), which
   own no suggestion row (Class 2).
+* Source syncs that have failed since they last succeeded, read from
+  ``workflow_runs`` (Class 2).
 * Due reminders and overdue tasks (Class 3).
+
+Three of the four are **synthesized** rather than stored, so they resolve
+by the underlying state changing: a filed note leaves ``manual``, a
+working sync writes a completed run. Nothing here can become an entry
+whose dismissal has nowhere to persist.
 
 This module is **read-only**. It never writes, never marks anything seen
 and never resolves. The resolve dispatch lives in the API layer, so a
@@ -27,6 +34,8 @@ from datetime import date
 from typing import Any
 
 from mycelos.knowledge.inbox_policy import collapse_key, needs_human
+from mycelos.scheduler.jobs import ORPHANED_RUN_CAUSE
+from mycelos.scheduler.run_recorder import CAUSES
 from mycelos.storage.database import SQLiteStorage
 
 logger = logging.getLogger("mycelos.inbox_model")
@@ -64,6 +73,29 @@ _UNCLASSIFIABLE_ACTIONS: list[dict[str, str]] = [
     {"id": "retry", "label": "File it myself / try again"},
     {"id": "open", "label": "Open"},
 ]
+# A failed run is synthesized from run rows, so accept and dismiss cannot
+# reach it: there is no row to update, and a dismissal would have nowhere
+# to persist. Offering one would produce the sticky entry nobody can clear
+# — the exact defect Package 2's final review found in `unclassifiable`.
+# The entry has one real exit, running the routine again, and one implicit
+# one: it disappears by itself when the routine next succeeds.
+_FAILED_RUN_ACTIONS: list[dict[str, str]] = [
+    {"id": "retry", "label": "Run it again"},
+]
+
+# The one run kind that becomes an inbox entry. Read `_failed_run_rows`
+# for why the filter is on this column and on nothing else.
+_FAILED_RUN_KIND = "source_sync"
+
+# How a failed run reads to a human.
+_OUTCOME_FAILED = "failed"
+_OUTCOME_UNKNOWN = "unknown"
+
+# The only cause strings this surface will show. Every one is a fixed
+# string this package authored: the recorder's fixed causes, plus the
+# orphan sweep's. A value outside the set is dropped rather than rendered
+# — see :func:`_renderable_cause`.
+_RENDERABLE_CAUSES = frozenset(CAUSES.values()) | {ORPHANED_RUN_CAUSE}
 
 # Kinds whose confidence must not be rendered. A merge is never automatic
 # at any confidence, so showing a number would imply a decision the value
@@ -114,6 +146,75 @@ def _why(kind: str, payload: dict[str, Any], title: str) -> str:
     return f"'{title}' needs a decision from you."
 
 
+def _run_outcome(stored_cause: str | None) -> str:
+    """Whether the routine is broken, or its outcome is merely unknown.
+
+    The orphan sweep stamps *every* row still marked ``running`` when the
+    gateway starts. It cannot tell a crashed run from one still executing
+    in an old process, and a redeploy during an hourly sync is an ordinary
+    event rather than a rare one. Rendering that as "the sync failed"
+    sends the reader hunting for a broken connector when the gateway
+    simply restarted under it — a wrong cause is worse than no cause.
+
+    So the sweep's own cause is recognised by value and reported as
+    unknown. Everything else the row can carry is a cause a writer in this
+    package chose deliberately, and means the routine really did fail.
+    """
+    if (stored_cause or "").strip() == ORPHANED_RUN_CAUSE:
+        return _OUTCOME_UNKNOWN
+    return _OUTCOME_FAILED
+
+
+def _renderable_cause(stored_cause: str | None) -> str | None:
+    """The stored cause, but only when this package wrote it.
+
+    :meth:`~mycelos.scheduler.run_recorder.RunRecorder._safe_cause` is an
+    allowlist on the write side, and this is the matching one on the read
+    side. The two are deliberately not the same guarantee: the column is
+    also written by :func:`sweep_orphaned_workflow_runs` and by the
+    workflow run manager, whose ``error`` text follows a different rule,
+    and a future writer could put anything there.
+
+    The inbox is a rendering surface, so it renders only strings it can
+    attribute. Anything else is dropped and the entry falls back to a
+    cause-free line. Honest and vague beats readable and leaking.
+    """
+    text = (stored_cause or "").strip()
+    return text if text in _RENDERABLE_CAUSES else None
+
+
+def _failed_run_title(routine_key: str, outcome: str) -> str:
+    """One line, no jargon: which routine, and what is true about it."""
+    if outcome == _OUTCOME_UNKNOWN:
+        return f"The '{routine_key}' sync did not finish"
+    return f"The '{routine_key}' sync failed"
+
+
+def _failed_run_why(
+    routine_key: str, outcome: str, stored_cause: str | None
+) -> str:
+    """Why this entry is here, in the user's language.
+
+    Returned to the user's own UI. The routine key is a source name the
+    user connected themselves, never note content — but this text must
+    still never be logged or written to an audit payload, for the same
+    reason as :func:`_why`.
+    """
+    cause = _renderable_cause(stored_cause)
+    if outcome == _OUTCOME_UNKNOWN:
+        return (
+            f"The last '{routine_key}' sync did not finish and its outcome "
+            "is unknown — it was still running when the system next "
+            "started. Run it again to find out where it stands."
+        )
+    if cause:
+        return f"The last '{routine_key}' sync failed. {cause}"
+    return (
+        f"The last '{routine_key}' sync failed. No cause was recorded that "
+        "is safe to show here; the server log has the detail."
+    )
+
+
 def _confidence_for(kind: str, value: float | None) -> float | None:
     """The confidence to render, or None when a number would mislead."""
     if kind in _NO_CONFIDENCE_KINDS:
@@ -126,6 +227,8 @@ def _actions_for(kind: str) -> list[dict[str, str]]:
         return list(_OBLIGATION_ACTIONS)
     if kind == "unclassifiable":
         return list(_UNCLASSIFIABLE_ACTIONS)
+    if kind == "failed_run":
+        return list(_FAILED_RUN_ACTIONS)
     return list(_SUGGESTION_ACTIONS)
 
 
@@ -247,6 +350,7 @@ class InboxModel:
         entries: list[dict[str, Any]] = []
         entries.extend(self._suggestion_entries())
         entries.extend(self._unclassifiable_entries())
+        entries.extend(self._failed_run_entries())
 
         # Obligations are added whole. De-duplication happens only inside
         # Class 3 (a due reminder is also an overdue task, and one
@@ -446,19 +550,172 @@ class InboxModel:
             logger.warning("overdue task query failed", exc_info=True)
             return []
 
-    # NOTE on failed source runs (the plan's fourth source):
-    # Nothing durable records a *run*. `auto_ingest_check` collects errors
-    # into a return value and one audit event; the ingest functions return
-    # an "error" key. The only durable failure state is
-    # `connectors.last_error_at`, which is per connector and overwritten by
-    # the next call — it answers "is this connector failing now?", not "did
-    # this run fail?", and it cannot be resolved or dismissed as an inbox
-    # entry. Doctor already surfaces it (doctor/checks.check_connectors).
-    # Synthesising an inbox entry from it would produce a sticky entry
-    # nobody can clear, which is the failure mode this redesign exists to
-    # remove. Package 3 (Routines) lands run history; the failed_run entry
-    # belongs there. The `failed_run` kind stays in INBOX_KINDS so the
-    # policy is ready for it.
+    def _failed_run_entries(self) -> list[dict[str, Any]]:
+        """Source syncs that are not working right now — Class 2.
+
+        Synthesized from ``workflow_runs``, never stored. Three properties
+        follow from that and all three are the point:
+
+        * There is one source of truth. A stored row would have to be kept
+          in step with the run history that produced it, and the two would
+          drift the first time a sync succeeded while the gateway was down.
+        * The entry resolves implicitly. It disappears when the routine
+          next succeeds, so there is no dismiss row to go stale and no way
+          to reach the sticky entry nobody can clear.
+        * ``InboxService._KINDS`` needs no new value, so nothing can write
+          a ``failed_run`` suggestion that this reader does not produce.
+
+        Only ``kind='source_sync'`` is read. **The filter is on ``kind``,
+        never on a null ``workflow_id`` and never on ``routine_key``
+        alone.** An ad-hoc workflow run — one built in code and never
+        registered — also carries ``workflow_id=NULL`` with its identity in
+        ``routine_key``, and the two can collide on the same key. Folding a
+        workflow failure into a source's entry would offer a retry that
+        dispatches an ingest for a workflow.
+
+        The other three kinds stay out on purpose. A workflow and a
+        scheduled task have their own surfaces and their own retry path; a
+        briefing retries itself at the next tick and has no route to offer.
+        An entry whose action nothing implements is the defect that broke
+        inbox zero once already.
+        """
+        rows = self._failed_run_rows()
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            routine_key = row.get("routine_key")
+            if not routine_key:
+                # Without an identity the entry could name no routine and
+                # retry nothing. A row like this is a writer bug, not an
+                # entry.
+                continue
+            outcome = _run_outcome(row.get("error"))
+            title = _failed_run_title(routine_key, outcome)
+            entries.append(self._entry(
+                entry_id=f"run:{routine_key}",
+                kind="failed_run",
+                entry_class=CLASS_CONSEQUENCE,
+                title=title,
+                why=_failed_run_why(routine_key, outcome, row.get("error")),
+                confidence=None,        # a failure is a fact, not a guess
+                actions=_actions_for("failed_run"),
+                source={
+                    "kind": _FAILED_RUN_KIND,
+                    "routine_key": routine_key,
+                    "run_id": row.get("id"),
+                    "outcome": outcome,
+                    "failure_count": int(row.get("failure_count") or 1),
+                    "last_failure_at": row.get("last_failure_at"),
+                },
+                # When the problem started, not when it last recurred.
+                # list_entries sorts consequence entries oldest first, on
+                # the reasoning that the thing waiting longest is the thing
+                # most likely to be forgotten. Using the latest failure
+                # would invert exactly that: a sync broken since Monday
+                # would sink below one that broke an hour ago, and sink
+                # again every hour it failed. The provenance still carries
+                # the latest failure, for a surface that wants to show it.
+                created_at=row.get("first_failure_at"),
+            ))
+        return entries
+
+    def _failed_run_rows(self) -> list[dict[str, Any]]:
+        """One row per source sync that has failed since it last succeeded.
+
+        **A success clears the entry; nothing else does.** The anchor is
+        the routine's last ``completed`` run, and every failure after it
+        counts. The obvious alternative — look at the latest run and show
+        an entry when it is ``failed`` — fails closed in the wrong
+        direction twice:
+
+        * A retry in flight makes the latest run ``running``, so the entry
+          would disappear while the sync is still unproven. If that retry
+          then crashed and left the row ``running`` forever, the entry
+          would never come back and the dead sync would be invisible
+          again. Constitution Rule 3: a failed retry never resolves an
+          entry, and neither does an unfinished one.
+        * A run that is still going is not evidence of anything. Only a
+          completed one is.
+
+        The volume rule also lives here. An hourly sync failing all day is
+        one entry with a failure count, not 24 entries — a consequence
+        list that grows by the clock stops being read, and the reader
+        learns nothing from the 24th copy that the first did not tell
+        them. Grouping is by ``routine_key``, *within* the kind filter,
+        which is what makes that filter load-bearing rather than
+        decorative.
+
+        This is not Package 2 collapsing. ``collapse_key`` returns None
+        for every consequence kind, so two failing sources stay two
+        entries and ``collapsed_count`` stays 1. A repeat count on one
+        routine's own entry is a different claim from "several entries
+        were folded into a summary that hides them".
+
+        One row per routine, carrying ``id`` and ``error`` from its
+        **latest** failure — so the rendered cause is the one that is true
+        now — alongside ``first_failure_at`` (when the problem started),
+        ``last_failure_at`` and ``failure_count``.
+        """
+        try:
+            return self._storage.fetchall(
+                """
+                WITH runs AS (
+                    SELECT id, routine_key, status, error, created_at
+                      FROM workflow_runs
+                     WHERE kind = ?
+                       AND routine_key IS NOT NULL
+                ),
+                last_ok AS (
+                    SELECT routine_key, MAX(created_at) AS at
+                      FROM runs
+                     WHERE status = ?
+                  GROUP BY routine_key
+                ),
+                open_failures AS (
+                    SELECT f.id, f.routine_key, f.error, f.created_at
+                      FROM runs f
+                 LEFT JOIN last_ok o ON o.routine_key = f.routine_key
+                     WHERE f.status = ?
+                       AND (o.at IS NULL OR f.created_at > o.at)
+                ),
+                -- Two different questions, so two aggregates: when the
+                -- problem started (what the inbox sorts on) and how many
+                -- times it has happened since.
+                spans AS (
+                    SELECT routine_key,
+                           MIN(created_at) AS first_failure_at,
+                           MAX(created_at) AS last_failure_at,
+                           COUNT(*) AS failure_count
+                      FROM open_failures
+                  GROUP BY routine_key
+                )
+                -- The latest failure is joined explicitly rather than read
+                -- as a bare column beside MAX(). SQLite only defines the
+                -- bare-column rule for a query with a *single* min/max
+                -- aggregate, and this one has two — `id` and `error` would
+                -- then come from an unspecified row, which is how a stale
+                -- cause reaches the user. An explicit join says what it
+                -- means and survives a port to another engine.
+                --
+                -- `id` breaks a tie on identical timestamps, so the result
+                -- is one row per routine even when two failures share a
+                -- millisecond.
+                SELECT f.id, s.routine_key, f.error,
+                       s.first_failure_at, s.last_failure_at,
+                       s.failure_count
+                  FROM spans s
+                  JOIN open_failures f
+                    ON f.routine_key = s.routine_key
+                   AND f.created_at = s.last_failure_at
+                   AND f.id = (SELECT MAX(x.id) FROM open_failures x
+                                WHERE x.routine_key = s.routine_key
+                                  AND x.created_at = s.last_failure_at)
+              ORDER BY s.first_failure_at ASC
+                """,
+                (_FAILED_RUN_KIND, "completed", "failed"),
+            )
+        except Exception:
+            logger.warning("failed run query failed", exc_info=True)
+            return []
 
     # -- shaping ----------------------------------------------------------
 
