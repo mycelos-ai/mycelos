@@ -131,6 +131,8 @@ class SQLiteStorage:
                 except sqlite3.OperationalError:
                     pass  # Column might already exist in some edge case
 
+        self._migrate_workflow_runs_to_routine_runs()
+
         # One-shot migration: earlier schema versions wrote '["chat"]' as
         # the default remind_via for every new note, regardless of which
         # channels the user had configured. That pins old reminders to
@@ -232,6 +234,109 @@ class SQLiteStorage:
             """
         )
         self._conn.commit()
+
+    def _migrate_workflow_runs_to_routine_runs(self) -> None:
+        """Give workflow_runs a routine `kind` and a nullable workflow_id.
+
+        This does not fit the _MIGRATIONS list above. That list can only ADD
+        columns, and this migration must also DROP a NOT NULL constraint —
+        SQLite has no ALTER TABLE for that. The only way is a table rebuild:
+        create the new shape, copy the rows, drop the old table, rename, and
+        recreate the three indexes that went down with the old table.
+
+        Runs on every connect, like the loop above, because re-applying
+        schema.sql only happens when a check-table is missing. Idempotency
+        comes from the `kind` probe: once the rebuilt table is in place the
+        whole block is skipped, so opening the same database repeatedly
+        neither errors nor touches the data.
+
+        The rebuild is wrapped in one transaction. A half-migrated runs
+        table — rows copied but the rename not done, or indexes missing —
+        is the worst outcome here, so it is all-or-nothing.
+
+        Foreign keys must be OFF for the swap. With them ON, dropping the
+        old table would be refused or would leave dangling references from
+        tables that point at it. PRAGMA foreign_keys is a no-op inside a
+        transaction, so it is toggled around the transaction, not within it.
+        """
+        try:
+            self._conn.execute("SELECT kind, routine_key FROM workflow_runs LIMIT 0")
+            already_migrated = True
+        except sqlite3.OperationalError:
+            already_migrated = False
+
+        if not already_migrated:
+            # Column order matches the new schema.sql definition. The copy
+            # lists every column explicitly: SELECT * would depend on the
+            # old table's order and silently misalign if it ever differed.
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.executescript(
+                    """
+                    CREATE TABLE workflow_runs_new (
+                        id              TEXT PRIMARY KEY,
+                        kind            TEXT NOT NULL DEFAULT 'workflow',
+                        routine_key     TEXT,
+                        workflow_id     TEXT REFERENCES workflows(id),
+                        task_id         TEXT REFERENCES tasks(id),
+                        user_id         TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+                        status          TEXT NOT NULL DEFAULT 'running',
+                        current_step    TEXT,
+                        completed_steps TEXT,
+                        artifacts       TEXT,
+                        error           TEXT,
+                        cost            REAL NOT NULL DEFAULT 0.0,
+                        budget_limit    REAL,
+                        retry_count     INTEGER NOT NULL DEFAULT 0,
+                        conversation    TEXT,
+                        clarification   TEXT,
+                        notified_at     TEXT,
+                        session_id      TEXT,
+                        created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                        updated_at      TEXT
+                    );
+
+                    INSERT INTO workflow_runs_new
+                        (id, kind, routine_key, workflow_id, task_id, user_id,
+                         status, current_step, completed_steps, artifacts, error,
+                         cost, budget_limit, retry_count, conversation,
+                         clarification, notified_at, session_id, created_at,
+                         updated_at)
+                    SELECT
+                         id, 'workflow', NULL, workflow_id, task_id, user_id,
+                         status, current_step, completed_steps, artifacts, error,
+                         cost, budget_limit, retry_count, conversation,
+                         clarification, notified_at, session_id, created_at,
+                         updated_at
+                      FROM workflow_runs;
+
+                    DROP TABLE workflow_runs;
+                    ALTER TABLE workflow_runs_new RENAME TO workflow_runs;
+
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_status
+                        ON workflow_runs(status);
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_user
+                        ON workflow_runs(user_id, status);
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id
+                        ON workflow_runs(session_id);
+                    """
+                )
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
+
+        # workflow_events: zero writers, zero readers. Dropped in W33.
+        # Separate from the rebuild above so a database that already has the
+        # new runs table still loses the dead table.
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS workflow_events")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def initialize(self) -> None:
         """Create database and apply schema."""

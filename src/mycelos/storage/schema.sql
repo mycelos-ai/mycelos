@@ -152,10 +152,20 @@ CREATE TABLE IF NOT EXISTS workflows (
     updated_at    TEXT
 );
 
--- Workflow Runs (V2: execution state, NOT part of NixOS State)
+-- Routine Runs (execution state, NOT part of NixOS State)
+--
+-- One table, four writers. Every routine run — workflow, scheduled task,
+-- briefing, source sync — leaves a row here. `kind` tells them apart;
+-- `workflow_id` is NULL for the kinds that have no workflow, and those are
+-- identified by `routine_key` instead (the source name, or 'briefing').
+--
+-- `error` is user-facing text: a cause, never a traceback, a file path or
+-- the content that failed to parse.
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id              TEXT PRIMARY KEY,
-    workflow_id     TEXT NOT NULL REFERENCES workflows(id),
+    kind            TEXT NOT NULL DEFAULT 'workflow',  -- workflow | scheduled_task | briefing | source_sync
+    routine_key     TEXT,                              -- identity when workflow_id is NULL
+    workflow_id     TEXT REFERENCES workflows(id),     -- NULL for briefing / source_sync
     task_id         TEXT REFERENCES tasks(id),
     user_id         TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
     status          TEXT NOT NULL DEFAULT 'running',
@@ -178,18 +188,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_user ON workflow_runs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id ON workflow_runs(session_id);
 
--- Workflow Events (Durable Execution, detail log)
-CREATE TABLE IF NOT EXISTS workflow_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_id TEXT NOT NULL,
-    run_id      TEXT REFERENCES workflow_runs(id),
-    step_id     TEXT NOT NULL,
-    event_type  TEXT NOT NULL,
-    checkpoint  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_workflow ON workflow_events(workflow_id, created_at);
+-- workflow_events was removed in W33: it had zero writers and zero readers.
+-- It described a durable step log that was designed but never wired.
 
 -- Credentials (encrypted, Credential Proxy)
 CREATE TABLE IF NOT EXISTS credentials (

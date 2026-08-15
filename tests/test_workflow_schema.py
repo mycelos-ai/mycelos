@@ -140,28 +140,21 @@ def test_workflow_runs_status_update(storage: SQLiteStorage):
     assert row["current_step"] == "step2"
 
 
-# --- workflow_events with run_id ---
+# --- workflow_events is gone ---
 
 
-def test_workflow_events_has_run_id(storage: SQLiteStorage):
-    storage.execute(
-        "INSERT INTO workflows (id, name, steps) VALUES (?, ?, ?)",
-        ("wf1", "Test", "[]"),
-    )
-    storage.execute(
-        "INSERT INTO workflow_runs (id, workflow_id) VALUES (?, ?)",
-        ("run1", "wf1"),
-    )
-    storage.execute(
-        """INSERT INTO workflow_events (workflow_id, run_id, step_id, event_type)
-           VALUES (?, ?, ?, ?)""",
-        ("wf1", "run1", "step1", "started"),
-    )
+def test_workflow_events_table_is_removed(storage: SQLiteStorage):
+    """Removed in W33: the table had zero writers and zero readers. It
+    described a durable step log that was designed but never wired, and
+    keeping it kept implying history that did not exist.
+
+    Run history now lives in workflow_runs — see tests/test_routine_runs.py.
+    """
     row = storage.fetchone(
-        "SELECT * FROM workflow_events WHERE run_id = ?", ("run1",)
+        "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+        ("workflow_events",),
     )
-    assert row is not None
-    assert row["step_id"] == "step1"
+    assert row is None
 
 
 # --- Index check ---
