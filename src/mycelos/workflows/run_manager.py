@@ -171,14 +171,35 @@ class WorkflowRunManager:
     def wait_for_input(self, run_id: str, prompt: str = "") -> None:
         """Pause workflow waiting for user input.
 
+        The prompt is deliberately not stored in ``error``. It is the LLM's
+        clarification question, generated from the run's own conversation,
+        which for a knowledge workflow is the user's notes — a note title, a
+        name, an account number. ``error`` carries a cause and never content
+        (Constitution Rule 1), and it ships over HTTP through
+        ``GET /api/workflow-runs``.
+
+        Nothing is lost by dropping it. The caller writes the same question
+        into ``workflow_runs.clarification`` one statement later
+        (``workflows/agent.py``), which is the column every reader in the app
+        and the frontend actually uses for a waiting run. Every reader of
+        ``error`` gates on ``status == 'failed'``, so a ``waiting_input`` row
+        was never rendered through it.
+
+        Deletion rather than sanitization on purpose:
+        :func:`~mycelos.workflows.run_cause.sanitize_cause_text` documents that
+        it cannot classify free prose, and a question is exactly that. Keeping
+        a redacted copy of data that already has a correct home two lines away
+        buys nothing.
+
         Args:
             run_id: The run to pause.
-            prompt: Description of what input is needed.
+            prompt: Description of what input is needed. Used by the caller to
+                fill ``clarification``; not stored by this method.
 
         Raises:
             ValueError: If the run does not exist or transition is invalid.
         """
-        self._transition(run_id, "waiting_input", error=f"waiting: {prompt}")
+        self._transition(run_id, "waiting_input")
 
     def complete(self, run_id: str) -> None:
         """Mark a run as completed.

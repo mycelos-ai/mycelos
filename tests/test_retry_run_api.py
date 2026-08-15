@@ -231,6 +231,85 @@ def test_the_error_response_carries_no_connector_text(
     assert "example.com" not in body
 
 
+def test_a_retry_whose_row_cannot_be_closed_is_not_reported_as_success(
+    api_client, monkeypatch
+) -> None:
+    """SF-4. The sync ran; the row did not close. That is not ``ok: true``.
+
+    This handler's rule is that the run row is the deliverable, because a
+    *completed* row is the only thing that clears the entry. The rule was
+    applied at ``start`` (500 when the row cannot be opened) but abandoned at
+    ``finish``, so a swallowed storage error answered 200 while the row sat
+    ``running`` and the entry stayed put.
+    """
+    client, app_obj = api_client
+    _failed_sync(app_obj, "gmail")
+
+    _stub_source(monkeypatch, "gmail", lambda app, **kw: {"created": 3})
+    monkeypatch.setattr(
+        RunRecorder, "finish",
+        lambda self, run_id, counts=None: (_ for _ in ()).throw(
+            RuntimeError("disk full")
+        ),
+    )
+
+    resp = client.post("/api/inbox/runs/gmail/retry")
+
+    assert resp.status_code == 500
+    assert resp.json()["ok"] is False
+    # The row is genuinely stuck, which is why the response must say so.
+    assert _run_rows(app_obj, "gmail")[-1]["status"] == "running"
+
+
+def test_a_retry_whose_row_cannot_be_closed_keeps_the_entry(
+    api_client, monkeypatch
+) -> None:
+    """The inbox already failed closed here. The response now agrees with it.
+
+    Kept separate from the response assertion: the entry surviving is the
+    Rule 3 property, and it must not regress if the status code ever changes.
+    """
+    client, app_obj = api_client
+    _failed_sync(app_obj, "gmail")
+
+    _stub_source(monkeypatch, "gmail", lambda app, **kw: {"created": 3})
+    monkeypatch.setattr(
+        RunRecorder, "finish",
+        lambda self, run_id, counts=None: (_ for _ in ()).throw(
+            RuntimeError("disk full")
+        ),
+    )
+    client.post("/api/inbox/runs/gmail/retry")
+
+    assert len(_failed_run_entries(client)) == 1
+    assert client.get("/api/inbox/count").json()["count"] == 1
+
+
+def test_the_row_close_failure_response_carries_no_connector_text(
+    api_client, monkeypatch
+) -> None:
+    """The new 500 body is a rendering surface, same rule as the column."""
+    client, app_obj = api_client
+    _failed_sync(app_obj, "gmail")
+
+    _stub_source(monkeypatch, "gmail", lambda app, **kw: {
+        "created": 1,
+        "subject": "Rechnung Mueller GmbH",
+        "sender": "buchhaltung@example.com",
+    })
+    monkeypatch.setattr(
+        RunRecorder, "finish",
+        lambda self, run_id, counts=None: (_ for _ in ()).throw(
+            RuntimeError("could not write /Users/stefan/data/mycelos.db")
+        ),
+    )
+
+    body = client.post("/api/inbox/runs/gmail/retry").text
+    assert "Mueller" not in body
+    assert "example.com" not in body
+    assert "/Users/" not in body
+
+
 # ---- the boundary: routine_key comes from a URL path --------------------
 
 

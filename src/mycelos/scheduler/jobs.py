@@ -15,6 +15,7 @@ from mycelos.scheduler.run_recorder import (
     CAUSES,
     ORPHANED_RUN_CAUSE,
     RunRecorder,
+    safe_counts,
 )
 
 logger = logging.getLogger("mycelos.scheduler")
@@ -110,6 +111,13 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     connector's own error string nor the exception's message reaches the
     column — both are built from the data that failed, which is exactly the
     content the column must never carry.
+
+    The returned summary is also the audit payload, and it holds to the same
+    rule. ``errors`` carries the fixed cause each row got, never ``str(e)``,
+    and ``ran`` carries the counts through the recorder's own allowlist. Both
+    used to carry the connector's text straight into ``audit_events.details``,
+    which ``Audit.log`` writes without filtering. Rule 1 names audit payloads
+    beside logs and error columns.
     """
     from mycelos.knowledge.connector_ingest import INGEST_SOURCES
 
@@ -146,7 +154,7 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
                 # response that failed. The cause names no remedy, because
                 # this branch cannot tell an expired token from a closed
                 # socket — see CAUSES["source_failed"].
-                summary["errors"][name] = str(result["error"])
+                summary["errors"][name] = CAUSES["source_failed"]
                 _close_run(recorder, run_id, name,
                            cause=CAUSES["source_failed"])
             else:
@@ -158,7 +166,16 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
                 # a `.get(key, 0)` default stated a zero the connector never
                 # reported. An absent count is now absent, not zero.
                 counts = result if isinstance(result, dict) else {}
-                summary["ran"][name] = counts
+                # The summary is this function's return value AND the audit
+                # payload, so it runs the connector's dict through the same
+                # allowlist the row uses. Handing the recorder the whole
+                # result is right for the row, which the allowlist filters;
+                # it is wrong four lines later, where `app.audit.log` writes
+                # the dict to `audit_events.details` with no filter at all.
+                # The same allowlist, imported rather than reimplemented: a
+                # second copy would drift from the row's the first time a
+                # connector grew a count.
+                summary["ran"][name] = safe_counts(counts, name)
                 _close_run(recorder, run_id, name,
                            counts={**counts, "source": name})
         except BaseException as e:
@@ -170,9 +187,13 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
             # the hourly tick has a real chance of landing inside one.
             # Matches workflows/agent.py:224.
             logger.error("auto-ingest for %s FAILED: %s", name, e, exc_info=True)
-            summary["errors"][name] = str(e)
-            _close_run(recorder, run_id, name,
-                       cause=_ingest_failure_cause(e))
+            cause = _ingest_failure_cause(e)
+            # The same fixed cause the row gets, not `str(e)`. An ingest
+            # exception's message is built from the data that failed to parse,
+            # and this dict becomes `audit_events.details` verbatim — the
+            # audit payload is named in Rule 1 beside logs and errors.
+            summary["errors"][name] = cause
+            _close_run(recorder, run_id, name, cause=cause)
             if not isinstance(e, Exception):
                 # An interrupt must still interrupt. The row is closed
                 # honestly first; the loop does not continue to the next
@@ -507,7 +528,7 @@ def check_scheduled_workflows(app: Any) -> list[str]:
     """
     import uuid
 
-    from mycelos.workflows.run_cause import describe_exception
+    from mycelos.workflows.run_cause import describe_exception, sanitize_cause_text
 
     due = app.schedule_manager.get_due_tasks()
     executed: list[str] = []
@@ -597,9 +618,17 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 logger.warning(
                     "Scheduled workflow '%s' failed: %s", workflow_id, result.error
                 )
+                # `result.error` is agent-controlled text, unlike the fixed
+                # strings the sibling branches pass. Today the only site that
+                # sets it writes a constant, so nothing leaks — but the comment
+                # above invites a future status, and an unguarded write would
+                # then carry a note title or a path into the column. It is
+                # sanitized for the same reason the raise path is, and a value
+                # the sanitizer empties falls back to the fixed string.
+                sanitized = sanitize_cause_text(result.error or "")
                 _record_scheduled_failure(
                     app, run_id, workflow_id, task_id,
-                    result.error or "The workflow run failed without a cause.",
+                    sanitized or "The workflow run failed without a cause.",
                 )
 
             # Audit log

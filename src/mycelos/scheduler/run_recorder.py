@@ -161,6 +161,56 @@ _TRUNCATED_KEY = "truncated"
 _SOURCE_KEY = "source"
 
 
+def safe_counts(
+    counts: dict[str, Any] | None, routine_key: str | None = None
+) -> dict[str, Any]:
+    """Keep the numbers and the source name; drop everything else.
+
+    An allowlist rather than a denylist: a connector that adds a field
+    carrying a subject line or a sender should lose it by default, not keep it
+    until somebody notices.
+
+    ``source`` is the one string a run row may carry, and it survives only
+    when it equals the row's own ``routine_key``. That makes the value a
+    repetition of something already stored rather than a free-text field a
+    caller could fill with anything.
+
+    ``truncated`` is the one bool, coerced rather than copied, so the key
+    cannot smuggle a value of another type.
+
+    Module-level rather than a method because the row is not the only surface
+    that needs it. ``scheduler.jobs`` puts the same connector dict into an
+    audit payload, which ``Audit.log`` writes unfiltered — and that caller has
+    no recorder to reach through. A second copy of the allowlist would drift
+    from this one the first time a connector grew a count.
+
+    Args:
+        counts: What the routine reported. Any shape; a non-dict yields ``{}``.
+        routine_key: The row's own routine name, the only value ``source`` may
+            take.
+
+    Returns:
+        A dict of numbers, optionally ``truncated`` and ``source``.
+    """
+    if not isinstance(counts, dict):
+        return {}
+    safe: dict[str, Any] = {}
+    for key, value in counts.items():
+        if key == _SOURCE_KEY:
+            if routine_key is not None and value == routine_key:
+                safe[key] = value
+            continue
+        if key == _TRUNCATED_KEY:
+            safe[key] = bool(value)
+            continue
+        if key not in _ALLOWED_COUNT_KEYS:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        safe[key] = value
+    return safe
+
+
 class RunRecorder:
     """Write a run row for a briefing or a source sync.
 
@@ -277,34 +327,11 @@ class RunRecorder:
     def _safe_counts(
         counts: dict[str, Any] | None, routine_key: str | None = None
     ) -> dict[str, Any]:
-        """Keep the numbers and the source name; drop everything else.
+        """The row's count filter. See :func:`safe_counts` for the rules.
 
-        An allowlist rather than a denylist: a connector that adds a field
-        carrying a subject line or a sender should lose it by default, not
-        keep it until somebody notices.
-
-        ``source`` is the one string a run row may carry, and it survives only
-        when it equals the row's own ``routine_key``. That makes the value a
-        repetition of something already stored rather than a free-text field
-        a caller could fill with anything.
-
-        ``truncated`` is the one bool, coerced rather than copied, so the key
-        cannot smuggle a value of another type.
+        Kept as a method so the recorder reads as one unit, but the logic
+        lives at module level because the audit payload in
+        :mod:`mycelos.scheduler.jobs` needs the same filter and has no
+        recorder instance to reach it through.
         """
-        if not isinstance(counts, dict):
-            return {}
-        safe: dict[str, Any] = {}
-        for key, value in counts.items():
-            if key == _SOURCE_KEY:
-                if routine_key is not None and value == routine_key:
-                    safe[key] = value
-                continue
-            if key == _TRUNCATED_KEY:
-                safe[key] = bool(value)
-                continue
-            if key not in _ALLOWED_COUNT_KEYS:
-                continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            safe[key] = value
-        return safe
+        return safe_counts(counts, routine_key)

@@ -1059,6 +1059,127 @@ def test_run_rows_carry_only_numbers_and_source_names(app) -> None:
         assert fragment not in stored, f"{fragment!r} leaked into artifacts"
 
 
+# --- SF-3: the audit payload carries what the column carries -------------
+#
+# `auto_ingest_check` returns a summary and hands the same dict to
+# `app.audit.log`, which json.dumps it into `audit_events.details` with no
+# filter of its own. Rule 1 names audit payloads beside logs and error
+# columns, so the summary holds to the same discipline as the row: fixed
+# causes in `errors`, allowlisted counts in `ran`.
+
+
+def _audit_details(app) -> str:
+    """The raw `knowledge.auto_ingest.run` payload, as stored."""
+    row = app.storage.fetchone(
+        "SELECT details FROM audit_events "
+        "WHERE event_type='knowledge.auto_ingest.run'"
+    )
+    assert row is not None, "the tick must still audit"
+    return row["details"] or ""
+
+
+def test_the_audit_payload_carries_no_exception_text(app, monkeypatch) -> None:
+    """A raised connector error used to reach `details` byte for byte.
+
+    The exception message is built from the data that failed to parse, which
+    is exactly what the run row refuses. The audit event sits four lines from
+    the code that gets it right.
+    """
+    def _raises(app_, user_id="default"):
+        raise ValueError(LEAKY_MESSAGE)
+
+    _run_one_source(app, monkeypatch, "gmail", _raises)
+
+    details = _audit_details(app)
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in details, f"{fragment!r} leaked into the audit"
+
+
+def test_the_audit_payload_carries_no_connector_error_string(
+    app, monkeypatch
+) -> None:
+    """The returned-error branch. Same rule, the other failure mode."""
+    _run_one_source(
+        app, monkeypatch, "gmail",
+        lambda app_, user_id="default": {"error": LEAKY_MESSAGE},
+    )
+
+    details = _audit_details(app)
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in details, f"{fragment!r} leaked into the audit"
+
+
+def test_the_audit_payload_names_the_failed_source_and_a_fixed_cause(
+    app, monkeypatch
+) -> None:
+    """Dropping the text must not drop the signal.
+
+    A payload that said only "something failed" would be safe and useless.
+    The source name and the fixed cause are both kept.
+    """
+    import json as _json
+
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    def _raises(app_, user_id="default"):
+        raise ConnectionError(LEAKY_MESSAGE)
+
+    _run_one_source(app, monkeypatch, "gmail", _raises)
+
+    errors = _json.loads(_audit_details(app))["errors"]
+    assert set(errors) == {"gmail"}
+    assert errors["gmail"] == CAUSES["source_unreachable"]
+
+
+def test_the_audit_payload_counts_go_through_the_allowlist(
+    app, monkeypatch
+) -> None:
+    """`ran` used to carry the connector's whole return value.
+
+    Task 3 widened it from a hardcoded two-key dict on the reasoning that the
+    recorder's allowlist filters the row. That is right for the row and wrong
+    for the audit payload, which has no allowlist of its own.
+    """
+    import json as _json
+
+    from mycelos.scheduler.run_recorder import _ALLOWED_COUNT_KEYS
+
+    _run_one_source(
+        app, monkeypatch, "gmail",
+        lambda app_, user_id="default": {
+            "created": 2,
+            "subject": LEAKY_NOTE_TITLE,
+            "sender": LEAKY_ADDRESS,
+            "body": LEAKY_STREET,
+        },
+    )
+
+    details = _audit_details(app)
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in details, f"{fragment!r} leaked into the audit"
+
+    counts = _json.loads(details)["ran"]["gmail"]
+    assert set(counts) <= _ALLOWED_COUNT_KEYS | {"source", "truncated"}
+    assert counts["created"] == 2, "the real counts must survive"
+
+
+def test_the_audit_payload_matches_the_row_it_describes(app, monkeypatch) -> None:
+    """One discipline, two surfaces. The row and the audit agree."""
+    import json as _json
+
+    _run_one_source(
+        app, monkeypatch, "gmail",
+        lambda app_, user_id="default": {
+            "created": 1, "updated": 3, "subject": LEAKY_NOTE_TITLE,
+        },
+    )
+
+    audited = _json.loads(_audit_details(app))["ran"]["gmail"]
+    stored = _artifacts(_runs(app, "source_sync")[0])
+    # The row additionally repeats its own routine_key as `source`.
+    assert audited == {k: v for k, v in stored.items() if k != "source"}
+
+
 # --- the real counts reach the row ---------------------------------------
 #
 # The job used to build its own two-key dict before the recorder's allowlist

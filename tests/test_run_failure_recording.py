@@ -617,6 +617,38 @@ def test_scheduled_unknown_status_records_failure(app: App) -> None:
     assert runs[0]["error"]
 
 
+def test_scheduled_unknown_status_sanitizes_the_agent_error(app: App) -> None:
+    """The branch's own `result.error` is agent text, so it is sanitized.
+
+    Every sibling branch passes a fixed string, so this one used to pass
+    caller text straight into the column — and the test above pinned
+    `error=None`, which exercises the fallback and never the pass-through.
+    An unexercised branch is how the hole stayed invisible.
+    """
+    _register(app, "sched-leak-wf")
+    task_id = app.schedule_manager.add("sched-leak-wf", "*/5 * * * *")
+    _make_due(app, task_id)
+
+    from mycelos.workflows.agent import WorkflowAgentResult
+
+    with patch("mycelos.workflows.agent.WorkflowAgent") as MockAgent:
+        MockAgent.return_value.execute.return_value = WorkflowAgentResult(
+            status="something_new",
+            error=(
+                f'Notiz "{NOTE_CONTENT}" konnte nicht geschrieben werden: '
+                "/Users/stefan/data/knowledge/notes/2026-08-14.md "
+                "IBAN DE89 3704 0044 0532 0130 00"
+            ),
+        )
+        check_scheduled_workflows(app)
+
+    runs = app.workflow_run_manager.list_runs(workflow_id="sched-leak-wf")
+    assert len(runs) == 1, "an unrecognised status must not vanish"
+    assert runs[0]["status"] == "failed"
+    _assert_no_personal_data(runs[0]["error"])
+    assert "DE89" not in runs[0]["error"]
+
+
 def test_scheduled_workflow_success_records_no_extra_failure(app: App) -> None:
     """A completed scheduled run must not gain a spurious failure row."""
     _register(app, "sched-ok-wf")

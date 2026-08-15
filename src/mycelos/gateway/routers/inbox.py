@@ -246,6 +246,12 @@ def inbox_retry_run(routine_key: str, request: Request) -> Any:
     Fail closed (Constitution Rule 3): only the first is ``ok: true``. A
     failed retry answers 502 and its own run row keeps the entry alive
     with an incremented failure count.
+
+    A fourth outcome sits outside that table, because the source is not the
+    thing that failed: the ingest works but the row cannot be closed. The
+    entry then stays — ``last_ok`` anchors on ``completed``, and a row left
+    ``running`` is not that — so the answer is 500, not ``ok: true``. The
+    row-is-the-deliverable rule applies to the close as it does to the open.
     """
     # The allowlist runs first, before storage, dispatch, the recorder and
     # the audit payload — `routine_key` arrives from a URL path, and the
@@ -317,7 +323,7 @@ def inbox_retry_run(routine_key: str, request: Request) -> Any:
             _close_run(recorder, run_id, cause=cause)
             raise
 
-    _close_run(
+    closed = _close_run(
         recorder, run_id,
         counts=None if cause else {**counts, "source": routine_key},
         cause=cause,
@@ -354,6 +360,25 @@ def inbox_retry_run(routine_key: str, request: Request) -> Any:
             {"ok": False, "routine_key": routine_key, "error": cause},
             status_code=502,
         )
+    if not closed:
+        # The sync worked, but the row it had to close did not. This handler
+        # says the row is the deliverable, and that argument holds at the
+        # close exactly as it holds at the open: a row left 'running' is not
+        # a 'completed' run, so the inbox entry stays and the user is left
+        # clicking a button that answers 200 and changes nothing visible.
+        # The entry surviving is correct (Rule 3) — only the response was
+        # wrong. 500, not 502: the source answered, our storage did not.
+        return JSONResponse(
+            {
+                "ok": False,
+                "routine_key": routine_key,
+                "error": (
+                    "The sync ran, but its result could not be recorded, so "
+                    "this entry stays until the next run succeeds."
+                ),
+            },
+            status_code=500,
+        )
     return {"ok": True, "routine_key": routine_key, "counts": safe_counts}
 
 
@@ -382,19 +407,29 @@ def _close_run(
     run_id: str | None,
     counts: dict[str, Any] | None = None,
     cause: str | None = None,
-) -> None:
-    """Close a retry's run row. Never raises.
+) -> bool:
+    """Close a retry's run row. Never raises. Says whether it worked.
 
     A storage error here loses the record of a sync that already ran. The
     consequence is a stale entry, not lost data, and raising would turn a
     successful import into a 500 the user reads as "it did not work".
+
+    It still must not be reported as success. The caller applies the handler's
+    own rule — the row is the deliverable, because it is the only thing that
+    can clear the entry — to the close as well as to the open.
+
+    Returns:
+        True when the row was closed, False when the storage error was
+        swallowed. ``run_id`` of None returns False: there is no row.
     """
     if run_id is None:
-        return
+        return False
     try:
         if cause is None:
             recorder.finish(run_id, counts or {})
         else:
             recorder.fail(run_id, cause)
+        return True
     except Exception:
         logger.warning("inbox: could not close a retry's run row", exc_info=True)
+        return False

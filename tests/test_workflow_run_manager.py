@@ -160,7 +160,26 @@ def test_wait_for_input(mgr: WorkflowRunManager):
     run = mgr.get(run_id)
     assert run is not None
     assert run["status"] == "waiting_input"
-    assert "waiting: Enter API key" in run["error"]
+
+
+def test_wait_for_input_keeps_the_question_out_of_error(mgr: WorkflowRunManager):
+    """The prompt is LLM text built from the run's data. It is not a cause.
+
+    `error` carries a cause and never content (Constitution Rule 1), and it
+    ships over HTTP in `GET /api/workflow-runs`. The question's home is
+    `clarification`, which the caller writes.
+    """
+    question = (
+        'Meinst du die Notiz "Scheidung Anna Schmidt" ueber Anna Schmidt, '
+        "Hauptstrasse 14, oder ihr Konto DE89 3704 0044 0532 0130 00?"
+    )
+    run_id = mgr.start("test-wf")
+    mgr.wait_for_input(run_id, prompt=question)
+
+    run = mgr.get(run_id)
+    assert run is not None
+    assert run["status"] == "waiting_input"
+    assert not run["error"], "the question must not be stored as a cause"
 
 
 def test_resume_from_waiting_input(mgr: WorkflowRunManager):
