@@ -157,7 +157,9 @@ A fourth property is deferred but shapes the ceiling: nothing leaves the brain t
 1. How to distinguish containment edges from relation edges at a glance without colour alone (accessibility).
 2. Whether recent arrivals belong at the node only, or also as a global "what came in today" strip on home.
 3. How the graph behaves on mobile, where a force-directed layout is hard to manipulate — possibly a list/tree fallback that mirrors the same structure.
-4. **Where a scheduled source ends and a routine begins.** "Fetch arXiv and import the relevant papers" is expressible as a source with a schedule (the source's rule already decides what belongs where). It becomes a routine when something beyond importing happens. If the answer is "sources with schedules are routines too", the two lists merge and a source's node card links into Routines; if not, the user has two places to look. Unresolved.
+4. ~~Where a scheduled source ends and a routine begins.~~ **Resolved (Stefan, 2026-W33): a scheduled source IS a routine — a specialized kind.** One list, no duplication. The source's node card links into Routines for schedule, history and pause; the Routines list shows the sync alongside deliveries and jobs.
+
+   **Modeling consequence (binding for implementation):** this must be one entity with two views, never two mirrored records. If pausing the routine did not pause the source's sync (or vice versa), the unification would be a lie. Today source syncs run through a hardcoded scheduler job (`auto_ingest_check`) rather than per-source workflow rows — the implementation either represents each scheduled source as a routine record, or builds a unified read model over both with per-kind control adapters. The second is the cheaper v1; the first is the cleaner end state.
 5. Whether a routine's history (past runs, their results) deserves more than a last-run line — a routine that quietly returns nothing for three weeks looks identical to one that works.
 
 ## Implementation reality check
@@ -167,5 +169,24 @@ What already exists and can be built on: the typed link graph (`knowledge_links.
 **For Routines specifically, more exists than the interface suggests.** `workflows/models.py` defines `Workflow` and `WorkflowStep` with conditions, policies, model tiers, `max_cost` and notification config; `workflows/workflow_registry.py` and `parser.py` manage and read them. `scheduler/jobs.py` already runs `reminder_tick_check`, `auto_ingest_check`, `briefing_tick`, `check_scheduled_workflows`, `execute_background_workflow`, `notify_completed_workflows`, plus sweeps for orphaned runs and stale background tasks. `scheduler/schedule_manager.py` owns the schedules. The `workflow_runs` / `workflow_events` tables carry execution history. Surfacing this is largely a read-and-render job, not a build.
 
 **For Channels:** the `channels` table and `channels/telegram.py` exist; voice input runs through `speech/transcription.py`. Missing for the concept above: a per-note record of the arrival channel (today's provenance names the source/connector, not the way in).
+
+## Implementation roadmap — seven packages
+
+Sequenced by value and dependency, sized against what already shipped (hybrid search, local embeddings, source-attachment backend, yt-summary `export_since`). Each package is one spec→plan→implementation cycle.
+
+| # | Package | Contents | Size | Depends on |
+|---|---|---|---|---|
+| 1 | **yt-summary sync consumer** | `okf_import.py`, `ingest_yt_summary` in the ingest registry, scheduled sync. Part B of the sync spec — the producer side is live. Creates the first real routine. | M | source-attachment PR merged |
+| 2 | **Inbox** | Unified read model over organizer suggestions + due reminders + due tasks + failed runs; resolve actions per kind; teach-the-rule follow-up; UI. | M | — |
+| 3 | **Routines** | Unified read model over workflows + scheduled tasks + briefing + source syncs (per the resolved question 4); run-now/pause adapters per kind; run history; cost visibility; UI. Rename "workflows" to "Routines" in all user-facing copy (en+de). | M | 1 useful, not required |
+| 4a | **Home: bar + today + tree** | The omnibox (search/ask/keep), today strip, tree view of the map, navigation shell with the five surfaces. | M | visual design |
+| 4b | **Home: graph workbench** | Stable persisted positions, drag between parents, expand-on-demand, search-highlights-in-place, relation chips shown on select. The riskiest frontend work — deliberately split from 4a so the product works tree-first while the graph matures. | L | 4a |
+| 5 | **Node view + source editor** | Identity/provenance, content in place, filed-here/linked-here pairing, recent arrivals with move+teach, sources-on-node using the shipped attachment API. | L | 4a, source-attachment |
+| 6 | **Converse re-frame** | Citations that open nodes, keep-as-note, context anchoring to the selected node. | S | 4a |
+| 7 | **Channel provenance + System** | Per-note arrival-channel record, channel connect/revoke semantics incl. what happens to existing notes, provider-visibility line (which LLM processes what), System consolidation. | S–M | — |
+
+Not in any package (explicitly deferred): scoped external access / egress gate, multi-parent notes, onboarding redesign (own project, see below).
+
+**Known gap not covered by these packages:** the first-run experience. An empty brain on the graph-first home is a blank canvas with nothing to search, ask or show — the concept currently says nothing about the first five minutes. The onboarding redesign exists as its own planned project and should be scheduled once packages 1–4a exist, because only then is there something to onboard into.
 
 What is genuinely new: source-to-folder attachment (a source currently has no notion of placement), the per-source rule field and its path into the organizer prompt, the subtree constraint on classification (the organizer currently gets the whole topic list; it must instead get only the permitted subtrees, and its answer must be validated against them — an LLM told "only these" will occasionally answer otherwise, and that must be rejected deterministically rather than trusted), persisted graph positions, and the node view's relations pairing.
