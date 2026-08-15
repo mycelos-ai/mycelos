@@ -98,7 +98,13 @@ def decide_action(
     *,
     topic_exists: bool,
 ) -> str:
-    """Return one of: 'silent_move' | 'suggest_move' | 'suggest_new_topic'."""
+    """Return one of: 'silent_move' | 'suggest_move' | 'suggest_new_topic'.
+
+    Note on the name: since W33 the handler reads 'suggest_move' as "file it
+    and mark the placement uncertain", not as "queue a move suggestion" —
+    the string is kept for compatibility, the interpretation lives in
+    ``agents/handlers/knowledge_organizer_handler.py``.
+    """
     if result.confidence >= SILENT_CONFIDENCE and topic_exists and result.topic_path:
         return "silent_move"
     if result.confidence >= SILENT_CONFIDENCE and result.new_topic_name:

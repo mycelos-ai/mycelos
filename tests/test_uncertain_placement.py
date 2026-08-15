@@ -1,13 +1,24 @@
 """placement_confidence: the marker that replaces the move suggestion."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from mycelos.agents.handlers.knowledge_organizer_handler import (
+    KnowledgeOrganizerHandler,
+)
+from mycelos.knowledge.source_attachment import SourceAttachmentService
 from mycelos.storage.database import SQLiteStorage
+from tests.test_knowledge_organizer_handler import (
+    _FakeApp,
+    _FakeBroker,
+    _FakeKB,
+    _insert_note,
+)
 
 
 @pytest.fixture
@@ -102,3 +113,189 @@ def test_migration_adds_column_to_an_existing_database(tmp_path: Path) -> None:
     again = SQLiteStorage(db_path)
     assert again.fetchone(
         "SELECT COUNT(*) AS c FROM knowledge_notes")["c"] == 1
+
+
+# ---- filing instead of queuing -----------------------------------------
+#
+# The fakes come from tests/test_knowledge_organizer_handler.py and the
+# scoped setup mirrors tests/test_organizer_source_scoping.py — reused, not
+# duplicated.
+
+
+def _seed_note(storage: SQLiteStorage, path: str, connector: str | None = None) -> None:
+    source = (
+        json.dumps({"kind": "connector", "connector": connector})
+        if connector else None
+    )
+    _insert_note(
+        storage,
+        path=path, title=path,
+        type="note", status="active", organizer_state="pending",
+        created_at="2026-08-10T10:00:00Z",
+        source=source,
+    )
+
+
+@pytest.fixture
+def handler_env(storage: SQLiteStorage):
+    """(handler, storage, kb, broker) — unscoped organizer run."""
+    kb = _FakeKB(topics=["topics/work"])
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    return KnowledgeOrganizerHandler(app), storage, kb, broker
+
+
+@pytest.fixture
+def scoped_handler_env(storage: SQLiteStorage):
+    """(handler, storage, kb, broker, svc) — organizer with source scoping."""
+    kb = _FakeKB(topics=["topics/work/vorfina", "topics/work/vorfina/mandanten",
+                         "topics/private"])
+    broker = _FakeBroker({"topic_path": None, "confidence": 0.0,
+                          "related_note_paths": [], "new_topic_name": None})
+    app = _FakeApp(storage, broker, kb)
+    handler = KnowledgeOrganizerHandler(app)
+    return handler, storage, kb, broker, SourceAttachmentService(storage)
+
+
+def test_low_confidence_files_the_note_and_records_confidence(handler_env) -> None:
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    assert ("notes/a", "topics/work") in kb.moved       # filed, not queued
+    row = storage.fetchone(
+        "SELECT placement_confidence, organizer_state FROM knowledge_notes "
+        "WHERE path=?", ("notes/a",))
+    assert row["placement_confidence"] == 0.6
+    assert row["organizer_state"] == "ok"
+
+
+def test_low_confidence_counts_as_a_move_and_is_audited(handler_env) -> None:
+    """A filed placement is a move, not a suggestion — and every state
+    change carries an audit event with paths only."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    result = handler.run(user_id="default")
+    assert result["moved"] == 1
+    assert result["suggested"] == 0
+    events = handler._app.audit.events
+    entry = next(e for e in events if e[0] == "organizer.uncertain_placement")
+    assert entry[2] == {"path": "notes/a", "target": "topics/work",
+                        "confidence": 0.6}
+
+
+def test_low_confidence_creates_no_move_suggestion(handler_env) -> None:
+    """The inbox must not grow by one entry per uncertain placement."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    row = storage.fetchone(
+        "SELECT COUNT(*) AS c FROM organizer_suggestions "
+        "WHERE note_path=? AND kind='move'", ("notes/a",))
+    assert row["c"] == 0
+
+
+def test_high_confidence_files_without_a_confidence_marker(handler_env) -> None:
+    """Certain placements are not 'uncertain' — the review view must not
+    fill up with notes that were never in doubt."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.97, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    assert ("notes/a", "topics/work") in kb.moved
+    row = storage.fetchone(
+        "SELECT placement_confidence FROM knowledge_notes WHERE path=?",
+        ("notes/a",))
+    assert row["placement_confidence"] is None
+
+
+def test_no_target_still_routes_to_the_failure_path(handler_env) -> None:
+    """An answer with neither a topic nor a name has nowhere to file —
+    it must not vanish."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": None,
+                      "confidence": 0.4, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    assert kb.moved == []
+    row = storage.fetchone(
+        "SELECT organizer_attempts, placement_confidence FROM knowledge_notes "
+        "WHERE path=?", ("notes/a",))
+    assert row["organizer_attempts"] >= 1
+    assert row["placement_confidence"] is None
+
+
+def test_unknown_topic_at_low_confidence_is_not_filed(handler_env) -> None:
+    """A proposed topic that does not exist is no usable target: filing
+    there would invent a folder the user never approved."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/ghost",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    assert kb.moved == []
+    row = storage.fetchone(
+        "SELECT organizer_attempts, placement_confidence FROM knowledge_notes "
+        "WHERE path=?", ("notes/a",))
+    assert row["organizer_attempts"] >= 1
+    assert row["placement_confidence"] is None
+
+
+def test_failed_move_is_not_marked_ok(handler_env) -> None:
+    """Fail closed: when the move raises, the note is neither marked ok nor
+    given a confidence — it stays in the queue and is retried. The
+    neighbouring silent_move branch swallows this; this branch must not."""
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+
+    def _boom(path: str, target: str) -> bool:
+        raise RuntimeError("filesystem unavailable")
+    kb.move_to_topic = _boom
+
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    result = handler.run(user_id="default")
+
+    row = storage.fetchone(
+        "SELECT placement_confidence, organizer_state, organizer_attempts "
+        "FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert row["placement_confidence"] is None
+    assert row["organizer_state"] != "ok"
+    assert row["organizer_attempts"] >= 1      # classification failure recorded
+    assert result["moved"] == 0
+
+
+def test_out_of_scope_answer_is_still_rejected(scoped_handler_env) -> None:
+    """The scope boundary is untouched by this change: an out-of-scope
+    answer is rejected and still produces an inbox entry, uncertain or
+    not."""
+    handler, storage, kb, broker, svc = scoped_handler_env
+    svc.attach("gmail", "topics/work/vorfina")
+    _seed_note(storage, "notes/mail-1", connector="gmail")
+    broker.answer = [{"note_path": "notes/mail-1", "topic_path": "topics/private",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    handler.run(user_id="default")
+    assert ("notes/mail-1", "topics/private") not in kb.moved
+    row = storage.fetchone(
+        "SELECT COUNT(*) AS c FROM organizer_suggestions WHERE note_path=?",
+        ("notes/mail-1",))
+    assert row["c"] >= 1
+    note = storage.fetchone(
+        "SELECT placement_confidence FROM knowledge_notes WHERE path=?",
+        ("notes/mail-1",))
+    assert note["placement_confidence"] is None

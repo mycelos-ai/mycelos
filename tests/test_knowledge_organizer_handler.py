@@ -163,7 +163,15 @@ def test_silent_move_on_high_confidence_existing_topic(storage: SQLiteStorage) -
     assert row["organizer_state"] == "ok"
 
 
-def test_suggest_on_low_confidence(storage: SQLiteStorage) -> None:
+def test_low_confidence_files_and_marks_instead_of_suggesting(
+    storage: SQLiteStorage,
+) -> None:
+    """W33: below the silent floor the note is filed and marked uncertain.
+
+    Until W33 this produced a 'move' suggestion. Ignoring such a suggestion
+    changed nothing, so it never earned a place in the inbox; the note is
+    now usable at once and the confidence marker keeps it reviewable.
+    """
     _insert_note(
         storage,
         path="notes/idea-2", title="Stray thought",
@@ -178,11 +186,16 @@ def test_suggest_on_low_confidence(storage: SQLiteStorage) -> None:
     result = handler.run("default")
 
     assert result["processed"] == 1
-    assert result["suggested"] == 1
-    assert result["moved"] == 0
+    assert result["suggested"] == 0
+    assert result["moved"] == 1
+    assert kb.moved == [("notes/idea-2", "topics/coffee")]
     inbox = InboxService(storage)
-    pending = inbox.list_pending()
-    assert len(pending["move"]) == 1
+    assert inbox.list_pending()["move"] == []
+    row = storage.fetchone(
+        "SELECT organizer_state, placement_confidence FROM knowledge_notes "
+        "WHERE path=?", ("notes/idea-2",))
+    assert row["organizer_state"] == "ok"
+    assert row["placement_confidence"] == 0.4
 
 
 def test_lifecycle_archives_done_task_older_than_7d(storage: SQLiteStorage) -> None:
