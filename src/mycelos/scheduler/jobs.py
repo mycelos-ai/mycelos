@@ -94,6 +94,10 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     is active in the registry. Errors in one connector never crash the
     loop — they are recorded and the next connector still runs.
 
+    An interrupt is the one thing that does stop the loop. A
+    ``KeyboardInterrupt`` or a ``SystemExit`` closes the current source's row
+    honestly and is then re-raised, so a shutdown still shuts down.
+
     Every attempted source leaves a run row saying what happened. A skipped
     source does not: nothing was attempted, so a row would claim a run that
     never happened.
@@ -135,23 +139,41 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
             if result.get("error"):
                 # The connector answered, and said no. Its error string is
                 # kept out of the run row on purpose: it is built from the
-                # response that failed.
+                # response that failed. The cause names no remedy, because
+                # this branch cannot tell an expired token from a closed
+                # socket — see CAUSES["source_failed"].
                 summary["errors"][name] = str(result["error"])
                 _close_run(recorder, run_id, name,
-                           cause=CAUSES["source_rejected"])
+                           cause=CAUSES["source_failed"])
             else:
-                counts = {
-                    "created": result.get("created", 0),
-                    "skipped_existing": result.get("skipped_existing", 0),
-                }
+                # Hand the connector's own counts to the recorder and let its
+                # allowlist be the single filter. Building a dict here instead
+                # discarded every count the two connectors do not share — a
+                # yt-summary sync that updated four notes and rejected one
+                # malformed item recorded `created: 0` and nothing else — and
+                # a `.get(key, 0)` default stated a zero the connector never
+                # reported. An absent count is now absent, not zero.
+                counts = result if isinstance(result, dict) else {}
                 summary["ran"][name] = counts
                 _close_run(recorder, run_id, name,
                            counts={**counts, "source": name})
-        except Exception as e:
+        except BaseException as e:
+            # BaseException, not Exception: a Ctrl-C, a SystemExit from a
+            # shutdown handler and a GeneratorExit end the sync just as
+            # finally as a RuntimeError does, and each one used to leave the
+            # row 'running' forever. The gateway is stopped mid-sync often
+            # enough — a redeploy is the normal way this process ends — that
+            # the hourly tick has a real chance of landing inside one.
+            # Matches workflows/agent.py:224.
             logger.error("auto-ingest for %s FAILED: %s", name, e, exc_info=True)
             summary["errors"][name] = str(e)
             _close_run(recorder, run_id, name,
                        cause=_ingest_failure_cause(e))
+            if not isinstance(e, Exception):
+                # An interrupt must still interrupt. The row is closed
+                # honestly first; the loop does not continue to the next
+                # source, and the caller still sees the KeyboardInterrupt.
+                raise
 
     try:
         app.audit.log("knowledge.auto_ingest.run", user_id=user_id,
@@ -181,7 +203,10 @@ def _ingest_failure_cause(exc: BaseException) -> str:
         return CAUSES["response_unreadable"]
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return CAUSES["source_unreachable"]
-    return CAUSES["source_rejected"]
+    # An exception type we do not recognise says nothing about authorisation,
+    # so the fallback must not tell the reader to re-authorise. Same reasoning
+    # as the returned-error branch.
+    return CAUSES["source_failed"]
 
 
 def briefing_tick(
@@ -236,9 +261,17 @@ def briefing_tick(
             _close_run(recorder, run_id, "briefing",
                        cause=CAUSES["briefing_undeliverable"])
         return {"enabled": True, **result}
-    except Exception as e:
+    except BaseException as e:
+        # BaseException, not Exception — same reasoning as auto_ingest_check
+        # and workflows/agent.py:224. A shutdown during a delivery attempt
+        # used to leave the briefing row 'running' forever.
         logger.error("briefing_tick FAILED: %s", e, exc_info=True)
         _close_run(recorder, run_id, "briefing", cause=CAUSES["briefing_failed"])
+        if not isinstance(e, Exception):
+            # Recorded honestly, then re-raised: an interrupt still
+            # interrupts, and the scheduler loop is not kept alive through a
+            # SystemExit it was supposed to obey.
+            raise
         return {"sent": False, "error": str(e)}
 
 

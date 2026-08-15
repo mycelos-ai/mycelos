@@ -880,7 +880,12 @@ def test_successful_yt_summary_sync_writes_one_completed_run(app) -> None:
     assert row["error"] is None
     counts = _artifacts(row)
     assert counts["created"] == 1
-    assert counts["skipped_existing"] == 0
+    # The connector's real counts, not a two-key subset invented by the job.
+    # yt-summary reports no `skipped_existing` at all, so the row must not
+    # claim one: an absent count is absent, never a fabricated zero.
+    assert counts["fetched"] == 1
+    assert counts["skipped_unchanged"] == 0
+    assert "skipped_existing" not in counts
 
 
 def test_sync_that_returns_an_error_key_writes_a_failed_run(app) -> None:
@@ -1026,7 +1031,12 @@ def test_the_audit_event_still_happens(app) -> None:
 
 
 def test_run_rows_carry_only_numbers_and_source_names(app) -> None:
+    """The connector's whole result now reaches the recorder, so the
+    allowlist is the only thing standing between a connector field and the
+    column. The note title is the payload to watch: it travels in the same
+    dict as the counts."""
     from mycelos.scheduler.jobs import auto_ingest_check
+    from mycelos.scheduler.run_recorder import _ALLOWED_COUNT_KEYS
 
     _register(app, "yt-summary")
     app.memory.set("default", "system", "auto_ingest_enabled", True)
@@ -1036,9 +1046,436 @@ def test_run_rows_carry_only_numbers_and_source_names(app) -> None:
 
     rows = _runs(app, "source_sync")
     counts = _artifacts(rows[0])
-    assert set(counts) <= {"created", "skipped_existing", "source"}
-    for value in counts.values():
-        assert isinstance(value, (int, float)) or value == "yt-summary"
+    assert set(counts) <= _ALLOWED_COUNT_KEYS | {"source", "truncated"}
+    for key, value in counts.items():
+        if key == "source":
+            assert value == "yt-summary"
+        elif key == "truncated":
+            assert isinstance(value, bool)
+        else:
+            assert isinstance(value, (int, float))
+    stored = rows[0]["artifacts"] or ""
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into artifacts"
+
+
+# --- the real counts reach the row ---------------------------------------
+#
+# The job used to build its own two-key dict before the recorder's allowlist
+# was consulted, so five of yt-summary's seven counts never reached the row
+# and `skipped_existing` was stated as a zero the connector never reported.
+# The allowlist is now the single filter.
+
+
+class _CountingIngest:
+    """Stands in for a connector, returning a fixed result dict."""
+
+    def __init__(self, result: dict) -> None:
+        self.result = result
+        self.calls = 0
+
+    def __call__(self, app, user_id="default"):
+        self.calls += 1
+        return self.result
+
+
+def _run_one_source(app, monkeypatch, name: str, ingest_fn) -> list[dict]:
+    """Drive auto_ingest_check with exactly one registered source."""
+    import mycelos.knowledge.connector_ingest as ci
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, name)
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    monkeypatch.setattr(ci, "INGEST_SOURCES", {name: ingest_fn})
+
+    auto_ingest_check(app)
+    return _runs(app, "source_sync")
+
+
+def test_every_real_count_reaches_the_row(app, monkeypatch) -> None:
+    """The full yt-summary count set, verbatim from connector_ingest.
+
+    All seven survive. Before the fix this row read
+    `{"created": 0, "skipped_existing": 0}` — it reported nothing happened
+    for a sync that updated four notes and dropped one malformed item.
+    """
+    real = {
+        "fetched": 17,
+        "created": 0,
+        "updated": 4,
+        "skipped_unchanged": 12,
+        "skipped_malformed": 1,
+        "failed_updates": 0,
+        "truncated": True,
+    }
+    rows = _run_one_source(app, monkeypatch, "yt-summary", _CountingIngest(real))
+
+    assert len(rows) == 1
+    counts = _artifacts(rows[0])
+    assert rows[0]["status"] == "completed"
+    for key, value in real.items():
+        assert counts[key] == value, f"the count '{key}' was dropped"
+    assert counts["source"] == "yt-summary"
+
+
+def test_a_sync_that_only_updated_records_the_update_count(app, monkeypatch) -> None:
+    """The regression in its smallest form: work that is not a create.
+
+    A sync that created nothing but updated four notes must not read as a
+    sync that did nothing.
+    """
+    rows = _run_one_source(
+        app, monkeypatch, "yt-summary",
+        _CountingIngest({"fetched": 4, "created": 0, "updated": 4}),
+    )
+
+    counts = _artifacts(rows[0])
+    assert counts["updated"] == 4
+    assert counts["created"] == 0
+    assert counts["fetched"] == 4
+
+
+def test_an_absent_count_is_absent_not_zero(app, monkeypatch) -> None:
+    """yt-summary never reports `skipped_existing`. The row used to state it
+    as 0 anyway — a number the connector never produced, presented as fact."""
+    rows = _run_one_source(
+        app, monkeypatch, "yt-summary",
+        _CountingIngest({"fetched": 2, "created": 2}),
+    )
+
+    counts = _artifacts(rows[0])
+    assert "skipped_existing" not in counts
+    assert "updated" not in counts
+
+
+def test_gmails_counts_all_reach_the_row(app, monkeypatch) -> None:
+    """The other real connector's full return shape."""
+    real = {"fetched": 9, "created": 3, "skipped_existing": 6}
+    rows = _run_one_source(app, monkeypatch, "gmail", _CountingIngest(real))
+
+    counts = _artifacts(rows[0])
+    for key, value in real.items():
+        assert counts[key] == value, f"the count '{key}' was dropped"
+
+
+def test_truncated_marks_a_sync_that_left_a_backlog(app, monkeypatch) -> None:
+    """`truncated` is Package 1's data-loss signal: the sync hit
+    MAX_SYNC_PAGES with pages still pending. A row carrying only counts would
+    state that as a complete sync."""
+    rows = _run_one_source(
+        app, monkeypatch, "yt-summary",
+        _CountingIngest({"fetched": 5000, "created": 5000, "truncated": True}),
+    )
+
+    assert _artifacts(rows[0])["truncated"] is True
+
+
+def test_a_connector_field_that_is_not_a_count_is_still_dropped(
+    app, monkeypatch,
+) -> None:
+    """Passing the whole result through makes the allowlist load-bearing: the
+    connector's dict now arrives intact, so anything it carries beyond a count
+    must be dropped here."""
+    rows = _run_one_source(
+        app, monkeypatch, "yt-summary",
+        _CountingIngest({
+            "created": 1,
+            "title": LEAKY_NOTE_TITLE,
+            "last_item": LEAKY_MESSAGE,
+            "sender": LEAKY_ADDRESS,
+            "cursor": "eyJvZmZzZXQiOjQyfQ==",
+            "next_cursor": LEAKY_STREET,
+        }),
+    )
+
+    stored = rows[0]["artifacts"] or ""
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into artifacts"
+    counts = _artifacts(rows[0])
+    assert counts["created"] == 1
+    assert set(counts) == {"created", "source"}
+
+
+# --- a failure mode produces its own cause -------------------------------
+#
+# The gap the reviewer's M1 exposed: nothing asserted that a *specific*
+# failure produces its *specific* cause end to end through auto_ingest_check.
+# Passing `str(e)` straight into fail() survived all 67 tests, because the
+# allowlist caught the raw text and quietly substituted the generic cause.
+# The allowlist is a backstop; these tests pin the mapping itself.
+
+
+class _RaisingIngest:
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+    def __call__(self, app, user_id="default"):
+        raise self.exc
+
+
+def _cause_for(app, monkeypatch, ingest_fn) -> str:
+    rows = _run_one_source(app, monkeypatch, "yt-summary", ingest_fn)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    return rows[0]["error"] or ""
+
+
+@pytest.mark.parametrize(
+    "exc,expected",
+    [
+        (ValueError(LEAKY_MESSAGE), "response_unreadable"),
+        (TypeError(LEAKY_MESSAGE), "response_unreadable"),
+        (KeyError("id"), "response_unreadable"),
+        (AttributeError(LEAKY_MESSAGE), "response_unreadable"),
+        (ConnectionError(LEAKY_MESSAGE), "source_unreachable"),
+        (TimeoutError(LEAKY_MESSAGE), "source_unreachable"),
+        (OSError(LEAKY_MESSAGE), "source_unreachable"),
+        (RuntimeError(LEAKY_MESSAGE), "source_failed"),
+    ],
+)
+def test_a_raised_failure_stores_its_own_cause(
+    app, monkeypatch, exc, expected,
+) -> None:
+    """Each exception type maps to one fixed cause, end to end through the
+    job. Asserting equality with the exact string is the point: a mutation
+    that degrades every cause to the generic one now fails here."""
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    stored = _cause_for(app, monkeypatch, _RaisingIngest(exc))
+    assert stored == CAUSES[expected]
+
+
+def test_an_unclassified_exception_does_not_claim_an_auth_problem(
+    app, monkeypatch,
+) -> None:
+    """The fallback used to be `source_rejected`, which tells the reader to
+    re-authorise. An exception type we do not recognise is no evidence of an
+    authorisation failure."""
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    stored = _cause_for(app, monkeypatch, _RaisingIngest(RuntimeError("boom")))
+    assert stored != CAUSES["source_rejected"]
+    assert "authorised" not in stored
+
+
+# The six failures `mcp_manager.call_tool` returns rather than raises. This is
+# the branch that actually fires in production: the manager catches broadly
+# and returns {"error": ...} for every transport failure. All six used to
+# store "check that the connector is still authorised", and exactly one of
+# them is an authorisation problem.
+_RETURNED_ERRORS = [
+    ("connector process died", "MCP tool call failed: [Errno 32] Broken pipe"),
+    ("network outage", "MCP tool call failed: [Errno 61] Connection refused"),
+    ("token expired", "MCP tool call failed: 401 Unauthorized"),
+    ("stale session", "MCP tool 'yt-summary.export_since' not found"),
+    ("proxy misconfigured",
+     "Remote MCP tool requires proxy_client (not configured)"),
+    ("malformed response",
+     "MCP tool call failed: Expecting value: line 1 column 1 (char 0)"),
+]
+
+
+@pytest.mark.parametrize(
+    "label,error_text", _RETURNED_ERRORS, ids=[e[0] for e in _RETURNED_ERRORS],
+)
+def test_a_returned_error_stores_the_neutral_cause(
+    app, monkeypatch, label, error_text,
+) -> None:
+    """One cause for all six, and it names no remedy.
+
+    Not because the six are the same failure, but because this branch has no
+    evidence to tell them apart: the only signal is the connector's own error
+    string, which is the text this column exists to keep out. So the cause
+    states what is known and sends the reader to the log — instead of sending
+    them to re-run an OAuth dance that fixes one case in six.
+    """
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    stored = _cause_for(
+        app, monkeypatch, _CountingIngest({"error": error_text}))
+    assert stored == CAUSES["source_failed"]
+    assert "authorised" not in stored
+
+
+def test_no_returned_error_text_reaches_the_column(app, monkeypatch) -> None:
+    """The six real error strings carry paths, errnos and tool names. None of
+    it is stored — the cause is fixed, not derived."""
+    import mycelos.knowledge.connector_ingest as ci
+    from mycelos.scheduler.jobs import auto_ingest_check
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+
+    for _label, error_text in _RETURNED_ERRORS:
+        monkeypatch.setattr(ci, "INGEST_SOURCES", {
+            "yt-summary": _CountingIngest({"error": error_text})})
+        auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == len(_RETURNED_ERRORS)
+    for row in rows:
+        stored = row["error"] or ""
+        assert stored == CAUSES["source_failed"]
+        for token in ("Errno", "401", "Broken pipe", "export_since",
+                      "proxy_client", "Expecting value"):
+            assert token not in stored
+
+
+def test_the_briefing_failure_modes_store_their_own_causes(app) -> None:
+    """The briefing's two failure modes are distinguishable and must not
+    collapse into one another: built-but-undelivered is not the same as
+    never-built."""
+    from mycelos.scheduler.jobs import briefing_tick
+    from mycelos.scheduler.run_recorder import CAUSES
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+
+    briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                  reminder_service=_FakeDelivery(channels=["chat"]))
+    rows = _runs(app, "briefing")
+    assert rows[0]["error"] == CAUSES["briefing_undeliverable"]
+
+    class _Exploding:
+        def _default_channels(self):
+            raise RuntimeError(LEAKY_MESSAGE)
+
+    app.memory.set("default", "system", "briefing_last_sent", None)
+    briefing_tick(app, now=datetime(2026, 6, 12, 9, 0),
+                  reminder_service=_Exploding())
+    rows = _runs(app, "briefing")
+    assert len(rows) == 2
+    assert any(r["error"] == CAUSES["briefing_failed"] for r in rows)
+
+
+# --- an interrupt still closes the row -----------------------------------
+#
+# `except Exception` let KeyboardInterrupt, SystemExit and GeneratorExit
+# leave a permanent 'running' row — the one state the package's invariant
+# forbids. This is not hypothetical: a redeploy is the normal way the gateway
+# process ends, and the hourly tick has a real chance of landing inside a
+# sync. Both sites now catch BaseException, record, and re-raise.
+
+_INTERRUPTS = [KeyboardInterrupt, SystemExit, GeneratorExit]
+
+
+@pytest.mark.parametrize("exc_type", _INTERRUPTS, ids=lambda t: t.__name__)
+def test_an_interrupt_during_a_sync_leaves_no_running_row(
+    app, monkeypatch, exc_type,
+) -> None:
+    import mycelos.knowledge.connector_ingest as ci
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    monkeypatch.setattr(
+        ci, "INGEST_SOURCES", {"yt-summary": _RaisingIngest(exc_type())})
+
+    with pytest.raises(exc_type):
+        auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed", (
+        "an interrupt must not leave the row 'running' forever"
+    )
+    assert rows[0]["error"]
+
+
+@pytest.mark.parametrize("exc_type", _INTERRUPTS, ids=lambda t: t.__name__)
+def test_an_interrupt_during_a_sync_still_interrupts(
+    app, monkeypatch, exc_type,
+) -> None:
+    """Recording must not swallow the interrupt. The row is closed, then the
+    exception is re-raised, and the loop does not go on to the next source."""
+    import mycelos.knowledge.connector_ingest as ci
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "gmail")
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    second = _CountingIngest({"created": 1})
+    monkeypatch.setattr(ci, "INGEST_SOURCES", {
+        "gmail": _RaisingIngest(exc_type()),
+        "yt-summary": second,
+    })
+
+    with pytest.raises(exc_type):
+        auto_ingest_check(app)
+
+    assert second.calls == 0, "the loop must stop at an interrupt"
+    assert len(_runs(app, "source_sync")) == 1
+
+
+@pytest.mark.parametrize("exc_type", _INTERRUPTS, ids=lambda t: t.__name__)
+def test_an_interrupt_during_the_briefing_leaves_no_running_row(
+    app, exc_type,
+) -> None:
+    from mycelos.scheduler.jobs import briefing_tick
+
+    class _Interrupting:
+        def _default_channels(self):
+            raise exc_type()
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+
+    with pytest.raises(exc_type):
+        briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                      reminder_service=_Interrupting())
+
+    rows = _runs(app, "briefing")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["error"]
+
+
+def test_an_ordinary_exception_is_still_swallowed_by_the_sync(
+    app, monkeypatch,
+) -> None:
+    """The BaseException widening must not change the ordinary case: a
+    RuntimeError in one connector is recorded and the next source still
+    runs."""
+    import mycelos.knowledge.connector_ingest as ci
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "gmail")
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    second = _CountingIngest({"created": 1})
+    monkeypatch.setattr(ci, "INGEST_SOURCES", {
+        "gmail": _RaisingIngest(RuntimeError("boom")),
+        "yt-summary": second,
+    })
+
+    result = auto_ingest_check(app)  # must not raise
+
+    assert second.calls == 1, "one connector's failure must not stop the loop"
+    assert set(result["errors"]) == {"gmail"}
+    rows = _runs(app, "source_sync")
+    assert {r["routine_key"]: r["status"] for r in rows} == {
+        "gmail": "failed", "yt-summary": "completed",
+    }
+
+
+def test_an_ordinary_exception_in_the_briefing_is_still_swallowed(app) -> None:
+    """briefing_tick must never raise on an ordinary error — the scheduler
+    loop stays alive."""
+    from mycelos.scheduler.jobs import briefing_tick
+
+    class _Exploding:
+        def _default_channels(self):
+            raise RuntimeError("boom")
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+
+    result = briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                           reminder_service=_Exploding())
+
+    assert result["sent"] is False
+    assert _runs(app, "briefing")[0]["status"] == "failed"
 
 
 # --- recording must not break the job it observes ------------------------

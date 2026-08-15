@@ -61,6 +61,23 @@ RECORDED_KINDS = ("briefing", "source_sync")
 # `error` column. They name what failed and why; they never name what the
 # data contained.
 CAUSES: dict[str, str] = {
+    # The connector answered and refused, and we do not know why. Deliberately
+    # carries no remedy: `mcp_manager.call_tool` returns this same shape for a
+    # dead subprocess, a refused connection, an expired token, a stale session,
+    # a misconfigured proxy and an unparseable response. Only one of those is
+    # an authorisation problem, and the one signal that would tell them apart
+    # is the connector's own error string — which is the text this column
+    # exists to keep out. A cause that guessed 'reauthorise' would be wrong
+    # five times out of six, and a wrong cause sends the reader looking in the
+    # wrong place. So it says what is known and points at the log for the rest.
+    "source_failed": (
+        "The sync reached the source but it did not return the data. The "
+        "server log has the reason this time."
+    ),
+    # Reserved for a failure we can actually attribute to authorisation. The
+    # returned-error branch must not use this: it cannot tell an expired token
+    # from a closed socket, and this string tells the reader to redo an OAuth
+    # dance.
     "source_rejected": (
         "The source rejected the request. Check that the connector is still "
         "authorised, then run the sync again."
@@ -111,6 +128,13 @@ _ALLOWED_COUNT_KEYS = frozenset(
         "messages",
     }
 )
+
+# `truncated` is the one flag a run row may carry. It is not a count — it is
+# a bool — but it is the signal that a sync stopped at MAX_SYNC_PAGES with a
+# backlog behind it, which a row reporting only counts would state as a
+# complete sync. It is admitted by name and coerced to bool, so a connector
+# cannot use the key to carry anything else.
+_TRUNCATED_KEY = "truncated"
 
 # The one non-numeric value a run row may carry: the routine's own name,
 # which the caller already put in `routine_key`.
@@ -243,6 +267,9 @@ class RunRecorder:
         when it equals the row's own ``routine_key``. That makes the value a
         repetition of something already stored rather than a free-text field
         a caller could fill with anything.
+
+        ``truncated`` is the one bool, coerced rather than copied, so the key
+        cannot smuggle a value of another type.
         """
         if not isinstance(counts, dict):
             return {}
@@ -251,6 +278,9 @@ class RunRecorder:
             if key == _SOURCE_KEY:
                 if routine_key is not None and value == routine_key:
                     safe[key] = value
+                continue
+            if key == _TRUNCATED_KEY:
+                safe[key] = bool(value)
                 continue
             if key not in _ALLOWED_COUNT_KEYS:
                 continue
