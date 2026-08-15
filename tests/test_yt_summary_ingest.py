@@ -179,3 +179,78 @@ def test_page_cap_is_flagged_truncated_and_mark_never_exceeds_processed(app) -> 
         "SELECT value FROM knowledge_config WHERE key='ingest.yt-summary.since'")
     newest_processed = f"2026-08-{MAX_SYNC_PAGES:02d}T00:00:00+00:00"
     assert mark["value"] == newest_processed   # never advances past what was consumed
+
+
+# --- Wire-through: generic API route and auto-ingest scheduler ---------
+#
+# No new production behavior is exercised here — the generic route
+# dispatches over INGEST_SOURCES and auto_ingest_check iterates it. These
+# tests PROVE the hyphenated "yt-summary" key survives both paths.
+
+
+@pytest.fixture
+def api_client():
+    """Mirrors tests/test_connector_ingest.py::TestIngestEndpoint.client."""
+    from starlette.testclient import TestClient
+    from mycelos.gateway.server import create_app
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        os.environ["MYCELOS_MASTER_KEY"] = "test-key-yt-summary-ingest-api"
+        from mycelos.app import App
+        from mycelos.setup import web_init
+        a = App(data_dir)
+        a.initialize()
+        web_init(a, api_key="sk-ant-api03-FAKETESTKEYYTSUMMARYAPI")
+        fastapi_app = create_app(data_dir, no_scheduler=True,
+                                 host="0.0.0.0", allow_insecure_bind=True)
+        yield TestClient(fastapi_app), a
+
+
+def test_generic_ingest_route_reaches_yt_summary(api_client, monkeypatch) -> None:
+    """POST /api/knowledge/ingest/yt-summary dispatches to our function."""
+    calls = {}
+    def _fake_ingest(app, user_id="default", **kw):
+        calls["user"] = user_id
+        return {"fetched": 0, "created": 0, "updated": 0,
+                "skipped_unchanged": 0, "skipped_malformed": 0}
+    monkeypatch.setitem(
+        __import__("mycelos.knowledge.connector_ingest",
+                   fromlist=["INGEST_SOURCES"]).INGEST_SOURCES,
+        "yt-summary", _fake_ingest)
+    client, _ = api_client
+    resp = client.post("/api/knowledge/ingest/yt-summary")
+    assert resp.status_code == 200
+    assert "user" in calls
+
+
+def _register_yt_summary(app, status: str = "active") -> None:
+    """Mirrors tests/test_scheduled_ingest.py::_register_gmail."""
+    app.connector_registry.register(
+        "yt-summary", "YouTube Summaries", "mcp", ["yt-summary.read"],
+        description="test",
+    )
+    if status != "active":
+        app.connector_registry.set_status("yt-summary", status)
+
+
+def test_auto_ingest_check_includes_yt_summary(app, monkeypatch) -> None:
+    """The scheduler runs it once opted in and the connector is active."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    calls = {}
+    def _fake_ingest(app, user_id="default", **kw):
+        calls["user"] = user_id
+        return {"fetched": 0, "created": 0, "updated": 0,
+                "skipped_unchanged": 0, "skipped_malformed": 0}
+    monkeypatch.setitem(
+        __import__("mycelos.knowledge.connector_ingest",
+                   fromlist=["INGEST_SOURCES"]).INGEST_SOURCES,
+        "yt-summary", _fake_ingest)
+
+    _register_yt_summary(app)
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+
+    result = auto_ingest_check(app)
+    assert result["enabled"] is True
+    assert "yt-summary" in result["ran"]
+    assert calls["user"] == "default"
