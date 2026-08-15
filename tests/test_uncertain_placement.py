@@ -279,6 +279,36 @@ def test_failed_move_is_not_marked_ok(handler_env) -> None:
     assert result["moved"] == 0
 
 
+def test_move_returning_false_is_not_marked_ok(handler_env) -> None:
+    """Fail closed on a falsy return too, not only on an exception.
+
+    KnowledgeBase.move_to_topic returns False without raising when the note
+    is gone from the index. Trusting that return would mark an unfiled note
+    'ok', write a confidence marker for a placement that never happened, and
+    reset the attempt counter — so no later run revisits the note.
+    """
+    handler, storage, kb, broker = handler_env
+    _seed_note(storage, "notes/a")
+
+    def _noop(path: str, target: str) -> bool:
+        return False
+    kb.move_to_topic = _noop
+
+    broker.answer = [{"note_path": "notes/a", "topic_path": "topics/work",
+                      "confidence": 0.6, "related_note_paths": [],
+                      "new_topic_name": None}]
+    result = handler.run(user_id="default")
+
+    assert ("notes/a", "topics/work") not in kb.moved
+    row = storage.fetchone(
+        "SELECT placement_confidence, organizer_state, organizer_attempts "
+        "FROM knowledge_notes WHERE path=?", ("notes/a",))
+    assert row["placement_confidence"] is None
+    assert row["organizer_state"] != "ok"
+    assert row["organizer_attempts"] >= 1      # classification failure recorded
+    assert result["moved"] == 0
+
+
 def test_out_of_scope_answer_is_still_rejected(scoped_handler_env) -> None:
     """The scope boundary is untouched by this change: an out-of-scope
     answer is rejected and still produces an inbox entry, uncertain or

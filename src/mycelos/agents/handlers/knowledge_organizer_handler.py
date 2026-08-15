@@ -283,7 +283,10 @@ class KnowledgeOrganizerHandler:
                     # it is searchable and linked, and record the confidence
                     # so the shaky ones stay reviewable as a set.
                     try:
-                        kb.move_to_topic(note["path"], result.topic_path)
+                        # move_to_topic returns False without raising when the
+                        # note is gone from the index — that is a failed move.
+                        if not kb.move_to_topic(note["path"], result.topic_path):
+                            raise RuntimeError("move_to_topic reported failure")
                     except Exception as e:
                         # Fail closed: an unfiled note must not be marked
                         # done. No confidence marker, no 'ok' state — count
