@@ -109,6 +109,9 @@ class SQLiteStorage:
             ("knowledge_notes", "source", "TEXT"),
             # Classification retry bookkeeping — see KnowledgeOrganizerHandler.
             ("knowledge_notes", "organizer_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            # Organizer confidence at filing time; NULL when never classified
+            # or filed with certainty. Drives the "review placements" view.
+            ("knowledge_notes", "placement_confidence", "REAL"),
             # Typed graph edges: wikilink | parent | related | merged_from.
             ("knowledge_links", "kind", "TEXT"),
         ]
@@ -223,6 +226,27 @@ class SQLiteStorage:
             """
         )
         self._conn.commit()
+
+        # knowledge_notes.placement_confidence — the organizer's confidence at
+        # the moment it filed a note. Runs unconditionally: re-applying
+        # schema.sql only happens when one of the check-tables above is
+        # missing, so a column added to schema.sql alone never reaches an
+        # existing database. SQLite has no ADD COLUMN IF NOT EXISTS, so probe
+        # PRAGMA table_info first, which makes this block idempotent.
+        try:
+            cols = {
+                row["name"]
+                for row in self._conn.execute(
+                    "PRAGMA table_info(knowledge_notes)"
+                ).fetchall()
+            }
+            if cols and "placement_confidence" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE knowledge_notes ADD COLUMN placement_confidence REAL"
+                )
+                self._conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Table absent or a concurrent writer already added it.
 
     def initialize(self) -> None:
         """Create database and apply schema."""

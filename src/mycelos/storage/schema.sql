@@ -405,7 +405,10 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     organizer_attempts INTEGER NOT NULL DEFAULT 0,    -- failed classification attempts; parked as 'manual' at the cap
     source_file TEXT,                                 -- relative path to original document (e.g. documents/report.pdf)
     created_by  TEXT,                                 -- provenance: agent id / 'user' / 'organizer' / 'import'
-    source      TEXT                                  -- provenance JSON: kind, conversation_id, connector, external_id, ...
+    source      TEXT,                                 -- provenance JSON: kind, conversation_id, connector, external_id, ...
+    placement_confidence REAL                         -- confidence when the organizer filed this note; NULL when
+                                                      -- never classified or filed with certainty. Drives the
+                                                      -- "review placements" view.
 );
 
 CREATE INDEX IF NOT EXISTS idx_kn_type ON knowledge_notes(type, status);
