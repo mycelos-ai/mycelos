@@ -589,3 +589,666 @@ def test_workflow_events_is_dropped_from_an_existing_database(tmp_path: Path) ->
     # The runs it referenced are untouched.
     assert reopened.fetchone("SELECT COUNT(*) AS c FROM workflow_runs")["c"] == 2
     reopened.close()
+
+
+# =========================================================================
+# Task 3 — the recorder: briefing and source syncs write runs
+# =========================================================================
+#
+# Three of the four routine kinds wrote nothing durable. A dead sync looked
+# exactly like a quiet one. `RunRecorder` gives the two non-workflow kinds
+# the same start/finish/fail discipline WorkflowRunManager gives workflows,
+# without any of its pause/resume/budget machinery.
+#
+# Two rules shape every test below:
+#
+# 1. **No connector text in `error`.** The recorder authors a fixed cause per
+#    failure mode. An ingest exception is the most likely place in the whole
+#    system to carry the content that failed to parse, so the exception's own
+#    message never becomes the stored cause.
+# 2. **Recording must not break the job it observes.** A run row that cannot
+#    be written is logged, not raised. The user's data still arrives and the
+#    next source still runs. This is deliberately the opposite of the
+#    workflow run-start decision, where refusing costs one execution and
+#    loses nothing.
+
+import os
+import tempfile
+from datetime import datetime
+
+
+@pytest.fixture
+def app():
+    """A real App on a temporary directory — same fixture the ingest and
+    briefing suites use, so the recorder is exercised against real storage."""
+    from mycelos.app import App
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["MYCELOS_MASTER_KEY"] = "test-key-run-recorder"
+        a = App(Path(tmp))
+        a.initialize()
+        yield a
+
+
+# --- doubles -------------------------------------------------------------
+
+
+class _FakeMcp:
+    """Serves one fixed payload for every tool call."""
+
+    def __init__(self, payload) -> None:
+        self.calls: list = []
+        self._payload = payload
+
+    def call_tool(self, tool_name, arguments):
+        self.calls.append((tool_name, arguments))
+        return self._payload
+
+
+# A failure message built the way a real parse error is built: from the data
+# that failed. Every one of these must be absent from the stored cause.
+LEAKY_NOTE_TITLE = "Quartalsabschluss Steuerberatung"
+LEAKY_ADDRESS = "anna.mueller@example.com"
+LEAKY_STREET = "Hauptstrasse 14, 80331 Muenchen"
+LEAKY_IBAN = "DE89 3704 0044 0532 0130 00"
+LEAKY_MESSAGE = (
+    f"could not parse note '{LEAKY_NOTE_TITLE}' from {LEAKY_ADDRESS} "
+    f"living at {LEAKY_STREET} with account {LEAKY_IBAN}"
+)
+LEAKY_FRAGMENTS = (
+    LEAKY_NOTE_TITLE,
+    "Quartalsabschluss",
+    "Steuerberatung",
+    LEAKY_ADDRESS,
+    "anna.mueller",
+    "Hauptstrasse",
+    "Muenchen",
+    "80331",
+    LEAKY_IBAN,
+    "DE89",
+    "0532",
+)
+
+
+class _LeakyMcp:
+    """Raises an exception whose message carries personal data — the exact
+    shape a real parse failure has."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def call_tool(self, tool_name, arguments):
+        self.calls.append((tool_name, arguments))
+        raise ValueError(LEAKY_MESSAGE)
+
+
+def _yt_page(item_id: str = "1:dQw4w9WgXcQ", title: str = "Retrieval 101") -> dict:
+    return {
+        "items": [
+            {
+                "id": item_id,
+                "source": "yt-summary",
+                "type": "note",
+                "title": title,
+                "description": "A talk about retrieval.",
+                "resource": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "timestamp": "2026-08-13T09:12:00+00:00",
+                "created": "2026-08-01T07:00:00+00:00",
+                "tags": ["ai"],
+                "kind": "youtube",
+                "content": "## Summary\n\nThe talk explains RRF.",
+            }
+        ],
+        "next_cursor": "",
+        "has_more": False,
+    }
+
+
+def _register(app, name: str, status: str = "active") -> None:
+    app.connector_registry.register(
+        name, name, "mcp", [f"{name}.read"], description="test",
+    )
+    if status != "active":
+        app.connector_registry.set_status(name, status)
+
+
+def _runs(app, kind: str | None = None) -> list[dict]:
+    sql = "SELECT * FROM workflow_runs"
+    params: tuple = ()
+    if kind:
+        sql += " WHERE kind = ?"
+        params = (kind,)
+    sql += " ORDER BY routine_key, created_at"
+    return [dict(r) for r in app.storage.fetchall(sql, params)]
+
+
+def _artifacts(row: dict) -> dict:
+    import json as _json
+
+    return _json.loads(row["artifacts"] or "{}")
+
+
+# --- RunRecorder in isolation --------------------------------------------
+
+
+def test_recorder_start_writes_a_running_row(storage) -> None:
+    from mycelos.scheduler.run_recorder import RunRecorder
+
+    run_id = RunRecorder(storage).start("source_sync", "yt-summary", "default")
+    row = storage.fetchone("SELECT * FROM workflow_runs WHERE id=?", (run_id,))
+    assert row["kind"] == "source_sync"
+    assert row["routine_key"] == "yt-summary"
+    assert row["status"] == "running"
+    assert row["workflow_id"] is None
+    assert row["user_id"] == "default"
+
+
+def test_recorder_finish_marks_completed_with_counts(storage) -> None:
+    import json as _json
+
+    from mycelos.scheduler.run_recorder import RunRecorder
+
+    recorder = RunRecorder(storage)
+    run_id = recorder.start("source_sync", "gmail", "default")
+    recorder.finish(run_id, {"created": 3, "skipped_existing": 1})
+
+    row = storage.fetchone("SELECT * FROM workflow_runs WHERE id=?", (run_id,))
+    assert row["status"] == "completed"
+    assert row["error"] is None
+    assert _json.loads(row["artifacts"]) == {"created": 3, "skipped_existing": 1}
+
+
+def test_recorder_fail_marks_failed_with_the_cause(storage) -> None:
+    from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+
+    recorder = RunRecorder(storage)
+    run_id = recorder.start("source_sync", "gmail", "default")
+    recorder.fail(run_id, CAUSES["source_rejected"])
+
+    row = storage.fetchone("SELECT * FROM workflow_runs WHERE id=?", (run_id,))
+    assert row["status"] == "failed"
+    assert row["error"] == CAUSES["source_rejected"]
+
+
+def test_recorder_rejects_an_illegal_kind(storage) -> None:
+    """The CHECK is the point: a typo'd kind writes a row every kind-filtered
+    read misses. Task 1 made that raise; the recorder must not swallow it."""
+    from mycelos.scheduler.run_recorder import RunRecorder
+
+    with pytest.raises(sqlite3.IntegrityError):
+        RunRecorder(storage).start("source-sync", "gmail", "default")
+
+
+def test_recorder_refuses_a_cause_it_did_not_author(storage) -> None:
+    """The recorder is an allowlist, not a sanitizer.
+
+    sanitize_cause_text documents its own limit: it cannot classify free
+    prose. A street name and a company name carried as ordinary unquoted
+    words survive it — this exact message proves that, since 'Hauptstrasse'
+    and 'Steuerberatung' come through the sanitizer intact. So the recorder
+    does not clean; it refuses. A cause is either one this package wrote, or
+    it is not stored.
+    """
+    from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+
+    recorder = RunRecorder(storage)
+    run_id = recorder.start("source_sync", "gmail", "default")
+    recorder.fail(run_id, LEAKY_MESSAGE)
+
+    row = storage.fetchone("SELECT error FROM workflow_runs WHERE id=?", (run_id,))
+    stored = row["error"] or ""
+    assert stored == CAUSES["unrecognised"]
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into the cause"
+
+
+def test_the_sanitizer_alone_would_not_have_caught_this(storage) -> None:
+    """Pins the reason the allowlist exists. If a future change makes the
+    sanitizer strong enough to strip this message, this test fails and the
+    allowlist can be reconsidered — deliberately, not by accident."""
+    from mycelos.workflows.run_cause import sanitize_cause_text
+
+    sanitized = sanitize_cause_text(LEAKY_MESSAGE)
+    assert "Hauptstrasse" in sanitized, (
+        "the sanitizer still cannot classify free prose; the allowlist in "
+        "RunRecorder._safe_cause is what makes the guarantee"
+    )
+
+
+def test_every_fixed_cause_is_storable(storage) -> None:
+    """A cause this package wrote must survive its own allowlist. A fixed
+    string that the sanitizer mangles would silently become the generic one
+    and the reader would lose the failure mode."""
+    from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+
+    recorder = RunRecorder(storage)
+    for index, (name, cause) in enumerate(CAUSES.items()):
+        run_id = recorder.start("source_sync", f"probe-{index}", "default")
+        recorder.fail(run_id, cause)
+        row = storage.fetchone(
+            "SELECT error FROM workflow_runs WHERE id=?", (run_id,))
+        assert row["error"] == cause, f"the fixed cause '{name}' was not stored"
+
+
+def test_recorder_stores_only_numbers_and_names_in_artifacts(storage) -> None:
+    """Counts are numbers. A count dict that smuggles a title, a body or an
+    address must not reach the column."""
+    from mycelos.scheduler.run_recorder import RunRecorder
+
+    recorder = RunRecorder(storage)
+    run_id = recorder.start("source_sync", "yt-summary", "default")
+    recorder.finish(
+        run_id,
+        {
+            "created": 2,
+            "source": "yt-summary",
+            "title": LEAKY_NOTE_TITLE,
+            "body": LEAKY_MESSAGE,
+            "sender": LEAKY_ADDRESS,
+        },
+    )
+
+    row = storage.fetchone("SELECT artifacts FROM workflow_runs WHERE id=?", (run_id,))
+    stored = row["artifacts"] or "{}"
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into artifacts"
+    import json as _json
+
+    parsed = _json.loads(stored)
+    assert parsed["created"] == 2
+    assert parsed.get("source") == "yt-summary"
+
+
+# --- source syncs write runs ---------------------------------------------
+
+
+def test_successful_yt_summary_sync_writes_one_completed_run(app) -> None:
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["routine_key"] == "yt-summary"
+    assert row["status"] == "completed"
+    assert row["workflow_id"] is None
+    assert row["error"] is None
+    counts = _artifacts(row)
+    assert counts["created"] == 1
+    assert counts["skipped_existing"] == 0
+
+
+def test_sync_that_returns_an_error_key_writes_a_failed_run(app) -> None:
+    """One of the two failure shapes: ingest_fn returns a dict carrying an
+    'error' key rather than raising."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp({"error": "upstream refused"})
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["error"]
+
+
+def test_sync_that_raises_writes_a_failed_run(app) -> None:
+    """The other failure shape: ingest_fn raises."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _LeakyMcp()
+
+    auto_ingest_check(app)  # must not raise
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["error"]
+
+
+def test_a_failing_sync_stores_no_personal_data(app) -> None:
+    """The single most important assertion in this task. The exception
+    message carries a note title, an address, a German street address and an
+    IBAN. None of it may reach the column."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _LeakyMcp()
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert len(rows) == 1
+    stored = (rows[0]["error"] or "") + (rows[0]["artifacts"] or "")
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into the run row"
+
+
+def test_a_returned_error_string_does_not_reach_the_column(app) -> None:
+    """A connector's own error string is untrusted for the same reason an
+    exception message is: it is built from the data that failed."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp({"error": LEAKY_MESSAGE})
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    stored = rows[0]["error"] or ""
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into the cause"
+
+
+def test_two_sources_in_one_tick_write_two_runs(app) -> None:
+    """auto_ingest_check loops INGEST_SOURCES. Each source is its own run."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "gmail")
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    assert {r["routine_key"] for r in rows} == {"gmail", "yt-summary"}
+    assert len(rows) == 2
+
+
+def test_a_skipped_source_writes_no_run(app) -> None:
+    """A skip is not a run. An inactive connector never attempted anything,
+    so a row would claim a run that never happened."""
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary", status="inactive")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    result = auto_ingest_check(app)
+
+    assert "yt-summary" in result["skipped"]
+    assert _runs(app, "source_sync") == []
+
+
+def test_an_unregistered_source_writes_no_run(app) -> None:
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    auto_ingest_check(app)
+
+    assert _runs(app, "source_sync") == []
+
+
+def test_auto_ingest_disabled_writes_no_run(app) -> None:
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    auto_ingest_check(app)
+
+    assert _runs(app) == []
+
+
+def test_the_audit_event_still_happens(app) -> None:
+    """The run row is additional, not a replacement."""
+    import json as _json
+
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+
+    auto_ingest_check(app)
+
+    row = app.storage.fetchone(
+        "SELECT details FROM audit_events "
+        "WHERE event_type='knowledge.auto_ingest.run'"
+    )
+    assert row is not None
+    assert "yt-summary" in _json.loads(row["details"])["ran"]
+
+
+def test_run_rows_carry_only_numbers_and_source_names(app) -> None:
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page(title="Quartalsabschluss Steuerberatung"))
+
+    auto_ingest_check(app)
+
+    rows = _runs(app, "source_sync")
+    counts = _artifacts(rows[0])
+    assert set(counts) <= {"created", "skipped_existing", "source"}
+    for value in counts.values():
+        assert isinstance(value, (int, float)) or value == "yt-summary"
+
+
+# --- recording must not break the job it observes ------------------------
+
+
+class _BrokenRecorder:
+    """Every recorder call fails. The sync must still complete."""
+
+    def __init__(self, storage) -> None:
+        self.starts = 0
+
+    def start(self, kind, routine_key, user_id):
+        self.starts += 1
+        raise RuntimeError("run table unavailable")
+
+    def finish(self, run_id, counts):
+        raise RuntimeError("run table unavailable")
+
+    def fail(self, run_id, cause):
+        raise RuntimeError("run table unavailable")
+
+
+def test_a_broken_recorder_does_not_stop_the_sync(app, monkeypatch) -> None:
+    """Recording is observability. If the row cannot be written, the user's
+    data still arrives — the opposite of the workflow run-start decision,
+    where refusing an execution loses nothing."""
+    import mycelos.scheduler.jobs as jobs
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+    monkeypatch.setattr(jobs, "RunRecorder", _BrokenRecorder)
+
+    result = auto_ingest_check(app)  # must not raise
+
+    assert "yt-summary" in result["ran"]
+    notes = app.storage.fetchall(
+        "SELECT path FROM knowledge_notes WHERE created_by='import'")
+    assert len(notes) == 1
+
+
+def test_a_broken_recorder_does_not_stop_the_next_source(app, monkeypatch) -> None:
+    """Errors in one connector never crash the loop — the same must hold for
+    the recorder wrapped around it."""
+    import mycelos.scheduler.jobs as jobs
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "gmail")
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+    broken = _BrokenRecorder(app.storage)
+    monkeypatch.setattr(jobs, "RunRecorder", lambda storage: broken)
+
+    result = auto_ingest_check(app)
+
+    assert broken.starts == 2, "both sources were still attempted"
+    assert set(result["ran"]) | set(result["errors"]) == {"gmail", "yt-summary"}
+
+
+def test_a_broken_recorder_is_logged(app, monkeypatch, caplog) -> None:
+    import logging
+
+    import mycelos.scheduler.jobs as jobs
+    from mycelos.scheduler.jobs import auto_ingest_check
+
+    _register(app, "yt-summary")
+    app.memory.set("default", "system", "auto_ingest_enabled", True)
+    app._mcp_manager = _FakeMcp(_yt_page())
+    monkeypatch.setattr(jobs, "RunRecorder", _BrokenRecorder)
+
+    with caplog.at_level(logging.WARNING, logger="mycelos.scheduler"):
+        auto_ingest_check(app)
+
+    assert any("run" in r.message.lower() for r in caplog.records), (
+        "a run row that cannot be written must not vanish silently"
+    )
+
+
+# --- the briefing --------------------------------------------------------
+
+
+class _FakeDelivery:
+    def __init__(self, channels=("chat", "telegram"), succeed=True) -> None:
+        self.channels = list(channels)
+        self.succeed = succeed
+        self.dispatched: list = []
+
+    def _default_channels(self) -> list[str]:
+        return self.channels
+
+    def dispatch(self, channel: str, message: str) -> bool:
+        self.dispatched.append((channel, message))
+        return self.succeed
+
+
+class _FakeLLMResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _FakeBroker:
+    def __init__(self, content: str = "Good morning.") -> None:
+        self.calls: list = []
+        self._content = content
+
+    def complete(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return _FakeLLMResponse(self._content)
+
+    def chat(self, *args, **kwargs):
+        return self.complete(*args, **kwargs)
+
+
+def test_the_briefing_writes_a_run_on_delivery(app) -> None:
+    from mycelos.scheduler.jobs import briefing_tick
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+    delivery = _FakeDelivery()
+
+    result = briefing_tick(
+        app, now=datetime(2026, 6, 11, 8, 0), reminder_service=delivery)
+
+    assert result["sent"] is True
+    rows = _runs(app, "briefing")
+    assert len(rows) == 1
+    assert rows[0]["routine_key"] == "briefing"
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["workflow_id"] is None
+    assert _artifacts(rows[0])["sent"] == 1
+
+
+def test_a_briefing_that_is_not_due_writes_no_run(app) -> None:
+    """A tick that decides not to deliver is not a run. The briefing job
+    ticks every five minutes; a row per tick would be 288 rows a day."""
+    from mycelos.scheduler.jobs import briefing_tick
+
+    app.memory.set("default", "system", "briefing_enabled", True)
+    app.memory.set("default", "system", "briefing_time", "07:30")
+
+    briefing_tick(app, now=datetime(2026, 6, 11, 7, 0),
+                  reminder_service=_FakeDelivery())
+
+    assert _runs(app, "briefing") == []
+
+
+def test_a_disabled_briefing_writes_no_run(app) -> None:
+    from mycelos.scheduler.jobs import briefing_tick
+
+    briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                  reminder_service=_FakeDelivery())
+
+    assert _runs(app, "briefing") == []
+
+
+def test_a_briefing_that_could_not_be_delivered_records_a_failed_run(app) -> None:
+    """Delivery was attempted and did not happen — that is a run that ended,
+    and the invariant says it leaves a row saying so."""
+    from mycelos.scheduler.jobs import briefing_tick
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+
+    briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                  reminder_service=_FakeDelivery(channels=["chat"]))
+
+    rows = _runs(app, "briefing")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["error"]
+
+
+def test_a_briefing_that_raises_records_a_failed_run(app) -> None:
+    from mycelos.scheduler.jobs import briefing_tick
+
+    class _Exploding:
+        def _default_channels(self):
+            raise RuntimeError(LEAKY_MESSAGE)
+
+        def dispatch(self, channel, message):
+            raise RuntimeError(LEAKY_MESSAGE)
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+
+    result = briefing_tick(app, now=datetime(2026, 6, 11, 9, 0),
+                           reminder_service=_Exploding())
+
+    assert result["sent"] is False
+    rows = _runs(app, "briefing")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    stored = rows[0]["error"] or ""
+    for fragment in LEAKY_FRAGMENTS:
+        assert fragment not in stored, f"{fragment!r} leaked into the cause"
+
+
+def test_a_broken_recorder_does_not_stop_the_briefing(app, monkeypatch) -> None:
+    import mycelos.scheduler.jobs as jobs
+    from mycelos.scheduler.jobs import briefing_tick
+
+    app._llm = _FakeBroker()
+    app.memory.set("default", "system", "briefing_enabled", True)
+    delivery = _FakeDelivery()
+    monkeypatch.setattr(jobs, "RunRecorder", _BrokenRecorder)
+
+    result = briefing_tick(
+        app, now=datetime(2026, 6, 11, 8, 0), reminder_service=delivery)
+
+    assert result["sent"] is True
+    assert len(delivery.dispatched) == 1

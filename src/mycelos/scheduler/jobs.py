@@ -11,6 +11,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+
 logger = logging.getLogger("mycelos.scheduler")
 
 
@@ -37,6 +39,53 @@ def reminder_tick_check(app: Any) -> dict[str, int]:
     return result
 
 
+def _open_run(recorder: Any, kind: str, routine_key: str, user_id: str) -> str | None:
+    """Open a run row, or return None if it could not be written.
+
+    Bookkeeping must not break the job it observes. A sync whose run row
+    cannot be written still runs: the user's data arriving matters more than
+    the record of it arriving. The failure is logged so it does not vanish.
+
+    This is deliberately the opposite of the workflow run-start rule, where a
+    failure to record is fatal — there, refusing one execution loses nothing.
+    """
+    try:
+        return recorder.start(kind, routine_key, user_id)
+    except Exception:
+        logger.warning(
+            "Could not open a run row for %s '%s' — the routine still runs",
+            kind, routine_key, exc_info=True,
+        )
+        return None
+
+
+def _close_run(
+    recorder: Any,
+    run_id: str | None,
+    routine_key: str,
+    counts: dict[str, Any] | None = None,
+    cause: str | None = None,
+) -> None:
+    """Close a run row as completed or failed. Never raises.
+
+    ``cause`` is a fixed string this package authored — see
+    :data:`mycelos.scheduler.run_recorder.CAUSES`. Text from a connector or an
+    exception never reaches here.
+    """
+    if run_id is None:
+        return
+    try:
+        if cause is None:
+            recorder.finish(run_id, counts or {})
+        else:
+            recorder.fail(run_id, cause)
+    except Exception:
+        logger.warning(
+            "Could not close the run row for '%s' — the routine still ran",
+            routine_key, exc_info=True,
+        )
+
+
 def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     """Run one pass of the living-knowledge auto-ingest.
 
@@ -44,6 +93,15 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     (memory key ``auto_ingest_enabled``, default OFF) and the connector
     is active in the registry. Errors in one connector never crash the
     loop — they are recorded and the next connector still runs.
+
+    Every attempted source leaves a run row saying what happened. A skipped
+    source does not: nothing was attempted, so a row would claim a run that
+    never happened.
+
+    The stored cause is chosen from a fixed set by failure mode. Neither the
+    connector's own error string nor the exception's message reaches the
+    column — both are built from the data that failed, which is exactly the
+    content the column must never carry.
     """
     from mycelos.knowledge.connector_ingest import INGEST_SOURCES
 
@@ -59,6 +117,8 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
         return summary
     summary["enabled"] = True
 
+    recorder = RunRecorder(app.storage)
+
     for name, ingest_fn in INGEST_SOURCES.items():
         try:
             connector = app.connector_registry.get(name)
@@ -68,18 +128,30 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
         if not connector or connector.get("status") != "active":
             summary["skipped"].append(name)
             continue
+
+        run_id = _open_run(recorder, "source_sync", name, user_id)
         try:
             result = ingest_fn(app, user_id=user_id)
             if result.get("error"):
+                # The connector answered, and said no. Its error string is
+                # kept out of the run row on purpose: it is built from the
+                # response that failed.
                 summary["errors"][name] = str(result["error"])
+                _close_run(recorder, run_id, name,
+                           cause=CAUSES["source_rejected"])
             else:
-                summary["ran"][name] = {
+                counts = {
                     "created": result.get("created", 0),
                     "skipped_existing": result.get("skipped_existing", 0),
                 }
+                summary["ran"][name] = counts
+                _close_run(recorder, run_id, name,
+                           counts={**counts, "source": name})
         except Exception as e:
             logger.error("auto-ingest for %s FAILED: %s", name, e, exc_info=True)
             summary["errors"][name] = str(e)
+            _close_run(recorder, run_id, name,
+                       cause=_ingest_failure_cause(e))
 
     try:
         app.audit.log("knowledge.auto_ingest.run", user_id=user_id,
@@ -87,6 +159,29 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     except Exception:
         pass
     return summary
+
+
+def _ingest_failure_cause(exc: BaseException) -> str:
+    """Pick a fixed cause for an ingest exception, from its type alone.
+
+    The exception's *message* is never consulted. An ingest exception is the
+    most likely place in the system to carry the content that failed to parse
+    — a note title, a sender, an account number — because its message is built
+    from exactly that data. The type is safe and is also the part that tells a
+    reader where to look, so it is all we use.
+
+    Args:
+        exc: The exception the connector raised.
+
+    Returns:
+        One of the fixed strings in :data:`run_recorder.CAUSES`.
+    """
+    if isinstance(exc, (ValueError, TypeError, KeyError, IndexError,
+                        AttributeError, json.JSONDecodeError)):
+        return CAUSES["response_unreadable"]
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return CAUSES["source_unreachable"]
+    return CAUSES["source_rejected"]
 
 
 def briefing_tick(
@@ -101,6 +196,11 @@ def briefing_tick(
     ``briefing_enabled`` is set (default OFF), the local time has passed
     ``briefing_time`` (default 07:30), and ``briefing_last_sent`` is not
     today. Must never raise — the scheduler loop stays alive.
+
+    Only a real delivery attempt is a run. The tick returns early three ways
+    — not enabled, not due, and a failure before the attempt — and none of
+    them writes a row. A row per tick would be 288 rows a day describing a
+    job that deliberately did nothing.
     """
     from mycelos.knowledge.briefing import (
         DEFAULT_BRIEFING_TIME,
@@ -108,6 +208,8 @@ def briefing_tick(
         is_briefing_due,
     )
 
+    recorder = RunRecorder(app.storage)
+    run_id: str | None = None
     try:
         if not app.memory.get(user_id, "system", "briefing_enabled"):
             return {"enabled": False, "sent": False}
@@ -121,10 +223,22 @@ def briefing_tick(
         if not is_briefing_due(now, briefing_time, last_sent):
             return {"enabled": True, "sent": False, "reason": "not_due"}
 
+        # From here on the briefing is genuinely attempted, so it is a run.
+        run_id = _open_run(recorder, "briefing", "briefing", user_id)
         result = deliver_briefing(app, user_id, reminder_service=reminder_service, now=now)
+        if result.get("sent"):
+            _close_run(recorder, run_id, "briefing",
+                       counts={"sent": 1, "source": "briefing"})
+        else:
+            # Built but not delivered — no channel, or the dispatch refused.
+            # `result["reason"]` is ours, not a provider's, but the fixed
+            # cause is what the column gets either way.
+            _close_run(recorder, run_id, "briefing",
+                       cause=CAUSES["briefing_undeliverable"])
         return {"enabled": True, **result}
     except Exception as e:
         logger.error("briefing_tick FAILED: %s", e, exc_info=True)
+        _close_run(recorder, run_id, "briefing", cause=CAUSES["briefing_failed"])
         return {"sent": False, "error": str(e)}
 
 
