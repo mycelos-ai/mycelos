@@ -63,9 +63,10 @@ existing graph response with position data. Put safe move rules in the knowledge
 3. Run the focused tests and confirm the unsafe cases fail.
 4. Add target and cycle validation to the knowledge service.
 5. Allow only the fixed `notes` and `tasks` system roots without active topic metadata.
-6. Return an error from both routes when the service rejects a move.
-7. Test a root-note move and Undo against the database and the Markdown file.
-8. Run the focused API and knowledge tests until they pass.
+6. Allow `null` only when a topic returns to the topic root.
+7. Return an error from both routes when the service rejects a move.
+8. Test root Undo against the database and the Markdown file.
+9. Run the focused API and knowledge tests until they pass.
 
 ## Task 4: Build the accessible graph surface
 

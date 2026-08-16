@@ -52,7 +52,7 @@ def _create_topic(
 
 
 def _move_request(
-    client: TestClient, route: str, path: str, target: str
+    client: TestClient, route: str, path: str, target: str | None
 ):
     if route == "update":
         return client.put(
@@ -235,6 +235,50 @@ def test_note_move_accepts_only_fixed_system_roots(
     parent, markdown = _parent_and_markdown(graph_api_client, source)
     assert parent == system_root
     assert f"parent_path: {system_root}" in markdown
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_root_topic_move_can_be_undone_to_null_parent(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """Only a topic can use null to return to the topic root."""
+    source = _create_topic(graph_api_client, "Root topic")
+    target = _create_topic(graph_api_client, "Other root topic")
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    assert kb._indexer.set_parent(source, None) is True
+    before_parent, before_markdown = _parent_and_markdown(graph_api_client, source)
+    assert before_parent is None
+    assert "parent_path:" not in before_markdown
+
+    graph = graph_api_client.get("/api/knowledge/graph").json()
+    graph_node = next(node for node in graph["nodes"] if node["id"] == source)
+    assert graph_node["parent_path"] is None
+
+    moved = _move_request(graph_api_client, route, source, target)
+    assert moved.status_code == 200, moved.text
+
+    undone = _move_request(graph_api_client, route, source, None)
+    assert undone.status_code == 200, undone.text
+    restored_parent, restored_markdown = _parent_and_markdown(
+        graph_api_client, source
+    )
+    assert restored_parent is None
+    assert "parent_path:" not in restored_markdown
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_rejects_null_parent_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """A normal note cannot detach from its fixed system root."""
+    source = _create_note(graph_api_client, "Root note")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, None)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
 
 
 def test_graph_position_write_is_read_for_the_current_user(

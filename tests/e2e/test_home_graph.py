@@ -12,10 +12,10 @@ from playwright.sync_api import Page, Route, expect
 
 GRAPH = {
     "nodes": [
-        {"id": "topics/work", "title": "Work", "type": "topic"},
-        {"id": "topics/projects", "title": "Projects", "type": "topic"},
-        {"id": "notes/alpha", "title": "Alpha note", "type": "note"},
-        {"id": "notes/beta", "title": "Beta note", "type": "note"},
+        {"id": "topics/work", "title": "Work", "type": "topic", "status": "active", "parent_path": None},
+        {"id": "topics/projects", "title": "Projects", "type": "topic", "status": "active", "parent_path": "topics/work"},
+        {"id": "notes/alpha", "title": "Alpha note", "type": "note", "status": "active", "parent_path": "topics/work"},
+        {"id": "notes/beta", "title": "Beta note", "type": "note", "status": "active", "parent_path": "topics/projects"},
     ],
     "edges": [
         {"source": "topics/projects", "target": "topics/work", "kind": "parent"},
@@ -364,7 +364,7 @@ def test_root_note_move_undo_uses_its_stored_system_parent(
 ) -> None:
     root_graph = {
         "nodes": [
-            {"id": "topics/work", "title": "Work", "type": "topic", "parent_path": ""},
+            {"id": "topics/work", "title": "Work", "type": "topic", "status": "active", "parent_path": ""},
             {"id": "notes/root", "title": "Root note", "type": "note", "parent_path": "notes"},
         ],
         "edges": [],
@@ -404,6 +404,120 @@ def test_root_note_move_undo_uses_its_stored_system_parent(
     assert calls["parents"] == [
         {"parent_path": "topics/work"},
         {"parent_path": "notes"},
+    ]
+
+
+def test_root_topic_move_undo_uses_null_parent(
+    page: Page, base_url: str
+) -> None:
+    graph = {
+        "nodes": [
+            {"id": "topics/source", "title": "Source", "type": "topic", "status": "active", "parent_path": None},
+            {"id": "topics/target", "title": "Target", "type": "topic", "status": "active", "parent_path": None},
+        ],
+        "edges": [],
+        "positions": {
+            "topics/source": {"x": 320, "y": 220},
+            "topics/target": {"x": 650, "y": 220},
+        },
+        "stats": {"notes": 2, "links": 0},
+    }
+    calls = _mock_graph_home(page, graph=graph)
+    _open_graph(page, base_url)
+    target_box = _node(page, "topics/target").bounding_box()
+    assert target_box is not None
+
+    _drag(
+        page,
+        _node(page, "topics/source"),
+        {
+            "x": target_box["x"] + target_box["width"] / 2,
+            "y": target_box["y"] + target_box["height"] / 2,
+        },
+    )
+    expect(page.get_by_role("button", name="Undo move")).to_be_visible()
+    page.get_by_role("button", name="Undo move").click()
+
+    expect(page.locator(".home-graph-notice")).to_contain_text("Move undone")
+    assert calls["parents"] == [
+        {"parent_path": "topics/target"},
+        {"parent_path": None},
+    ]
+
+
+def test_inactive_topic_is_not_a_valid_drop_or_keyboard_target(
+    page: Page, base_url: str
+) -> None:
+    graph = {
+        **GRAPH,
+        "nodes": [
+            *GRAPH["nodes"],
+            {"id": "topics/archive", "title": "Archive", "type": "topic", "status": "archived", "parent_path": None},
+        ],
+    }
+    calls = _mock_graph_home(page, graph=graph)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    alpha = _node(page, "notes/alpha")
+    archive = _node(page, "topics/archive")
+    source_box = alpha.bounding_box()
+    target_box = archive.bounding_box()
+    assert source_box is not None and target_box is not None
+
+    page.mouse.move(source_box["x"] + source_box["width"] / 2, source_box["y"] + source_box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(target_box["x"] + target_box["width"] / 2, target_box["y"] + target_box["height"] / 2, steps=12)
+    expect(archive).not_to_have_class(re.compile(r"\bis-drop-target\b"))
+    expect(archive).to_have_class(re.compile(r"\bis-invalid-target\b"))
+    page.mouse.up()
+
+    expect(page.locator(".home-graph-notice")).to_contain_text("cannot move")
+    assert calls["parents"] == []
+
+    alpha.locator(".home-graph-node-main").click()
+    target_select = page.get_by_label("Move to topic")
+    expect(target_select.locator("option", has_text="Archive")).to_have_count(0)
+
+
+def test_alt_arrow_moves_and_saves_a_selected_node_position(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    alpha = _node(page, "notes/alpha")
+    button = alpha.locator(".home-graph-node-main")
+    button.focus()
+
+    button.press("Alt+ArrowRight")
+
+    expect(alpha).to_have_attribute("data-x", "584")
+    expect(alpha).to_have_attribute("data-y", "260")
+    assert calls["positions"] == [{"x": 584, "y": 260}]
+
+
+def test_keyboard_topic_picker_moves_and_undoes_the_selected_node(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    _node(page, "notes/alpha").locator(".home-graph-node-main").click()
+    target_select = page.get_by_label("Move to topic")
+    expect(target_select).to_be_visible()
+    target_select.focus()
+    target_select.press("ArrowDown")
+    target_select.press("Tab")
+    move_button = page.get_by_role("button", name="Move selected node")
+    expect(move_button).to_be_focused()
+    move_button.press("Enter")
+
+    expect(page.get_by_role("button", name="Undo move")).to_be_visible()
+    assert calls["parents"] == [{"parent_path": "topics/projects"}]
+    page.get_by_role("button", name="Undo move").click()
+    assert calls["parents"] == [
+        {"parent_path": "topics/projects"},
+        {"parent_path": "topics/work"},
     ]
 
 

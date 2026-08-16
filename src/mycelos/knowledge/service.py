@@ -834,14 +834,17 @@ class KnowledgeBase:
         """List notes belonging to a topic."""
         return self._indexer.list_children(topic_path, limit=limit)
 
-    def move_to_topic(self, path: str, topic_path: str) -> bool:
+    def move_to_topic(self, path: str, topic_path: str | None) -> bool:
         """Move a note to a different topic."""
         file_path = self._safe_path(path)
         source = self._indexer.get_note_meta(path)
         if not source:
             return False
         system_root = topic_path in {"notes", "tasks"}
-        if not system_root:
+        topic_root = topic_path is None and source.get("type") == "topic"
+        if topic_path is None and not topic_root:
+            return False
+        if not system_root and not topic_root:
             target = self._indexer.get_note_meta(topic_path)
             if not target:
                 return False
@@ -1271,7 +1274,7 @@ class KnowledgeBase:
                 "type": n["type"],
                 "status": n["status"],
                 "priority": n["priority"],
-                "parent_path": n.get("parent_path") or "",
+                "parent_path": n.get("parent_path"),
                 "updated_at": n["updated_at"],
             }
             for n in notes

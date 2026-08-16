@@ -864,6 +864,7 @@
 .home-graph-batches,
 .home-graph-search-actions,
 .home-graph-relations,
+.home-graph-selection,
 .home-graph-notice {
   position: absolute;
   z-index: 14;
@@ -915,13 +916,65 @@
 
 .home-graph-relations {
   right: 18px;
-  bottom: 52px;
+  bottom: 102px;
   max-width: min(360px, calc(100% - 36px));
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.home-graph-selection {
+  right: 18px;
+  bottom: 52px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  background: #0e151c;
+  border: 1px solid #26343f;
+  border-radius: 10px;
+}
+
+.home-graph-selection label {
+  padding-left: 4px;
+  color: #9cafba;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.home-graph-selection select,
+.home-graph-selection button {
+  min-height: 34px;
+  border: 1px solid #334753;
+  border-radius: 7px;
+  font: 600 12px/1.2 Lato, sans-serif;
+}
+
+.home-graph-selection select {
+  max-width: 170px;
+  padding: 5px 28px 5px 9px;
+  background: #0a1117;
+  color: #d7e5eb;
+}
+
+.home-graph-selection button {
+  padding: 5px 10px;
+  background: #10242c;
+  color: #b8edf6;
+  cursor: pointer;
+}
+
+.home-graph-selection button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.home-graph-selection select:focus-visible,
+.home-graph-selection button:focus-visible {
+  outline: 2px solid #6fd9ee;
+  outline-offset: 2px;
 }
 
 .home-graph-relations strong {

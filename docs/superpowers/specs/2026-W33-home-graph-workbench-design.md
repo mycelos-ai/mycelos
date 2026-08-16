@@ -107,9 +107,10 @@ The service accepts a parent change only when all conditions are true:
 - A topic does not move below one of its descendants.
 
 The two system roots are the only targets that do not need topic metadata or a Markdown file.
-The service rejects every other missing target. The service checks a topic target path to the root
-with a visited set. It rejects a cycle and leaves the old parent unchanged. Both note update routes
-return an error for an invalid move.
+Only a topic can use `null` to return to the topic root. A note cannot use `null` to leave its
+system root. The service rejects every other missing target. The service checks a topic target path
+to the root with a visited set. It rejects a cycle and leaves the old parent unchanged. Both note
+update routes return an error for an invalid move.
 
 ## 4a completion details
 

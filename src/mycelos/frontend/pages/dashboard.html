@@ -261,7 +261,7 @@
                   class="home-graph-node-main"
                   @pointerdown.stop="startNodeDrag($event, node)"
                   @click.stop="activateGraphNode(node)"
-                  @keydown.enter.stop.prevent="openGraphNode(node)"
+                  @keydown="handleGraphNodeKeydown($event, node)"
                   :aria-pressed="graphSelectedId === node.id"
                   :aria-label="graphNodeLabel(node)"
                 >
@@ -312,6 +312,17 @@
           <template x-for="relation in graphSelectedRelations()" :key="relation.key">
             <button type="button" @click="selectGraphRelation(relation)" x-text="relation.label"></button>
           </template>
+        </aside>
+
+        <aside class="home-graph-selection" x-show="graphSelectedId" x-cloak :aria-label="t('home.move_selected')">
+          <label for="home-graph-target" x-text="t('home.move_to_topic')"></label>
+          <select id="home-graph-target" x-model="graphKeyboardTargetId" @keydown="handleGraphTargetKeydown($event)">
+            <option value="" disabled x-text="t('home.choose_topic')"></option>
+            <template x-for="target in graphKeyboardTargets()" :key="target.id">
+              <option :value="target.id" x-text="target.title || target.id"></option>
+            </template>
+          </select>
+          <button type="button" @click="moveSelectedGraphNode()" :disabled="!graphKeyboardTargetId" x-text="t('home.move_selected')"></button>
         </aside>
 
         <div class="home-graph-notice" x-show="graphNotice.message" x-cloak role="status" :class="{ 'is-error': graphNotice.error }">

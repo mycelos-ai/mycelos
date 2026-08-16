@@ -81,6 +81,7 @@
         ? clamp(Number(viewport.zoom), 0.45, 1.8)
         : 1,
       graphSelectedId: null,
+      graphKeyboardTargetId: '',
       graphDraggingId: null,
       graphDropTargetId: null,
       graphInvalidDropTargetId: null,
@@ -545,6 +546,7 @@
 
       validGraphParent(path, target) {
         if (!path || !target || path === target || this.nodeById[target]?.type !== 'topic') return false;
+        if (this.nodeById[target]?.status !== 'active') return false;
         const seen = new Set();
         let current = target;
         while (current && !seen.has(current)) {
@@ -588,6 +590,7 @@
             currentParent: targetId,
             position: droppedPosition,
           };
+          this.graphKeyboardTargetId = '';
           this.showGraphNotice(t('home.graph_parent_saved'), false);
         } catch (_error) {
           this.applyGraphParent(pointer.id, pointer.priorParent);
@@ -638,11 +641,85 @@
       activateGraphNode(node) {
         if (this.graphSuppressClick || !node?.id) return;
         if (this.graphSelectedId === node.id) this.openGraphNode(node);
-        else this.graphSelectedId = node.id;
+        else {
+          this.graphSelectedId = node.id;
+          this.graphKeyboardTargetId = '';
+        }
       },
 
       selectGraphRelation(relation) {
-        if (relation?.id && this.nodeById[relation.id]) this.graphSelectedId = relation.id;
+        if (relation?.id && this.nodeById[relation.id]) {
+          this.graphSelectedId = relation.id;
+          this.graphKeyboardTargetId = '';
+        }
+      },
+
+      graphKeyboardTargets() {
+        const selected = this.nodeById[this.graphSelectedId];
+        if (!selected) return [];
+        const currentParent = this.parentById[selected.id] || selected.parent_path || null;
+        return this.graphVisibleNodes()
+          .filter((node) =>
+            node.type === 'topic'
+            && node.status === 'active'
+            && node.id !== currentParent
+            && this.validGraphParent(selected.id, node.id)
+          )
+          .sort((left, right) =>
+            (left.title || left.id).localeCompare(right.title || right.id, undefined, { sensitivity: 'base' })
+          );
+      },
+
+      async moveSelectedGraphNode() {
+        const node = this.nodeById[this.graphSelectedId];
+        const targetId = this.graphKeyboardTargetId;
+        if (!node || !this.validGraphParent(node.id, targetId)) return;
+        const position = { ...this.graphPosition(node.id) };
+        await this.saveGraphParent({
+          id: node.id,
+          priorPosition: position,
+          priorParent: this.parentById[node.id] || node.parent_path || null,
+          priorSelection: this.graphSelectedId,
+        }, targetId);
+      },
+
+      handleGraphTargetKeydown(event) {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        const targets = this.graphKeyboardTargets();
+        if (!targets.length) return;
+        const currentIndex = targets.findIndex((target) => target.id === this.graphKeyboardTargetId);
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const nextIndex = currentIndex < 0
+          ? (direction > 0 ? 0 : targets.length - 1)
+          : (currentIndex + direction + targets.length) % targets.length;
+        event.preventDefault();
+        this.graphKeyboardTargetId = targets[nextIndex].id;
+      },
+
+      async handleGraphNodeKeydown(event, node) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          this.openGraphNode(node);
+          return;
+        }
+        const offsets = {
+          ArrowLeft: { x: -24, y: 0 },
+          ArrowRight: { x: 24, y: 0 },
+          ArrowUp: { x: 0, y: -24 },
+          ArrowDown: { x: 0, y: 24 },
+        };
+        const offset = event.altKey ? offsets[event.key] : null;
+        if (!offset) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const priorPosition = { ...this.graphPosition(node.id) };
+        this.graphPositions[node.id] = {
+          x: priorPosition.x + offset.x,
+          y: priorPosition.y + offset.y,
+        };
+        this.graphPositions = { ...this.graphPositions };
+        await this.saveGraphPosition({ id: node.id, priorPosition });
       },
 
       openGraphNode(node) {
@@ -655,6 +732,7 @@
       clearGraphSelection() {
         if (!this.graphSelectedId) return false;
         this.graphSelectedId = null;
+        this.graphKeyboardTargetId = '';
         return true;
       },
     };
