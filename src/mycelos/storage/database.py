@@ -235,6 +235,37 @@ class SQLiteStorage:
         )
         self._conn.commit()
 
+        # Graph node positions are user-owned. This script also runs for
+        # existing databases because schema.sql is only reapplied when an
+        # older check table is absent.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
+                user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                note_path   TEXT NOT NULL,
+                x           REAL NOT NULL,
+                y           REAL NOT NULL,
+                updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (user_id, note_path)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kgp_note_path
+                ON knowledge_graph_positions(note_path);
+            CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_follow_note_rename
+            AFTER UPDATE OF path ON knowledge_notes
+            BEGIN
+                UPDATE knowledge_graph_positions
+                SET note_path = NEW.path
+                WHERE note_path = OLD.path;
+            END;
+            CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_remove_deleted_note
+            AFTER DELETE ON knowledge_notes
+            BEGIN
+                DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+            END;
+            """
+        )
+        self._conn.commit()
+
     def _migrate_workflow_runs_to_routine_runs(self) -> None:
         """Give workflow_runs a routine `kind` and a nullable workflow_id.
 

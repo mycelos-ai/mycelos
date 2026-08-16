@@ -1203,7 +1203,33 @@ class KnowledgeBase:
         )
         return {"notes": len(notes), "links": edge_count}
 
-    def get_graph_data(self) -> dict:
+    def get_graph_positions(self, user_id: str) -> dict[str, dict[str, float]]:
+        """Return the saved node positions for one user."""
+        rows = self._app.storage.fetchall(
+            "SELECT note_path, x, y FROM knowledge_graph_positions WHERE user_id=?",
+            (user_id,),
+        )
+        return {
+            row["note_path"]: {"x": float(row["x"]), "y": float(row["y"])}
+            for row in rows
+        }
+
+    def store_graph_position(self, user_id: str, path: str, x: float, y: float) -> bool:
+        """Store a node position when the node exists."""
+        if not self._indexer.get_note_meta(path):
+            return False
+        self._app.storage.execute(
+            """INSERT INTO knowledge_graph_positions (user_id, note_path, x, y, updated_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(user_id, note_path) DO UPDATE SET
+                   x=excluded.x,
+                   y=excluded.y,
+                   updated_at=excluded.updated_at""",
+            (user_id, path, float(x), float(y), _now()),
+        )
+        return True
+
+    def get_graph_data(self, user_id: str = "default") -> dict:
         """Return note graph data suitable for web visualization.
 
         Archived notes are excluded; edges carry a ``kind``
@@ -1240,6 +1266,11 @@ class KnowledgeBase:
         return {
             "nodes": nodes,
             "edges": edges,
+            "positions": {
+                path: position
+                for path, position in self.get_graph_positions(user_id).items()
+                if path in visible
+            },
             "stats": {"notes": len(nodes), "links": len(edges)},
         }
 

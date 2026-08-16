@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -13,6 +14,8 @@ from mycelos.gateway.routers._helpers import resolve_user_id
 logger = logging.getLogger("mycelos.gateway")
 
 router = APIRouter()
+
+_MAX_GRAPH_COORDINATE = 1_000_000
 
 
 @router.get("/api/knowledge/notes")
@@ -242,7 +245,33 @@ async def knowledge_note(path: str, request: Request) -> dict[str, Any]:
 async def knowledge_graph(request: Request) -> dict[str, Any]:
     """Return note graph (nodes + links) for web visualization."""
     kb = request.app.state.mycelos.knowledge_base
-    return kb.get_graph_data()
+    return kb.get_graph_data(resolve_user_id(request))
+
+
+@router.put("/api/knowledge/graph/positions/{path:path}")
+async def knowledge_update_graph_position(path: str, request: Request) -> dict[str, Any]:
+    """Store the current user's finite graph position for a known node."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "x and y are required"}, status_code=422)
+
+    x = body.get("x")
+    y = body.get("y")
+    coordinates = (x, y)
+    if (
+        any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in coordinates)
+        or any(abs(value) > _MAX_GRAPH_COORDINATE for value in coordinates)
+        or not all(math.isfinite(value) for value in coordinates)
+    ):
+        return JSONResponse(
+            {"error": "x and y must be finite numbers within the graph range"},
+            status_code=422,
+        )
+
+    kb = request.app.state.mycelos.knowledge_base
+    if not kb.store_graph_position(resolve_user_id(request), path, x, y):
+        return JSONResponse({"error": "not_found", "path": path}, status_code=404)
+    return {"path": path, "x": float(x), "y": float(y)}
 
 
 @router.get("/api/knowledge/topics")

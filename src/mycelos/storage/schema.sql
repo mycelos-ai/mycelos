@@ -423,6 +423,29 @@ CREATE INDEX IF NOT EXISTS idx_kn_updated ON knowledge_notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_kn_path ON knowledge_notes(path);
 CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_notes(parent_path) WHERE parent_path IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    note_path   TEXT NOT NULL,
+    x           REAL NOT NULL,
+    y           REAL NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (user_id, note_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kgp_note_path ON knowledge_graph_positions(note_path);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_follow_note_rename
+AFTER UPDATE OF path ON knowledge_notes
+BEGIN
+    UPDATE knowledge_graph_positions SET note_path = NEW.path WHERE note_path = OLD.path;
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_remove_deleted_note
+AFTER DELETE ON knowledge_notes
+BEGIN
+    DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+END;
+
 CREATE TABLE IF NOT EXISTS knowledge_links (
     from_path   TEXT NOT NULL,
     to_path     TEXT NOT NULL,
