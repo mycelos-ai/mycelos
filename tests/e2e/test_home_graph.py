@@ -46,8 +46,14 @@ def _mock_graph_home(
     search_results: list[dict[str, Any]] | None = None,
     position_status: int = 200,
     parent_status: int = 200,
+    defer_parent_response: bool = False,
 ) -> dict[str, list[Any]]:
-    calls: dict[str, list[Any]] = {"positions": [], "parents": [], "queries": []}
+    calls: dict[str, list[Any]] = {
+        "positions": [],
+        "parents": [],
+        "queries": [],
+        "pending_parents": [],
+    }
     graph_payload = GRAPH if graph is None else graph
     results = search_results or []
 
@@ -67,6 +73,9 @@ def _mock_graph_home(
         request = route.request
         if request.method == "PUT":
             calls["parents"].append(request.post_data_json)
+            if defer_parent_response:
+                calls["pending_parents"].append(route)
+                return
             _json(route, {"ok": parent_status == 200}, status=parent_status)
             return
         query = parse_qs(urlparse(request.url).query).get("query", [""])[0]
@@ -519,6 +528,78 @@ def test_keyboard_topic_picker_moves_and_undoes_the_selected_node(
         {"parent_path": "topics/projects"},
         {"parent_path": "topics/work"},
     ]
+
+
+def test_pending_parent_move_blocks_duplicate_controls_and_keeps_original_parent(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page, defer_parent_response=True)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    _expand(page, "topics/projects")
+    alpha = _node(page, "notes/alpha")
+    alpha.locator(".home-graph-node-main").click()
+    target_select = page.get_by_label("Move to topic")
+    target_select.select_option("topics/projects")
+    move_button = page.get_by_role("button", name="Move selected node")
+
+    move_button.click()
+    move_button.evaluate("element => element.click()")
+    expect(move_button).to_be_disabled()
+    expect(target_select).to_be_disabled()
+    undo_button = page.locator(".home-graph-notice button")
+    expect(undo_button).to_be_disabled()
+
+    work_box = _node(page, "topics/work").bounding_box()
+    assert work_box is not None
+    _drag(
+        page,
+        alpha,
+        {
+            "x": work_box["x"] + work_box["width"] / 2,
+            "y": work_box["y"] + work_box["height"] / 2,
+        },
+    )
+    assert calls["parents"] == [{"parent_path": "topics/projects"}]
+
+    _json(calls["pending_parents"][0], {"ok": True})
+    expect(undo_button).to_be_visible()
+    expect(undo_button).to_be_enabled()
+    undo_button.click()
+    expect(undo_button).to_be_disabled()
+    undo_button.evaluate("element => element.click()")
+    assert calls["parents"] == [
+        {"parent_path": "topics/projects"},
+        {"parent_path": "topics/work"},
+    ]
+    _json(calls["pending_parents"][1], {"ok": True})
+    expect(page.locator(".home-graph-notice")).to_contain_text("Move undone")
+
+
+def test_failed_pending_parent_move_unlocks_the_controls(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page, defer_parent_response=True)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    _node(page, "notes/alpha").locator(".home-graph-node-main").click()
+    target_select = page.get_by_label("Move to topic")
+    target_select.select_option("topics/projects")
+    move_button = page.get_by_role("button", name="Move selected node")
+
+    move_button.click()
+    expect(move_button).to_be_disabled()
+    _json(calls["pending_parents"][0], {"error": "move_rejected"}, status=422)
+
+    expect(page.locator(".home-graph-notice")).to_contain_text("could not be moved")
+    expect(target_select).to_be_enabled()
+    expect(move_button).to_be_enabled()
+    move_button.click()
+    assert calls["parents"] == [
+        {"parent_path": "topics/projects"},
+        {"parent_path": "topics/projects"},
+    ]
+    _json(calls["pending_parents"][1], {"ok": True})
 
 
 def test_failed_topic_drop_restores_the_parent_and_position(

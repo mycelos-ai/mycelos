@@ -82,6 +82,7 @@
         : 1,
       graphSelectedId: null,
       graphKeyboardTargetId: '',
+      graphParentSaving: false,
       graphDraggingId: null,
       graphDropTargetId: null,
       graphInvalidDropTargetId: null,
@@ -440,7 +441,7 @@
       },
 
       startNodeDrag(event, node) {
-        if (event.button !== 0 || !node?.id) return;
+        if (this.graphParentSaving || event.button !== 0 || !node?.id) return;
         const position = this.graphPosition(node.id);
         this.graphPointer = {
           kind: 'node',
@@ -573,11 +574,13 @@
       },
 
       async saveGraphParent(pointer, targetId) {
+        if (this.graphParentSaving) return;
         const priorPosition = pointer.priorPosition;
         const droppedPosition = { ...this.graphPosition(pointer.id) };
-        this.graphSelectedId = pointer.id;
-        this.applyGraphParent(pointer.id, targetId);
+        this.graphParentSaving = true;
         try {
+          this.graphSelectedId = pointer.id;
+          this.applyGraphParent(pointer.id, targetId);
           await MycelosAPI.put(
             `/api/knowledge/notes/${apiPath(pointer.id)}`,
             { parent_path: targetId }
@@ -599,14 +602,17 @@
           this.graphSelectedId = pointer.priorSelection;
           this.graphUndo = null;
           this.showGraphNotice(t('home.graph_parent_error'), true);
+        } finally {
+          this.graphParentSaving = false;
         }
       },
 
       async undoGraphMove() {
         const undo = this.graphUndo;
-        if (!undo) return;
-        this.applyGraphParent(undo.path, undo.previousParent);
+        if (!undo || this.graphParentSaving) return;
+        this.graphParentSaving = true;
         try {
+          this.applyGraphParent(undo.path, undo.previousParent);
           await MycelosAPI.put(
             `/api/knowledge/notes/${apiPath(undo.path)}`,
             { parent_path: undo.previousParent }
@@ -618,6 +624,8 @@
         } catch (_error) {
           this.applyGraphParent(undo.path, undo.currentParent);
           this.showGraphNotice(t('home.graph_undo_error'), true);
+        } finally {
+          this.graphParentSaving = false;
         }
       },
 
@@ -671,6 +679,7 @@
       },
 
       async moveSelectedGraphNode() {
+        if (this.graphParentSaving) return;
         const node = this.nodeById[this.graphSelectedId];
         const targetId = this.graphKeyboardTargetId;
         if (!node || !this.validGraphParent(node.id, targetId)) return;
@@ -684,6 +693,7 @@
       },
 
       handleGraphTargetKeydown(event) {
+        if (this.graphParentSaving) return;
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         const targets = this.graphKeyboardTargets();
         if (!targets.length) return;
