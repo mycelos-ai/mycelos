@@ -7,12 +7,14 @@ Week 33 (2026). This specification completes Package 4a and defines Package 4b.
 Home becomes the daily knowledge workbench. The graph shows the knowledge structure without
 replacing the usable tree. A user can find, select, arrange, open, and safely move knowledge.
 
-The implementation also closes four confirmed gaps in Package 4a:
+The implementation also closes six confirmed gaps in Package 4a:
 
 - Restore the network exposure warning in the new shell.
 - Confirm the initial capture location after Keep.
 - Use the correct singular result text.
 - Replace the hidden 200-note tree limit with an explicit More action.
+- Show today's imported-note count from the database and link it to Knowledge.
+- Show a source action on each topic with an attached source and link it to Connectors.
 
 ## Scope
 
@@ -126,6 +128,14 @@ action. Each activation adds 200 notes without hiding the remaining count.
 The Today review number always comes from `/api/inbox/count`. The number of loaded inbox rows does
 not replace it.
 
+Home reads `/api/knowledge/home-summary` for two Package 4a facts. The response counts notes with
+`created_by='import'` that the database created today. It also groups the current user's source
+attachments by `topic_path`. A zero import count stays hidden. A nonzero count links to the
+Knowledge page.
+
+Each tree topic with one or more source attachments shows a Source action. The action links to the
+existing Connectors page. English and German provide the same labels and recovery text.
+
 ## Errors and recovery
 
 Home keeps the last usable graph when a refresh fails. It shows a short retry message. A failed
@@ -170,6 +180,6 @@ Package 4b is complete when all checks pass:
 11. Pan, zoom, fit, and keyboard controls work.
 12. The tree remains usable and mobile always uses it.
 13. A 5,000-node response does not create 5,000 visible controls at start.
-14. The four Package 4a gaps in this specification have regression tests.
+14. The six Package 4a gaps in this specification have regression tests.
 15. English and German contain the same new translation keys.
 16. The security, API, and existing page tests keep their baselines.

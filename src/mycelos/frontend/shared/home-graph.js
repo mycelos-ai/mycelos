@@ -577,6 +577,7 @@
         if (this.graphParentSaving) return;
         const priorPosition = pointer.priorPosition;
         const droppedPosition = { ...this.graphPosition(pointer.id) };
+        let parentSaved = false;
         this.graphParentSaving = true;
         try {
           this.graphSelectedId = pointer.id;
@@ -585,23 +586,44 @@
             `/api/knowledge/notes/${apiPath(pointer.id)}`,
             { parent_path: targetId }
           );
+          parentSaved = true;
+          if (pointer.kind === 'node') {
+            await MycelosAPI.put(
+              `/api/knowledge/graph/positions/${apiPath(pointer.id)}`,
+              { x: droppedPosition.x, y: droppedPosition.y }
+            );
+          }
           this.graphPositions[pointer.id] = droppedPosition;
           this.graphPositions = { ...this.graphPositions };
-          this.graphUndo = {
+          const undo = {
             path: pointer.id,
             previousParent: pointer.priorParent,
             currentParent: targetId,
             position: droppedPosition,
           };
           this.graphKeyboardTargetId = '';
-          this.showGraphNotice(t('home.graph_parent_saved'), false);
+          this.showGraphNotice(t('home.graph_parent_saved'), false, undo);
         } catch (_error) {
+          let rollbackFailed = false;
+          if (parentSaved) {
+            try {
+              await MycelosAPI.put(
+                `/api/knowledge/notes/${apiPath(pointer.id)}`,
+                { parent_path: pointer.priorParent }
+              );
+            } catch (_rollbackError) {
+              rollbackFailed = true;
+            }
+          }
           this.applyGraphParent(pointer.id, pointer.priorParent);
           this.graphPositions[pointer.id] = priorPosition;
           this.graphPositions = { ...this.graphPositions };
           this.graphSelectedId = pointer.priorSelection;
-          this.graphUndo = null;
-          this.showGraphNotice(t('home.graph_parent_error'), true);
+          this.showGraphNotice(
+            t(rollbackFailed ? 'home.graph_parent_rollback_error' : 'home.graph_parent_error'),
+            true
+          );
+          if (rollbackFailed && typeof this.loadGraph === 'function') await this.loadGraph();
         } finally {
           this.graphParentSaving = false;
         }
@@ -619,11 +641,10 @@
           );
           this.graphPositions[undo.path] = undo.position;
           this.graphPositions = { ...this.graphPositions };
-          this.graphUndo = null;
           this.showGraphNotice(t('home.graph_move_undone'), false);
         } catch (_error) {
           this.applyGraphParent(undo.path, undo.currentParent);
-          this.showGraphNotice(t('home.graph_undo_error'), true);
+          this.showGraphNotice(t('home.graph_undo_error'), true, undo);
         } finally {
           this.graphParentSaving = false;
         }
@@ -642,7 +663,8 @@
         this.buildGraphChildrenIndex();
       },
 
-      showGraphNotice(message, error) {
+      showGraphNotice(message, error, undo = null) {
+        this.graphUndo = undo;
         this.graphNotice = { message, error: !!error };
       },
 

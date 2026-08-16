@@ -16,21 +16,30 @@ existing graph response with position data. Put safe move rules in the knowledge
 **Files:**
 
 - Modify: `tests/e2e/test_home_surface.py`
+- Modify: `tests/test_knowledge_graph_api.py`
+- Modify: `src/mycelos/gateway/routers/knowledge.py`
+- Modify: `src/mycelos/knowledge/service.py`
+- Modify: `src/mycelos/frontend/pages/dashboard.html`
 - Modify: `src/mycelos/frontend/shared/sidebar.html`
 - Modify: `src/mycelos/frontend/shared/api.js`
 - Modify: `src/mycelos/frontend/shared/home.js`
 - Modify: `src/mycelos/frontend/shared/home.css`
-- Modify: `src/mycelos/i18n/en.yaml`
-- Modify: `src/mycelos/i18n/de.yaml`
+- Modify: `src/mycelos/i18n/locales/en.yaml`
+- Modify: `src/mycelos/i18n/locales/de.yaml`
 
 1. Add failing tests for the network warning, capture location, singular text, the More action,
-   and the independent Today count.
+   the independent Today count, today's import count, and attached topic sources.
 2. Run the focused Home tests and confirm the expected failures.
-3. Restore the health request and the warning in the shell.
-4. Use the Keep response to show the initial note location.
-5. Add singular text and the root-note More action.
-6. Run the focused Home tests until they pass.
-7. Commit the Package 4a completion.
+3. Add a database-backed Home summary route for today's imports and current-user source
+   attachments grouped by topic.
+4. Restore the health request and the warning in the shell.
+5. Use the Keep response to show the initial note location.
+6. Add singular text and the root-note More action.
+7. Show the nonzero import segment in Today and link it to Knowledge.
+8. Show a Source action on each attached topic and link it to Connectors.
+9. Add matching English and German text for the two restored segments.
+10. Run the focused Home and API tests until they pass.
+11. Commit the Package 4a completion.
 
 ## Task 2: Add the graph position contract
 

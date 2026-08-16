@@ -178,11 +178,40 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
     """Update an existing note (content, status, tags, priority, parent_path, organizer_state, archive)."""
     mycelos = request.app.state.mycelos
     kb = mycelos.knowledge_base
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid request"}, status_code=422)
+
+    string_fields = ("content", "organizer_state", "status")
+    for field in string_fields:
+        if field in body and not isinstance(body[field], str):
+            return JSONResponse({"error": f"invalid {field}"}, status_code=422)
+    if "tags" in body and (
+        not isinstance(body["tags"], list)
+        or not all(isinstance(tag, str) for tag in body["tags"])
+    ):
+        return JSONResponse({"error": "invalid tags"}, status_code=422)
+    priority: int | None = None
+    if "priority" in body:
+        if isinstance(body["priority"], bool):
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+        try:
+            priority = int(body["priority"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+        if not 0 <= priority <= 3:
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+    if "archive" in body and not isinstance(body["archive"], bool):
+        return JSONResponse({"error": "invalid archive"}, status_code=422)
 
     # Move to a different topic
     if "parent_path" in body:
         new_parent = body["parent_path"]
+        if new_parent is not None and not isinstance(new_parent, str):
+            return JSONResponse({"error": "invalid parent_path"}, status_code=422)
         if not kb.move_to_topic(path, new_parent):
             return JSONResponse(
                 {"error": "move_rejected", "path": path, "target": new_parent},
@@ -218,7 +247,7 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
 
     # Priority update
     if "priority" in body:
-        kb.update(path, priority=int(body["priority"]))
+        kb.update(path, priority=priority)
 
     # Archive shortcut
     if body.get("archive"):
@@ -250,6 +279,13 @@ async def knowledge_graph(request: Request) -> dict[str, Any]:
     """Return note graph (nodes + links) for web visualization."""
     kb = request.app.state.mycelos.knowledge_base
     return kb.get_graph_data(resolve_user_id(request))
+
+
+@router.get("/api/knowledge/home-summary")
+def knowledge_home_summary(request: Request) -> dict[str, Any]:
+    """Return the values for the Home summary."""
+    kb = request.app.state.mycelos.knowledge_base
+    return kb.get_home_summary(resolve_user_id(request))
 
 
 @router.put("/api/knowledge/graph/positions/{path:path}")
@@ -380,9 +416,16 @@ async def knowledge_note_remind(path: str, request: Request) -> dict[str, Any]:
 @router.post("/api/knowledge/notes/{path:path}/move")
 async def knowledge_note_move(path: str, request: Request) -> dict[str, Any]:
     """Move a note to a different topic."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid request"}, status_code=422)
     kb = request.app.state.mycelos.knowledge_base
     target = body.get("topic", "")
+    if target is not None and not isinstance(target, str):
+        return JSONResponse({"error": "invalid topic"}, status_code=422)
     success = kb.move_to_topic(path, target)
     if not success:
         return JSONResponse(

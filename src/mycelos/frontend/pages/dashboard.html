@@ -108,20 +108,29 @@
 
       <div class="home-today" aria-live="polite">
         <strong x-text="t('home.today')"></strong>
-        <template x-if="today.inboxCount > 0">
+        <template x-if="!today.error && today.inboxCount > 0">
           <a href="/pages/inbox.html">
             <span class="home-signal-dot" aria-hidden="true"></span>
             <span x-text="inboxLabel()"></span>
           </a>
         </template>
-        <template x-if="today.dueEntries.length > 0">
+        <template x-if="!today.error && today.dueEntries.length > 0">
           <a :href="dueHref()">
             <span class="home-today-divider" aria-hidden="true">·</span>
             <span x-text="dueLabel()"></span>
           </a>
         </template>
-        <span x-show="today.loaded && today.inboxCount === 0 && today.dueEntries.length === 0" x-text="t('home.today_clear')"></span>
-        <span x-show="!today.loaded" x-text="t('home.today_loading')"></span>
+        <template x-if="!today.error && today.importsToday > 0">
+          <a href="/pages/knowledge.html" x-text="importsLabel()"></a>
+        </template>
+        <template x-if="today.loaded && !today.loading && !today.error && today.inboxCount === 0 && today.dueEntries.length === 0 && today.importsToday === 0">
+          <span x-text="t('home.today_clear')"></span>
+        </template>
+        <span x-show="today.loading && !today.error" x-text="t('home.today_loading')"></span>
+        <span class="home-today-error" x-show="today.error" x-cloak>
+          <span x-text="today.error"></span>
+          <button type="button" @click="retryToday()" x-text="t('common.retry')"></button>
+        </span>
       </div>
     </header>
 
@@ -137,27 +146,33 @@
         </button>
       </div>
 
-      <div class="home-tree-pane" x-show="mode === 'tree'">
+      <template x-if="mode === 'tree'">
+      <div class="home-tree-pane">
         <div class="home-loading" x-show="loading">
           <span class="home-loading-line"></span>
           <span class="home-loading-line"></span>
           <span class="home-loading-line"></span>
         </div>
 
-        <div class="home-empty" x-show="!loading && graph.nodes.length === 0">
+        <div class="home-load-error home-tree-load-error" x-show="!loading && graphLoadError" x-cloak>
+          <p x-text="graphLoadError"></p>
+          <button type="button" @click="retryGraph()" x-text="t('common.retry')"></button>
+        </div>
+
+        <div class="home-empty" x-show="!loading && !graphLoadError && graph.nodes.length === 0">
           <img src="/assets/logo-transparent.svg" alt="" aria-hidden="true">
           <h1 x-text="t('home.empty_title')"></h1>
           <p x-text="t('home.empty_body')"></p>
           <button type="button" class="home-action-primary" @click="focusBar()" x-text="t('home.empty_action')"></button>
         </div>
 
-        <div class="home-empty home-empty-compact" x-show="!loading && graph.nodes.length > 0 && query.trim() && treeRows().length === 0">
+        <div class="home-empty home-empty-compact" x-show="!loading && !graphLoadError && graph.nodes.length > 0 && query.trim() && treeRows().length === 0">
           <span class="material-symbols-outlined" aria-hidden="true">search_off</span>
           <h2 x-text="t('home.no_matches_title')"></h2>
           <p x-text="t('home.no_matches_body')"></p>
         </div>
 
-        <div class="home-tree" x-show="!loading && treeRows().length">
+        <div class="home-tree" x-show="!loading && !graphLoadError && treeRows().length">
           <template x-for="row in treeRows()" :key="row.key">
             <div class="home-tree-row" :class="{ 'is-note': row.type !== 'topic', 'is-uncertain': row.uncertain }" :style="'--tree-depth:' + row.depth">
               <button
@@ -178,20 +193,39 @@
                 <span class="home-uncertain-mark" x-show="row.uncertain" :title="t('home.uncertain_placement')">?</span>
               </button>
 
+              <a
+                class="home-tree-source"
+                x-show="row.type === 'topic' && row.hasSource"
+                x-cloak
+                href="/pages/connectors.html"
+                @click.stop
+                :aria-label="t('home.source_action').replace('{title}', row.title)"
+                x-text="t('home.source')"
+              ></a>
               <span class="home-tree-count" x-show="row.type === 'topic'" x-text="row.count"></span>
             </div>
           </template>
 
-          <button
-            type="button"
-            class="home-tree-more"
-            x-show="!query.trim() && expanded.__unfiled__ && rootNotesRemaining() > 0"
-            x-cloak
-            @click="moreRootNotes()"
-            x-text="moreRootNotesLabel()"
-          ></button>
+          <template x-if="!query.trim() && rootTopicsRemaining() > 0">
+            <button
+              type="button"
+              class="home-tree-more"
+              @click="moreRootTopics()"
+              x-text="moreRootTopicsLabel()"
+            ></button>
+          </template>
+
+          <template x-if="!query.trim() && expanded.__unfiled__ && rootNotesRemaining() > 0">
+            <button
+              type="button"
+              class="home-tree-more"
+              @click="moreRootNotes()"
+              x-text="moreRootNotesLabel()"
+            ></button>
+          </template>
         </div>
       </div>
+      </template>
 
       <div
         class="home-graph-surface"
@@ -284,11 +318,32 @@
             </template>
           </div>
 
-          <div class="home-graph-empty" x-show="!loading && graph.nodes.length === 0">
+          <div
+            class="home-load-error home-graph-load-error"
+            :class="{ 'has-data': graph.nodes.length > 0 }"
+            x-show="!loading && graphLoadError"
+            x-cloak
+          >
+            <p x-text="graphLoadError"></p>
+            <button type="button" @click="retryGraph()" x-text="t('common.retry')"></button>
+          </div>
+
+          <div class="home-graph-empty" x-show="!loading && !graphLoadError && graph.nodes.length === 0">
             <img src="/assets/logo-transparent.svg" alt="" aria-hidden="true">
             <h2 x-text="t('home.empty_title')"></h2>
             <p x-text="t('home.empty_body')"></p>
             <button type="button" class="home-action-primary" @click="focusBar()" x-text="t('home.empty_action')"></button>
+          </div>
+
+          <div
+            class="home-graph-no-topics"
+            x-show="!loading && !graphLoadError && graph.nodes.length > 0 && graphRootIds.length === 0"
+            x-cloak
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">account_tree</span>
+            <h2 x-text="t('home.graph_no_topics_title')"></h2>
+            <p x-text="t('home.graph_no_topics_body')"></p>
+            <button type="button" class="home-action-primary" @click="setMode('tree')" x-text="t('home.show_tree')"></button>
           </div>
         </div>
 
@@ -299,6 +354,7 @@
         </div>
 
         <div class="home-graph-search-actions" x-show="graphMissingSearchResults().length" x-cloak>
+          <p class="home-graph-search-limit" x-text="t('home.graph_search_limit')"></p>
           <template x-for="result in graphMissingSearchResults()" :key="result.path">
             <a :href="graphResultHref(result)" :aria-label="t('home.open_result').replace('{title}', result.title || result.path)">
               <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>

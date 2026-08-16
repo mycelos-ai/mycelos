@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -68,6 +70,107 @@ def _parent_and_markdown(client: TestClient, path: str) -> tuple[str, str]:
     meta = kb._indexer.get_note_meta(path)
     assert meta is not None
     return meta["parent_path"], kb._safe_path(path).read_text(encoding="utf-8")
+
+
+def test_home_summary_counts_today_imports_and_groups_attached_sources(
+    graph_api_client: TestClient,
+) -> None:
+    """Home must read today's imports and grouped source attachments from SQLite."""
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    storage = graph_api_client.app.state.mycelos.storage
+    work = _create_topic(graph_api_client, "Work")
+    research = _create_topic(graph_api_client, "Research")
+    imported_today = kb.write(
+        "Imported today",
+        "Today",
+        created_by="import",
+        source={"kind": "connector", "connector": "gmail"},
+    )
+    imported_before = kb.write(
+        "Imported before",
+        "Before",
+        created_by="import",
+        source={"kind": "connector", "connector": "gmail"},
+    )
+    kb.write("User note", "Not an import", created_by="user")
+    storage.execute(
+        "UPDATE knowledge_notes SET created_at='2000-01-01T00:00:00.000Z' WHERE path=?",
+        (imported_before,),
+    )
+    storage.execute(
+        "UPDATE knowledge_notes SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE path=?",
+        (imported_today,),
+    )
+    for source_id, topic_path in [
+        ("gmail", work),
+        ("yt-summary", work),
+        ("github", research),
+    ]:
+        storage.execute(
+            "INSERT INTO source_attachments (source_id, user_id, topic_path) VALUES (?, 'default', ?)",
+            (source_id, topic_path),
+        )
+
+    response = graph_api_client.get("/api/knowledge/home-summary")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "imports_today": 1,
+        "sources_by_topic": {
+            research: ["github"],
+            work: ["gmail", "yt-summary"],
+        },
+    }
+
+
+def test_home_summary_returns_zero_for_a_day_without_imports(
+    graph_api_client: TestClient,
+) -> None:
+    """An old import must not create a nonzero Today segment."""
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    storage = graph_api_client.app.state.mycelos.storage
+    old_path = kb.write("Old import", "Old", created_by="import")
+    storage.execute(
+        "UPDATE knowledge_notes SET created_at='2000-01-01T00:00:00.000Z' WHERE path=?",
+        (old_path,),
+    )
+
+    response = graph_api_client.get("/api/knowledge/home-summary")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"imports_today": 0, "sources_by_topic": {}}
+
+
+def test_home_summary_filters_source_attachments_for_the_current_user(
+    graph_api_client: TestClient,
+) -> None:
+    """One user must not receive another user's source attachments."""
+    storage = graph_api_client.app.state.mycelos.storage
+    default_topic = _create_topic(graph_api_client, "Default topic")
+    alice_topic = _create_topic(graph_api_client, "Alice topic")
+    storage.execute(
+        "INSERT OR IGNORE INTO users (id, name, status) VALUES ('alice', 'Alice', 'active')"
+    )
+    storage.execute(
+        "INSERT INTO source_attachments (source_id, user_id, topic_path) VALUES ('gmail', 'default', ?)",
+        (default_topic,),
+    )
+    storage.execute(
+        "INSERT INTO source_attachments (source_id, user_id, topic_path) VALUES ('yt-summary', 'alice', ?)",
+        (alice_topic,),
+    )
+
+    default_summary = graph_api_client.get("/api/knowledge/home-summary")
+    alice_summary = graph_api_client.get(
+        "/api/knowledge/home-summary", headers={"X-User-Id": "alice"}
+    )
+
+    assert default_summary.json()["sources_by_topic"] == {
+        default_topic: ["gmail"]
+    }
+    assert alice_summary.json()["sources_by_topic"] == {
+        alice_topic: ["yt-summary"]
+    }
 
 
 @pytest.mark.parametrize("route", ["update", "move"])
@@ -281,6 +384,200 @@ def test_note_move_rejects_null_parent_without_changes(
     assert _parent_and_markdown(graph_api_client, source) == before
 
 
+@pytest.mark.parametrize("system_root", ["notes", "tasks"])
+def test_topic_parent_chain_accepts_notes_and_tasks_as_terminal_roots(
+    graph_api_client: TestClient, system_root: str
+) -> None:
+    """A valid topic below a fixed system root must remain a valid target."""
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    target = kb.write(
+        title=f"Nested {system_root} target",
+        content=f"# Nested {system_root} target\n",
+        type="topic",
+        topic=system_root,
+    )
+    source = _create_topic(graph_api_client, f"{system_root} source topic")
+
+    response = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    )
+
+    assert response.status_code == 200, response.text
+    assert _parent_and_markdown(graph_api_client, source)[0] == target
+
+
+@pytest.mark.parametrize(
+    ("route", "body"),
+    [
+        ("update", []),
+        ("update", {"parent_path": []}),
+        ("move", []),
+        ("move", {"topic": []}),
+    ],
+)
+def test_parent_change_rejects_invalid_json_types(
+    graph_api_client: TestClient, route: str, body: object
+) -> None:
+    """Invalid JSON shapes must return 422 instead of a server error."""
+    source = _create_note(graph_api_client, "Typed source")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    if route == "update":
+        response = graph_api_client.put(
+            f"/api/knowledge/notes/{source}", json=body
+        )
+    else:
+        response = graph_api_client.post(
+            f"/api/knowledge/notes/{source}/move", json=body
+        )
+
+    assert response.status_code == 422
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("content", []),
+        ("organizer_state", []),
+        ("status", []),
+        ("tags", "not-a-list"),
+        ("tags", ["valid", 7]),
+        ("priority", "not-a-number"),
+        ("priority", -1),
+        ("priority", 4),
+        ("priority", 10**400),
+        ("archive", "yes"),
+    ],
+)
+def test_parent_change_validates_all_update_fields_before_moving(
+    graph_api_client: TestClient, field: str, value: object
+) -> None:
+    """A later invalid field must not leave an earlier parent change behind."""
+    source = _create_note(graph_api_client, f"Invalid {field} source")
+    target = _create_topic(graph_api_client, f"Invalid {field} target")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = graph_api_client.put(
+        f"/api/knowledge/notes/{source}",
+        json={"parent_path": target, field: value},
+    )
+
+    assert response.status_code == 422
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+def test_parent_change_leaves_database_and_file_unchanged_on_file_write_failure(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A staged Markdown write failure must happen before the parent row changes."""
+    source = _create_note(graph_api_client, "File failure source")
+    target = _create_topic(graph_api_client, "File failure target")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("staged write failed")
+
+    monkeypatch.setattr(Path, "write_text", fail_write)
+
+    response = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    )
+
+    assert response.status_code == 422
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+def test_parent_change_rolls_back_database_and_file_on_database_failure(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed parent-row write must restore the original Markdown file."""
+    source = _create_note(graph_api_client, "Database failure source")
+    target = _create_topic(graph_api_client, "Database failure target")
+    before = _parent_and_markdown(graph_api_client, source)
+    indexer = graph_api_client.app.state.mycelos.knowledge_base._indexer
+    original_set_parent = indexer.set_parent
+
+    def update_then_fail(path: str, parent: str | None) -> bool:
+        original_set_parent(path, parent)
+        raise sqlite3.OperationalError("database write failed")
+
+    monkeypatch.setattr(indexer, "set_parent", update_then_fail)
+
+    response = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    )
+
+    assert response.status_code == 422
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+def test_parent_change_succeeds_when_the_audit_write_fails(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An audit failure after the durable change must not report a failed move."""
+    source = _create_note(graph_api_client, "Audit failure source")
+    target = _create_topic(graph_api_client, "Audit failure target")
+
+    def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(
+        graph_api_client.app.state.mycelos.audit, "log", fail_audit
+    )
+
+    response = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    )
+
+    assert response.status_code == 200, response.text
+    assert _parent_and_markdown(graph_api_client, source)[0] == target
+
+
+def test_two_concurrent_opposite_topic_moves_cannot_create_a_cycle(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The validation and update must share one service lock."""
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    left = _create_topic(graph_api_client, "Concurrent left")
+    right = _create_topic(graph_api_client, "Concurrent right")
+    original_get_meta = kb._indexer.get_note_meta
+    validation_barrier = threading.Barrier(2)
+    local = threading.local()
+
+    def synchronized_get_meta(path: str):
+        result = original_get_meta(path)
+        local.calls = getattr(local, "calls", 0) + 1
+        if local.calls == 3:
+            try:
+                validation_barrier.wait(timeout=0.2)
+            except threading.BrokenBarrierError:
+                pass
+        return result
+
+    monkeypatch.setattr(kb._indexer, "get_note_meta", synchronized_get_meta)
+    start = threading.Barrier(2)
+    results: list[bool] = []
+
+    def move(path: str, target: str) -> None:
+        start.wait()
+        results.append(kb.move_to_topic(path, target))
+
+    first = threading.Thread(target=move, args=(left, right))
+    second = threading.Thread(target=move, args=(right, left))
+    first.start()
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert sorted(results) == [False, True]
+    left_parent = original_get_meta(left)["parent_path"]
+    right_parent = original_get_meta(right)["parent_path"]
+    assert not (left_parent == right and right_parent == left)
+
+
 def test_graph_position_write_is_read_for_the_current_user(
     graph_api_client: TestClient,
 ) -> None:
@@ -360,6 +657,93 @@ def test_graph_position_rejects_an_unknown_node(graph_api_client: TestClient) ->
 
     assert response.status_code == 404
     assert graph_api_client.get("/api/knowledge/graph").json()["positions"] == {}
+
+
+def test_graph_position_converts_an_integrity_race_to_not_found(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A node deletion race must return 404 instead of leaking an integrity error."""
+    path = _create_note(graph_api_client, "Position race")
+    storage = graph_api_client.app.state.mycelos.storage
+    original_execute = storage.execute
+
+    def fail_position_insert(sql: str, params: tuple = ()):
+        if "INSERT INTO knowledge_graph_positions" in sql:
+            raise sqlite3.IntegrityError("FOREIGN KEY constraint failed")
+        return original_execute(sql, params)
+
+    monkeypatch.setattr(storage, "execute", fail_position_insert)
+
+    response = graph_api_client.put(
+        f"/api/knowledge/graph/positions/{path}", json={"x": 20, "y": 40}
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"error": "not_found", "path": path}
+
+
+def test_graph_position_integrity_race_rolls_back_the_sqlite_transaction(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected position statement must not leave SQLite in a transaction."""
+    path = _create_note(graph_api_client, "Position transaction race")
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    storage = graph_api_client.app.state.mycelos.storage
+    original_execute = storage.execute
+
+    def fail_with_real_integrity_error(sql: str, params: tuple = ()):
+        if "INSERT INTO knowledge_graph_positions" in sql:
+            return original_execute(
+                """INSERT INTO knowledge_graph_positions
+                       (user_id, note_path, x, y)
+                       VALUES (NULL, 'notes/race', 1, 2)"""
+            )
+        return original_execute(sql, params)
+
+    monkeypatch.setattr(storage, "execute", fail_with_real_integrity_error)
+
+    assert kb.store_graph_position("default", path, 20, 40) is False
+    assert storage._get_connection().in_transaction is False
+
+
+def test_graph_position_and_note_delete_cannot_leave_an_orphan(
+    graph_api_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The existence check and position insert must share one write transaction."""
+    path = _create_note(graph_api_client, "Position delete race")
+    kb = graph_api_client.app.state.mycelos.knowledge_base
+    storage = graph_api_client.app.state.mycelos.storage
+    original_get_meta = kb._indexer.get_note_meta
+    checked = threading.Event()
+    deletion_finished = threading.Event()
+    intercepted = False
+
+    def pause_after_check(note_path: str):
+        nonlocal intercepted
+        result = original_get_meta(note_path)
+        if note_path == path and not intercepted:
+            intercepted = True
+            checked.set()
+            deletion_finished.wait(timeout=0.5)
+        return result
+
+    def delete_note() -> None:
+        assert checked.wait(timeout=5)
+        storage.execute("DELETE FROM knowledge_notes WHERE path = ?", (path,))
+        deletion_finished.set()
+
+    monkeypatch.setattr(kb._indexer, "get_note_meta", pause_after_check)
+    delete_thread = threading.Thread(target=delete_note)
+    delete_thread.start()
+
+    kb.store_graph_position("default", path, 20, 40)
+    delete_thread.join(timeout=5)
+
+    assert not delete_thread.is_alive()
+    assert storage.fetchone(
+        "SELECT note_path FROM knowledge_graph_positions WHERE note_path = ?",
+        (path,),
+    ) is None
 
 
 def test_graph_position_rejects_invalid_json(graph_api_client: TestClient) -> None:

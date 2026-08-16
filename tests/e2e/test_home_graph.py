@@ -43,28 +43,67 @@ def _mock_graph_home(
     page: Page,
     *,
     graph: dict[str, Any] | None = None,
+    graph_responses: list[tuple[int, dict[str, Any]]] | None = None,
     search_results: list[dict[str, Any]] | None = None,
     position_status: int = 200,
     parent_status: int = 200,
     defer_parent_response: bool = False,
+    summary: dict[str, Any] | None = None,
+    summary_responses: list[tuple[int, dict[str, Any]]] | None = None,
 ) -> dict[str, list[Any]]:
     calls: dict[str, list[Any]] = {
+        "graph": [],
+        "summary": [],
         "positions": [],
         "parents": [],
+        "writes": [],
+        "kept": [],
         "queries": [],
         "pending_parents": [],
     }
     graph_payload = GRAPH if graph is None else graph
     results = search_results or []
+    summary_payload = (
+        {"imports_today": 0, "sources_by_topic": {}}
+        if summary is None
+        else summary
+    )
 
-    page.route("**/api/knowledge/graph", lambda route: _json(route, graph_payload))
+    def graph_route(route: Route) -> None:
+        calls["graph"].append(route.request.url)
+        if graph_responses:
+            index = min(len(calls["graph"]) - 1, len(graph_responses) - 1)
+            status, payload = graph_responses[index]
+            _json(route, payload, status=status)
+            return
+        _json(route, graph_payload)
+
+    page.route("**/api/knowledge/graph", graph_route)
     page.route("**/api/inbox/count", lambda route: _json(route, {"count": 0}))
     page.route("**/api/inbox/placements**", lambda route: _json(route, {"placements": []}))
     page.route("**/api/inbox", lambda route: _json(route, {"entries": []}))
     page.route("**/api/health", lambda route: _json(route, {}))
 
+    def summary_route(route: Route) -> None:
+        calls["summary"].append(route.request.url)
+        if summary_responses:
+            index = min(len(calls["summary"]) - 1, len(summary_responses) - 1)
+            status, payload = summary_responses[index]
+            _json(route, payload, status=status)
+            return
+        _json(route, summary_payload)
+
+    page.route("**/api/knowledge/home-summary", summary_route)
+
     def position_route(route: Route) -> None:
         calls["positions"].append(route.request.post_data_json)
+        calls["writes"].append(
+            {
+                "kind": "position",
+                "path": urlparse(route.request.url).path,
+                "body": route.request.post_data_json,
+            }
+        )
         _json(route, {"ok": position_status == 200}, status=position_status)
 
     page.route("**/api/knowledge/graph/positions/**", position_route)
@@ -73,10 +112,29 @@ def _mock_graph_home(
         request = route.request
         if request.method == "PUT":
             calls["parents"].append(request.post_data_json)
+            calls["writes"].append(
+                {
+                    "kind": "parent",
+                    "path": urlparse(request.url).path,
+                    "body": request.post_data_json,
+                }
+            )
             if defer_parent_response:
                 calls["pending_parents"].append(route)
                 return
             _json(route, {"ok": parent_status == 200}, status=parent_status)
+            return
+        if request.method == "POST":
+            calls["kept"].append(request.post_data_json)
+            _json(
+                route,
+                {
+                    "path": "notes/kept-from-home",
+                    "parent_path": "notes",
+                    "type": "note",
+                    "organizer_state": "pending",
+                },
+            )
             return
         query = parse_qs(urlparse(request.url).query).get("query", [""])[0]
         calls["queries"].append(query)
@@ -136,6 +194,69 @@ def test_first_desktop_visit_defaults_to_graph(page: Page, base_url: str) -> Non
     )
 
 
+def test_initial_graph_failure_shows_retry_instead_of_the_empty_state(
+    page: Page, base_url: str
+) -> None:
+    _mock_graph_home(
+        page,
+        graph_responses=[(500, {"error": "graph unavailable"})],
+    )
+    _open_graph(page, base_url)
+
+    error = page.locator(".home-graph-load-error")
+    expect(error).to_be_visible(timeout=2000)
+    expect(error).to_contain_text("could not load")
+    expect(error.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+    expect(page.locator(".home-graph-empty")).to_be_hidden()
+
+
+def test_graph_retry_loads_data_after_an_initial_failure(
+    page: Page, base_url: str
+) -> None:
+    _mock_graph_home(
+        page,
+        graph_responses=[
+            (500, {"error": "graph unavailable"}),
+            (200, GRAPH),
+        ],
+    )
+    _open_graph(page, base_url)
+
+    error = page.locator(".home-graph-load-error")
+    expect(error).to_be_visible(timeout=2000)
+    error.get_by_role("button", name="Retry", exact=True).click()
+
+    expect(_node(page, "topics/work")).to_be_visible(timeout=2000)
+    expect(error).to_be_hidden()
+
+
+def test_graph_refresh_failure_keeps_the_last_usable_graph(
+    page: Page, base_url: str
+) -> None:
+    _mock_graph_home(
+        page,
+        graph_responses=[
+            (200, GRAPH),
+            (500, {"error": "graph refresh unavailable"}),
+        ],
+    )
+    _open_graph(page, base_url)
+    expect(_node(page, "topics/work")).to_be_visible()
+
+    omnibox = page.locator(".home-omnibox input")
+    omnibox.fill("Keep the loaded graph")
+    omnibox.press("Shift+Enter")
+    expect(page.locator(".home-toast")).to_contain_text("Kept", timeout=3000)
+
+    expect(_node(page, "topics/work")).to_be_visible()
+    expect(page.locator(".home-graph-load-error")).to_be_visible(timeout=2000)
+    expect(page.locator(".home-graph-empty")).to_be_hidden()
+
+    work_button = _node(page, "topics/work").locator(".home-graph-node-main")
+    work_button.click()
+    expect(work_button).to_have_attribute("aria-pressed", "true")
+
+
 def test_stored_mode_wins_on_a_later_desktop_visit(page: Page, base_url: str) -> None:
     _mock_graph_home(page)
     _open_graph(page, base_url, stored_mode="tree")
@@ -168,6 +289,33 @@ def test_graph_starts_with_topic_nodes_only(page: Page, base_url: str) -> None:
     expect(_node(page, "topics/work").locator(".home-graph-expand")).to_have_attribute(
         "aria-label", "Expand Work"
     )
+
+
+def test_notes_without_any_topic_show_a_calm_explanation(
+    page: Page, base_url: str
+) -> None:
+    _mock_graph_home(
+        page,
+        graph={
+            "nodes": [
+                {
+                    "id": "notes/unfiled",
+                    "title": "Unfiled note",
+                    "type": "note",
+                    "status": "active",
+                    "parent_path": "notes",
+                }
+            ],
+            "edges": [],
+            "positions": {},
+            "stats": {"notes": 1, "links": 0},
+        },
+    )
+    _open_graph(page, base_url)
+
+    explanation = page.locator(".home-graph-no-topics")
+    expect(explanation).to_be_visible(timeout=2000)
+    expect(explanation).to_contain_text(re.compile("topic", re.IGNORECASE))
 
 
 def test_topic_children_load_in_batches_of_fifty(page: Page, base_url: str) -> None:
@@ -223,7 +371,39 @@ def test_search_adds_matches_and_topic_ancestors(page: Page, base_url: str) -> N
     expect(_node(page, "topics/work")).to_be_visible()
     expect(_node(page, "notes/beta")).to_have_class(re.compile(r"\bis-match\b"))
     expect(_node(page, "topics/work")).not_to_have_class(re.compile(r"\bis-dimmed\b"))
-    expect(_node(page, "topics/personal")).to_have_class(re.compile(r"\bis-dimmed\b"))
+    personal = _node(page, "topics/personal")
+    expect(personal).to_have_class(re.compile(r"\bis-dimmed\b"))
+
+    personal_button = personal.locator(".home-graph-node-main")
+    personal_button.focus()
+    expect(personal_button).to_be_focused()
+    styles = personal.evaluate(
+        """
+        element => {
+          const button = element.querySelector('.home-graph-node-main');
+          const nodeStyle = getComputedStyle(element);
+          const buttonStyle = getComputedStyle(button);
+          return {
+            opacity: nodeStyle.opacity,
+            buttonOpacity: buttonStyle.opacity,
+            textOpacity: getComputedStyle(button.querySelector('.home-graph-node-title')).opacity,
+            outlineStyle: buttonStyle.outlineStyle,
+            outlineWidth: buttonStyle.outlineWidth,
+          };
+        }
+        """
+    )
+    assert styles["opacity"] == "1"
+    assert styles["buttonOpacity"] == "1"
+    assert styles["textOpacity"] == "1"
+    assert styles["outlineStyle"] == "solid"
+    assert float(styles["outlineWidth"].removesuffix("px")) >= 2
+
+    personal_button.click()
+    selected_shadow = personal_button.evaluate(
+        "element => getComputedStyle(element).boxShadow"
+    )
+    assert selected_shadow != "none"
 
 
 def test_search_offers_open_for_a_result_outside_the_graph(
@@ -245,6 +425,9 @@ def test_search_offers_open_for_a_result_outside_the_graph(
     expect(page.get_by_role("link", name="Open Outside topic")).to_have_attribute(
         "href", "/pages/knowledge.html?topic=topics%2Foutside"
     )
+    limit_note = page.locator(".home-graph-search-limit")
+    expect(limit_note).to_be_visible()
+    expect(limit_note).to_contain_text("5,000")
 
 
 def test_selection_shows_relations_and_escape_clears_it_before_search(
@@ -334,6 +517,76 @@ def test_failed_position_save_restores_the_prior_position(
     assert len(calls["positions"]) == 1
 
 
+def test_topic_drop_saves_both_parent_and_dropped_position(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    alpha = _node(page, "notes/alpha")
+    target = _node(page, "topics/projects").bounding_box()
+    assert target is not None
+
+    _drag(
+        page,
+        alpha,
+        {
+            "x": target["x"] + target["width"] / 2,
+            "y": target["y"] + target["height"] / 2,
+        },
+    )
+    expect(page.locator(".home-graph-notice")).to_be_visible()
+    dropped = {
+        "x": float(alpha.get_attribute("data-x")),
+        "y": float(alpha.get_attribute("data-y")),
+    }
+
+    assert calls["parents"] == [{"parent_path": "topics/projects"}]
+    assert calls["positions"] == [dropped]
+    assert calls["writes"] == [
+        {
+            "kind": "parent",
+            "path": "/api/knowledge/notes/notes/alpha",
+            "body": {"parent_path": "topics/projects"},
+        },
+        {
+            "kind": "position",
+            "path": "/api/knowledge/graph/positions/notes/alpha",
+            "body": dropped,
+        },
+    ]
+
+
+def test_topic_drop_position_failure_restores_parent_and_position(
+    page: Page, base_url: str
+) -> None:
+    calls = _mock_graph_home(page, position_status=500)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    alpha = _node(page, "notes/alpha")
+    target = _node(page, "topics/projects").bounding_box()
+    assert target is not None
+
+    _drag(
+        page,
+        alpha,
+        {
+            "x": target["x"] + target["width"] / 2,
+            "y": target["y"] + target["height"] / 2,
+        },
+    )
+
+    expect(page.locator(".home-graph-notice.is-error")).to_be_visible(timeout=2000)
+    expect(alpha).to_have_attribute("data-x", "560")
+    expect(alpha).to_have_attribute("data-y", "260")
+    expect(page.get_by_role("button", name="Undo move")).to_be_hidden()
+    assert calls["parents"] == [
+        {"parent_path": "topics/projects"},
+        {"parent_path": "topics/work"},
+    ]
+    assert len(calls["positions"]) == 1
+
+
 def test_topic_drop_changes_parent_and_undo_restores_it(
     page: Page, base_url: str
 ) -> None:
@@ -366,6 +619,34 @@ def test_topic_drop_changes_parent_and_undo_restores_it(
         {"parent_path": "topics/projects"},
         {"parent_path": "topics/work"},
     ]
+
+
+def test_unrelated_graph_notice_clears_the_old_undo(
+    page: Page, base_url: str
+) -> None:
+    _mock_graph_home(page)
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+    alpha = _node(page, "notes/alpha")
+    target = _node(page, "topics/projects").bounding_box()
+    assert target is not None
+
+    _drag(
+        page,
+        alpha,
+        {
+            "x": target["x"] + target["width"] / 2,
+            "y": target["y"] + target["height"] / 2,
+        },
+    )
+    undo = page.get_by_role("button", name="Undo move")
+    expect(undo).to_be_visible()
+
+    alpha.locator(".home-graph-node-main").focus()
+    alpha.locator(".home-graph-node-main").press("Alt+ArrowRight")
+
+    expect(page.locator(".home-graph-notice")).to_contain_text("Position saved")
+    expect(undo).to_be_hidden()
 
 
 def test_root_note_move_undo_uses_its_stored_system_parent(
@@ -714,6 +995,8 @@ def test_large_graph_does_not_create_all_node_buttons(
 
     expect(page.locator(".home-graph-node-main")).to_have_count(50)
     expect(page.locator(".home-graph-more")).to_contain_text("4950")
+    assert page.locator(".home-main *").count() < 1000
+    expect(page.locator(".home-tree-row")).to_have_count(0)
 
 
 def test_graph_honors_reduced_motion(page: Page, base_url: str) -> None:

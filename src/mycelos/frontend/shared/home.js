@@ -26,6 +26,8 @@
       mode: window.homeGraphInitialMode(),
       expanded: safeJson(localStorage.getItem(EXPANDED_KEY), {}),
       loading: true,
+      graphLoading: false,
+      graphLoadError: '',
       searching: false,
       barFocused: false,
       barError: '',
@@ -35,10 +37,21 @@
       nodeById: {},
       parentById: {},
       topicChildren: {},
+      directNoteCounts: {},
       topicCounts: {},
       placements: {},
-      today: { loaded: false, inboxCount: 0, dueEntries: [] },
+      sourcesByTopic: {},
+      today: {
+        loaded: false,
+        loading: true,
+        error: '',
+        inboxCount: 0,
+        dueEntries: [],
+        importsToday: 0,
+      },
+      rootTopicsShown: 200,
       rootNotesShown: 200,
+      answerSequence: 0,
       answer: {
         open: false,
         thinking: false,
@@ -57,15 +70,18 @@
 
       async loadHome(showLoading = true) {
         if (showLoading) this.loading = true;
-        const [graphResult, inboxCountResult, inboxResult, placementsResult] = await Promise.allSettled([
-          MycelosAPI.get('/api/knowledge/graph'),
-          MycelosAPI.get('/api/inbox/count'),
-          MycelosAPI.get('/api/inbox'),
-          MycelosAPI.get('/api/inbox/placements?limit=500'),
+        await Promise.allSettled([
+          this.loadGraph(),
+          this.loadToday(),
+          this.loadPlacements(),
         ]);
+        if (showLoading) this.loading = false;
+      },
 
-        if (graphResult.status === 'fulfilled') {
-          const data = graphResult.value || {};
+      async loadGraph() {
+        this.graphLoading = true;
+        try {
+          const data = await MycelosAPI.get('/api/knowledge/graph') || {};
           this.graph = {
             nodes: Array.isArray(data.nodes) ? data.nodes : [],
             edges: Array.isArray(data.edges) ? data.edges : [],
@@ -74,51 +90,104 @@
           };
           this.buildTreeIndex();
           this.setupHomeGraph(data);
-        } else {
-          this.barError = t('home.load_error');
+          this.graphLoadError = '';
+        } catch (_error) {
+          this.graphLoadError = t('home.load_error');
+        } finally {
+          this.graphLoading = false;
         }
+      },
 
-        if (inboxCountResult.status === 'fulfilled') {
-          this.today.inboxCount = Number(inboxCountResult.value?.count || 0);
+      async loadToday() {
+        this.today.loading = true;
+        this.today.error = '';
+        try {
+          const [inboxCountResult, inboxResult, summaryResult] = await Promise.allSettled([
+            MycelosAPI.get('/api/inbox/count'),
+            MycelosAPI.get('/api/inbox'),
+            MycelosAPI.get('/api/knowledge/home-summary'),
+          ]);
+          if (inboxCountResult.status === 'fulfilled') {
+            this.today.inboxCount = Number(inboxCountResult.value?.count || 0);
+          }
+          if (inboxResult.status === 'fulfilled') {
+            const entries = Array.isArray(inboxResult.value?.entries)
+              ? inboxResult.value.entries
+              : [];
+            this.today.dueEntries = entries.filter((entry) =>
+              entry && (entry.kind === 'reminder' || entry.kind === 'overdue_task')
+            );
+          }
+          if (summaryResult.status === 'fulfilled') {
+            const summary = summaryResult.value;
+            this.today.importsToday = Number(summary?.imports_today || 0);
+            this.sourcesByTopic = summary?.sources_by_topic
+              && typeof summary.sources_by_topic === 'object'
+              && !Array.isArray(summary.sources_by_topic)
+              ? { ...summary.sources_by_topic }
+              : {};
+          }
+          if ([inboxCountResult, inboxResult, summaryResult].some(
+            (result) => result.status === 'rejected'
+          )) {
+            this.today.error = t('home.today_error');
+          }
+        } catch (_error) {
+          this.today.error = t('home.today_error');
+        } finally {
+          this.today.loaded = true;
+          this.today.loading = false;
         }
+      },
 
-        if (inboxResult.status === 'fulfilled') {
-          const entries = Array.isArray(inboxResult.value?.entries) ? inboxResult.value.entries : [];
-          this.today.dueEntries = entries.filter((entry) =>
-            entry && (entry.kind === 'reminder' || entry.kind === 'overdue_task')
-          );
-        }
-
-        if (placementsResult.status === 'fulfilled') {
-          const rows = Array.isArray(placementsResult.value?.placements) ? placementsResult.value.placements : [];
+      async loadPlacements() {
+        try {
+          const result = await MycelosAPI.get('/api/inbox/placements?limit=500');
+          const rows = Array.isArray(result?.placements) ? result.placements : [];
           this.placements = rows.reduce((acc, row) => {
             if (row && row.path) acc[row.path] = true;
             return acc;
           }, {});
+        } catch (_error) {
+          // Keep the last usable placement markers.
         }
+      },
 
-        this.today.loaded = true;
-        if (showLoading) this.loading = false;
+      retryGraph() {
+        return this.loadGraph();
+      },
+
+      retryToday() {
+        return this.loadToday();
       },
 
       buildTreeIndex() {
         this.nodeById = {};
         this.parentById = {};
         this.topicChildren = {};
+        this.directNoteCounts = {};
 
         for (const node of this.graph.nodes) {
           if (!node || !node.id) continue;
           this.nodeById[node.id] = node;
-          if (node.type === 'topic') this.topicChildren[node.id] = [];
+          if (node.parent_path) this.parentById[node.id] = node.parent_path;
+          if (node.type === 'topic') {
+            this.topicChildren[node.id] = [];
+            this.directNoteCounts[node.id] = 0;
+          }
         }
 
         for (const edge of this.graph.edges) {
           if (!edge || edge.kind !== 'parent' || !edge.source || !edge.target) continue;
           this.parentById[edge.source] = edge.target;
-          if (this.nodeById[edge.source]?.type === 'topic' && this.nodeById[edge.target]?.type === 'topic') {
-            if (!this.topicChildren[edge.target]) this.topicChildren[edge.target] = [];
-            this.topicChildren[edge.target].push(edge.source);
-          }
+        }
+
+        for (const node of this.graph.nodes) {
+          if (!node?.id) continue;
+          const parent = this.parentById[node.id];
+          if (this.nodeById[parent]?.type !== 'topic') continue;
+          if (node.type === 'topic') this.topicChildren[parent].push(node.id);
+          else this.directNoteCounts[parent] += 1;
         }
 
         for (const id of Object.keys(this.topicChildren)) {
@@ -127,25 +196,24 @@
           );
         }
 
-        const memo = {};
-        const countNotes = (topicId, visiting) => {
-          if (memo[topicId] !== undefined) return memo[topicId];
-          if (visiting.has(topicId)) return 0;
-          visiting.add(topicId);
-          let count = 0;
-          for (const node of this.graph.nodes) {
-            if (this.parentById[node.id] !== topicId) continue;
-            if (node.type === 'topic') count += countNotes(node.id, visiting);
-            else count += 1;
-          }
-          visiting.delete(topicId);
-          memo[topicId] = count;
-          return count;
-        };
-
         this.topicCounts = {};
+        const remainingChildren = {};
+        const parentTopic = {};
+        const ready = [];
         for (const id of Object.keys(this.topicChildren)) {
-          this.topicCounts[id] = countNotes(id, new Set());
+          this.topicCounts[id] = this.directNoteCounts[id] || 0;
+          remainingChildren[id] = this.topicChildren[id].length;
+          const parent = this.parentById[id];
+          if (this.nodeById[parent]?.type === 'topic') parentTopic[id] = parent;
+          if (remainingChildren[id] === 0) ready.push(id);
+        }
+        while (ready.length) {
+          const id = ready.pop();
+          const parent = parentTopic[id];
+          if (!parent) continue;
+          this.topicCounts[parent] += this.topicCounts[id];
+          remainingChildren[parent] -= 1;
+          if (remainingChildren[parent] === 0) ready.push(parent);
         }
       },
 
@@ -177,6 +245,8 @@
             depth,
             count: this.topicCounts[node.id] || 0,
             hasChildren: children.length > 0,
+            hasSource: Array.isArray(this.sourcesByTopic[node.id])
+              && this.sourcesByTopic[node.id].length > 0,
             uncertain: false,
           });
           if (this.expanded[node.id]) {
@@ -185,7 +255,9 @@
           visiting.delete(node.id);
         };
 
-        for (const root of this.rootTopics()) walk(root, 0, new Set());
+        for (const root of this.rootTopics().slice(0, this.rootTopicsShown)) {
+          walk(root, 0, new Set());
+        }
 
         const unfiled = this.rootNotes();
         if (unfiled.length) {
@@ -253,6 +325,8 @@
               depth,
               count: this.topicCounts[topic.id] || 0,
               hasChildren: false,
+              hasSource: Array.isArray(this.sourcesByTopic[topic.id])
+                && this.sourcesByTopic[topic.id].length > 0,
               uncertain: false,
             });
           });
@@ -268,6 +342,9 @@
             depth: chain.length,
             count: 0,
             hasChildren: false,
+            hasSource: node.type === 'topic'
+              && Array.isArray(this.sourcesByTopic[node.id])
+              && this.sourcesByTopic[node.id].length > 0,
             uncertain: !!this.placements[node.id],
           });
         }
@@ -321,7 +398,9 @@
       async askQuery() {
         const question = this.query.trim();
         if (!question || this.answer.thinking) return;
+        const sequence = ++this.answerSequence;
         await this.ensureSearchResults(question);
+        if (sequence !== this.answerSequence) return;
 
         this.answer = {
           open: true,
@@ -338,6 +417,7 @@
 
         try {
           await MycelosAPI.stream('/api/chat', { message: question }, (type, data) => {
+            if (sequence !== this.answerSequence || !this.answer.open) return;
             if (type === 'session' && data?.session_id) {
               this.answer.sessionId = data.session_id;
               return;
@@ -354,9 +434,13 @@
             if (type === 'done') this.answer.thinking = false;
           });
         } catch (_error) {
-          this.answer.error = t('home.ask_error');
+          if (sequence === this.answerSequence && this.answer.open) {
+            this.answer.error = t('home.ask_error');
+          }
         } finally {
-          this.answer.thinking = false;
+          if (sequence === this.answerSequence && this.answer.open) {
+            this.answer.thinking = false;
+          }
         }
       },
 
@@ -459,6 +543,7 @@
       },
 
       closeAnswer() {
+        this.answerSequence += 1;
         this.answer.open = false;
         this.answer.thinking = false;
       },
@@ -505,6 +590,18 @@
         return Math.max(0, this.rootNotes().length - this.rootNotesShown);
       },
 
+      rootTopicsRemaining() {
+        return Math.max(0, this.rootTopics().length - this.rootTopicsShown);
+      },
+
+      moreRootTopics() {
+        this.rootTopicsShown += 200;
+      },
+
+      moreRootTopicsLabel() {
+        return t('home.more_topics').replace('{count}', String(this.rootTopicsRemaining()));
+      },
+
       moreRootNotes() {
         this.rootNotesShown += 200;
       },
@@ -515,6 +612,10 @@
 
       inboxLabel() {
         return t('home.inbox_count').replace('{count}', String(this.today.inboxCount));
+      },
+
+      importsLabel() {
+        return t('home.imports_today').replace('{count}', String(this.today.importsToday));
       },
 
       dueLabel() {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -586,7 +587,11 @@ class TestRootRedirect:
         if resp.status_code in (302, 307):
             assert "/pages/dashboard.html" in resp.headers.get("location", "")
         else:
-            assert "/pages/dashboard.html" in resp.text
+            assert re.search(
+                r'<meta\s+http-equiv=["\']refresh["\']\s+content=["\']0;url=/pages/dashboard\.html["\']\s*/?>',
+                resp.text,
+                re.IGNORECASE,
+            )
 
 
 # --- Workflow run sidebar endpoints ---
