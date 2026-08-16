@@ -843,6 +843,8 @@ class KnowledgeBase:
             return False
         if target.get("type") != "topic" or target.get("status") != "active":
             return False
+        if not self._safe_path(topic_path).exists():
+            return False
 
         current_path = topic_path
         visited: set[str] = set()

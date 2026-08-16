@@ -119,6 +119,23 @@ def test_note_move_rejects_an_inactive_topic_without_changes(
 
 
 @pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_rejects_a_topic_without_markdown_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """A target topic must keep its Markdown file before it can receive a note."""
+    source = _create_note(graph_api_client, "Source")
+    target = _create_topic(graph_api_client, "Target without Markdown")
+    graph_api_client.app.state.mycelos.knowledge_base._safe_path(target).unlink()
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, target)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
 def test_topic_move_rejects_itself_without_changes(
     graph_api_client: TestClient, route: str
 ) -> None:
