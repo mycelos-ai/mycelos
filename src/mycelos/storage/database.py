@@ -241,7 +241,7 @@ class SQLiteStorage:
         self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
-                user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_id     TEXT NOT NULL,
                 note_path   TEXT NOT NULL,
                 x           REAL NOT NULL,
                 y           REAL NOT NULL,
@@ -264,6 +264,65 @@ class SQLiteStorage:
             END;
             """
         )
+
+        # The request user can come from an authenticated gateway session
+        # before that user has a local users row. Rebuild the first version
+        # of this table, which had a users foreign key, without that key.
+        foreign_keys = self._conn.execute(
+            "PRAGMA foreign_key_list(knowledge_graph_positions)"
+        ).fetchall()
+        if foreign_keys:
+            self._conn.execute("BEGIN")
+            try:
+                self._conn.execute(
+                    "DROP TRIGGER IF EXISTS knowledge_graph_positions_follow_note_rename"
+                )
+                self._conn.execute(
+                    "DROP TRIGGER IF EXISTS knowledge_graph_positions_remove_deleted_note"
+                )
+                self._conn.execute(
+                    """CREATE TABLE knowledge_graph_positions_new (
+                           user_id     TEXT NOT NULL,
+                           note_path   TEXT NOT NULL,
+                           x           REAL NOT NULL,
+                           y           REAL NOT NULL,
+                           updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                           PRIMARY KEY (user_id, note_path)
+                       )"""
+                )
+                self._conn.execute(
+                    """INSERT INTO knowledge_graph_positions_new
+                           (user_id, note_path, x, y, updated_at)
+                       SELECT user_id, note_path, x, y, updated_at
+                       FROM knowledge_graph_positions"""
+                )
+                self._conn.execute("DROP TABLE knowledge_graph_positions")
+                self._conn.execute(
+                    "ALTER TABLE knowledge_graph_positions_new RENAME TO knowledge_graph_positions"
+                )
+                self._conn.execute(
+                    "CREATE INDEX idx_kgp_note_path ON knowledge_graph_positions(note_path)"
+                )
+                self._conn.execute(
+                    """CREATE TRIGGER knowledge_graph_positions_follow_note_rename
+                       AFTER UPDATE OF path ON knowledge_notes
+                       BEGIN
+                           UPDATE knowledge_graph_positions
+                           SET note_path = NEW.path
+                           WHERE note_path = OLD.path;
+                       END"""
+                )
+                self._conn.execute(
+                    """CREATE TRIGGER knowledge_graph_positions_remove_deleted_note
+                       AFTER DELETE ON knowledge_notes
+                       BEGIN
+                           DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+                       END"""
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
         self._conn.commit()
 
     def _migrate_workflow_runs_to_routine_runs(self) -> None:

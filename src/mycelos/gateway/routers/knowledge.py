@@ -251,7 +251,10 @@ async def knowledge_graph(request: Request) -> dict[str, Any]:
 @router.put("/api/knowledge/graph/positions/{path:path}")
 async def knowledge_update_graph_position(path: str, request: Request) -> dict[str, Any]:
     """Store the current user's finite graph position for a known node."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
     if not isinstance(body, dict):
         return JSONResponse({"error": "x and y are required"}, status_code=422)
 

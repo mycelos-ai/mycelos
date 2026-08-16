@@ -424,7 +424,7 @@ CREATE INDEX IF NOT EXISTS idx_kn_path ON knowledge_notes(path);
 CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_notes(parent_path) WHERE parent_path IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
     note_path   TEXT NOT NULL,
     x           REAL NOT NULL,
     y           REAL NOT NULL,

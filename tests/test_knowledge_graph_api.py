@@ -31,7 +31,7 @@ def graph_api_client() -> TestClient:
             host="0.0.0.0",
             allow_insecure_bind=True,
         )
-        yield TestClient(fastapi_app)
+        yield TestClient(fastapi_app, raise_server_exceptions=False)
 
 
 def _create_note(client: TestClient, title: str = "Graph node") -> str:
@@ -43,25 +43,35 @@ def _create_note(client: TestClient, title: str = "Graph node") -> str:
 def test_graph_position_write_is_read_for_the_current_user(
     graph_api_client: TestClient,
 ) -> None:
-    """A moved node must return at its saved position to its owner."""
+    """Each resolved user must read only the position that user saved."""
     path = _create_note(graph_api_client)
+    storage = graph_api_client.app.state.mycelos.storage
+    storage.execute("DELETE FROM users WHERE id=?", ("alice",))
 
-    response = graph_api_client.put(
+    default_response = graph_api_client.put(
         f"/api/knowledge/graph/positions/{path}",
         json={"x": 120.5, "y": -42},
     )
-    assert response.status_code == 200, response.text
-    assert response.json() == {"path": path, "x": 120.5, "y": -42.0}
+    assert default_response.status_code == 200, default_response.text
 
-    graph = graph_api_client.get("/api/knowledge/graph")
-    assert graph.status_code == 200, graph.text
-    assert graph.json()["positions"] == {path: {"x": 120.5, "y": -42.0}}
+    alice_response = graph_api_client.put(
+        f"/api/knowledge/graph/positions/{path}",
+        json={"x": 15, "y": 30},
+        headers={"X-User-Id": "alice"},
+    )
+    assert alice_response.status_code == 200, alice_response.text
+    assert alice_response.json() == {"path": path, "x": 15.0, "y": 30.0}
 
-    other_user = graph_api_client.get(
+    default_graph = graph_api_client.get("/api/knowledge/graph")
+    assert default_graph.status_code == 200, default_graph.text
+    assert default_graph.json()["positions"] == {path: {"x": 120.5, "y": -42.0}}
+
+    alice_graph = graph_api_client.get(
         "/api/knowledge/graph", headers={"X-User-Id": "alice"}
     )
-    assert other_user.status_code == 200, other_user.text
-    assert other_user.json()["positions"] == {}
+    assert alice_graph.status_code == 200, alice_graph.text
+    assert alice_graph.json()["positions"] == {path: {"x": 15.0, "y": 30.0}}
+    assert storage.fetchone("SELECT id FROM users WHERE id=?", ("alice",)) is None
 
 
 @pytest.mark.parametrize(
@@ -111,6 +121,20 @@ def test_graph_position_rejects_an_unknown_node(graph_api_client: TestClient) ->
     assert graph_api_client.get("/api/knowledge/graph").json()["positions"] == {}
 
 
+def test_graph_position_rejects_invalid_json(graph_api_client: TestClient) -> None:
+    """A malformed position request must return a client error, not a server error."""
+    path = _create_note(graph_api_client)
+
+    response = graph_api_client.put(
+        f"/api/knowledge/graph/positions/{path}",
+        content='{"x":',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    assert graph_api_client.get("/api/knowledge/graph").json()["positions"] == {}
+
+
 def test_graph_position_follows_a_rename_and_disappears_on_delete(
     graph_api_client: TestClient,
 ) -> None:
@@ -131,17 +155,29 @@ def test_existing_database_adds_the_position_table(tmp_path: Path) -> None:
     db_path = tmp_path / "mycelos.db"
     SQLiteStorage(db_path).initialize()
 
-    connection = SQLiteStorage(db_path)
-    connection.initialize()
-    connection.execute("DROP TABLE knowledge_graph_positions")
-    connection.close()
+    old_database = SQLiteStorage(db_path)
+    old_database.initialize()
+    old_database.execute("DROP TABLE knowledge_graph_positions")
+    old_database.execute(
+        """CREATE TABLE knowledge_graph_positions (
+               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               note_path TEXT NOT NULL,
+               x REAL NOT NULL,
+               y REAL NOT NULL,
+               updated_at TEXT NOT NULL,
+               PRIMARY KEY (user_id, note_path)
+           )"""
+    )
+    old_database.close()
 
     restored = SQLiteStorage(db_path)
     restored.initialize()
-    row = restored.fetchone(
+    table = restored.fetchone(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
         ("knowledge_graph_positions",),
     )
+    foreign_keys = restored.fetchall("PRAGMA foreign_key_list(knowledge_graph_positions)")
     restored.close()
 
-    assert row == {"name": "knowledge_graph_positions"}
+    assert table == {"name": "knowledge_graph_positions"}
+    assert foreign_keys == []
