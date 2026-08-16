@@ -1,3 +1,22 @@
+<div
+  class="brain-mobile-network-warning"
+  x-data="sidebarData()"
+  x-init="loadSidebar()"
+  x-show="security && security.network_exposed && !security.password_protected"
+  x-cloak
+>
+  <a
+    href="/pages/docs.html?doc=raspberry-pi-setup#network-access"
+    class="brain-network-warning"
+  >
+    <span class="material-symbols-outlined" aria-hidden="true">warning</span>
+    <span>
+      <strong x-text="t('sidebar.network_exposed')"></strong>
+      <small x-text="t('sidebar.network_exposed_hint')"></small>
+    </span>
+  </a>
+</div>
+
 <nav class="brain-mobile-nav md:hidden" :aria-label="t('sidebar.main_navigation')">
   <a
     href="/pages/dashboard.html"

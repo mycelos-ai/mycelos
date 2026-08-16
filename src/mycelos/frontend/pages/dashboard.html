@@ -183,7 +183,7 @@
           <button
             type="button"
             class="home-tree-more"
-            x-show="expanded.__unfiled__ && rootNotesRemaining() > 0"
+            x-show="!query.trim() && expanded.__unfiled__ && rootNotesRemaining() > 0"
             x-cloak
             @click="moreRootNotes()"
             x-text="moreRootNotesLabel()"

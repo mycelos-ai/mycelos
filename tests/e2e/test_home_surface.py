@@ -420,6 +420,30 @@ def test_root_notes_have_a_more_action_after_the_first_batch(
     expect(page.get_by_role("button", name="More (1 remaining)")).to_be_hidden()
 
 
+def test_root_note_more_action_hides_while_search_is_active(
+    page: Page, base_url: str
+) -> None:
+    root_notes = [
+        {"id": f"notes/root-{index}", "title": f"Root note {index}", "type": "note"}
+        for index in range(201)
+    ]
+    _mock_home(
+        page,
+        graph={"nodes": root_notes, "edges": [], "stats": {"notes": 201, "links": 0}},
+    )
+    _open_home(page, base_url)
+
+    page.locator(".home-tree-row").filter(has_text="Not filed yet").first.locator(
+        ".home-tree-toggle"
+    ).click()
+    more = page.get_by_role("button", name="More (1 remaining)")
+    expect(more).to_be_visible()
+
+    page.locator(".home-omnibox input").fill("muller")
+    expect(page.get_by_text("Müller Filing", exact=True)).to_be_visible(timeout=3000)
+    expect(more).to_be_hidden()
+
+
 def test_shell_warns_about_an_unprotected_network_service(
     page: Page, base_url: str
 ) -> None:
@@ -434,11 +458,34 @@ def test_shell_warns_about_an_unprotected_network_service(
     )
     _open_home(page, base_url)
 
-    warning = page.locator(".brain-network-warning")
+    warning = page.locator("aside.brain-sidebar .brain-network-warning")
     expect(warning).to_be_visible()
     expect(warning).to_contain_text("Network exposed")
     expect(warning).to_contain_text("No password set")
     expect(warning).to_have_attribute(
+        "href", "/pages/docs.html?doc=raspberry-pi-setup#network-access"
+    )
+
+
+def test_mobile_shell_warns_about_an_unprotected_network_service(
+    page: Page, base_url: str
+) -> None:
+    page.set_viewport_size({"width": 375, "height": 812})
+    _mock_home(
+        page,
+        health={
+            "security": {
+                "network_exposed": True,
+                "password_protected": False,
+            }
+        },
+    )
+    _open_home(page, base_url)
+
+    warning = page.locator(".brain-mobile-network-warning")
+    expect(warning).to_be_visible()
+    expect(warning).to_contain_text("Network exposed")
+    expect(warning.locator("a")).to_have_attribute(
         "href", "/pages/docs.html?doc=raspberry-pi-setup#network-access"
     )
 

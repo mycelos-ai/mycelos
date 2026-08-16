@@ -79,6 +79,22 @@ def test_sidebar_navigation(page: Page, base_url: str) -> None:
     )
 
 
+def test_inbox_uses_the_shared_network_warning_style(page: Page, base_url: str) -> None:
+    page.route(
+        "**/api/health",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"security":{"network_exposed":true,"password_protected":false}}',
+        ),
+    )
+    page.goto(f"{base_url}/pages/inbox.html", wait_until="networkidle")
+
+    warning = page.locator("aside.brain-sidebar .brain-network-warning")
+    expect(warning).to_be_visible()
+    expect(warning).to_have_css("display", "flex")
+
+
 def test_chat_welcome_screen(page: Page, base_url: str) -> None:
     """Chat page should show welcome message and suggested actions."""
     # Clear session storage to get fresh welcome screen
