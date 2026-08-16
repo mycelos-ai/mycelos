@@ -359,6 +359,54 @@ def test_topic_drop_changes_parent_and_undo_restores_it(
     ]
 
 
+def test_root_note_move_undo_uses_its_stored_system_parent(
+    page: Page, base_url: str
+) -> None:
+    root_graph = {
+        "nodes": [
+            {"id": "topics/work", "title": "Work", "type": "topic", "parent_path": ""},
+            {"id": "notes/root", "title": "Root note", "type": "note", "parent_path": "notes"},
+        ],
+        "edges": [],
+        "positions": {
+            "topics/work": {"x": 320, "y": 220},
+            "notes/root": {"x": 560, "y": 260},
+        },
+        "stats": {"notes": 2, "links": 0},
+    }
+    calls = _mock_graph_home(
+        page,
+        graph=root_graph,
+        search_results=[
+            {"path": "notes/root", "title": "Root note", "type": "note", "parent_path": "notes"}
+        ],
+    )
+    _open_graph(page, base_url)
+    page.locator(".home-omnibox input").fill("root")
+    root_note = _node(page, "notes/root")
+    expect(root_note).to_be_visible(timeout=3000)
+    work_box = _node(page, "topics/work").bounding_box()
+    assert work_box is not None
+
+    _drag(
+        page,
+        root_note,
+        {
+            "x": work_box["x"] + work_box["width"] / 2,
+            "y": work_box["y"] + work_box["height"] / 2,
+        },
+    )
+    expect(page.get_by_role("button", name="Undo move")).to_be_visible()
+    assert calls["parents"] == [{"parent_path": "topics/work"}]
+
+    page.get_by_role("button", name="Undo move").click()
+    expect(page.locator(".home-graph-notice")).to_contain_text("Move undone")
+    assert calls["parents"] == [
+        {"parent_path": "topics/work"},
+        {"parent_path": "notes"},
+    ]
+
+
 def test_failed_topic_drop_restores_the_parent_and_position(
     page: Page, base_url: str
 ) -> None:

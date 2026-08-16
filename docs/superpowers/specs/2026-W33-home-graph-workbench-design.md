@@ -89,7 +89,8 @@ The database adds `knowledge_graph_positions` with these fields:
 The pair of `user_id` and `note_path` is unique. The note path follows a rename and disappears
 with a deleted note. The current user owns each position.
 
-`GET /api/knowledge/graph` adds a top-level `positions` object. Existing clients can ignore it.
+`GET /api/knowledge/graph` adds a top-level `positions` object. Each node also includes its
+`parent_path`. Existing clients can ignore both additions.
 
 `PUT /api/knowledge/graph/positions/{path}` accepts `x` and `y`. The server accepts only finite
 numbers in the supported coordinate range. It returns 404 for an unknown node.
@@ -101,13 +102,14 @@ The browser stores only the view mode, open topics, pan, and zoom. It does not s
 The service accepts a parent change only when all conditions are true:
 
 - The source exists.
-- The target exists.
-- The target is an active topic.
+- The target exists and is an active topic, or it is the fixed `notes` or `tasks` system root.
 - The source and target differ.
 - A topic does not move below one of its descendants.
 
-The service checks the target path to the root with a visited set. It rejects a cycle and leaves
-the old parent unchanged. Both note update routes return an error for an invalid move.
+The two system roots are the only targets that do not need topic metadata or a Markdown file.
+The service rejects every other missing target. The service checks a topic target path to the root
+with a visited set. It rejects a cycle and leaves the old parent unchanged. Both note update routes
+return an error for an invalid move.
 
 ## 4a completion details
 
@@ -127,7 +129,8 @@ not replace it.
 
 Home keeps the last usable graph when a refresh fails. It shows a short retry message. A failed
 position save returns the node to its last stored position. A failed parent change restores the
-old parent and position. Undo repeats a normal validated parent change.
+old parent and position. Undo repeats a normal validated parent change. The node `parent_path`
+lets Undo restore a non-visible `notes` or `tasks` system parent.
 
 Home does not put note content in a log, an error message, or analytics.
 
@@ -169,4 +172,3 @@ Package 4b is complete when all checks pass:
 14. The four Package 4a gaps in this specification have regression tests.
 15. English and German contain the same new translation keys.
 16. The security, API, and existing page tests keep their baselines.
-

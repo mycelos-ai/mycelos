@@ -838,24 +838,28 @@ class KnowledgeBase:
         """Move a note to a different topic."""
         file_path = self._safe_path(path)
         source = self._indexer.get_note_meta(path)
-        target = self._indexer.get_note_meta(topic_path)
-        if not source or not target:
+        if not source:
             return False
-        if target.get("type") != "topic" or target.get("status") != "active":
-            return False
-        if not self._safe_path(topic_path).exists():
-            return False
+        system_root = topic_path in {"notes", "tasks"}
+        if not system_root:
+            target = self._indexer.get_note_meta(topic_path)
+            if not target:
+                return False
+            if target.get("type") != "topic" or target.get("status") != "active":
+                return False
+            if not self._safe_path(topic_path).exists():
+                return False
 
-        current_path = topic_path
-        visited: set[str] = set()
-        while current_path:
-            if current_path == path or current_path in visited:
-                return False
-            visited.add(current_path)
-            current = self._indexer.get_note_meta(current_path)
-            if not current:
-                return False
-            current_path = current.get("parent_path") or ""
+            current_path = topic_path
+            visited: set[str] = set()
+            while current_path:
+                if current_path == path or current_path in visited:
+                    return False
+                visited.add(current_path)
+                current = self._indexer.get_note_meta(current_path)
+                if not current:
+                    return False
+                current_path = current.get("parent_path") or ""
 
         if not file_path.exists():
             return False
@@ -1267,6 +1271,7 @@ class KnowledgeBase:
                 "type": n["type"],
                 "status": n["status"],
                 "priority": n["priority"],
+                "parent_path": n.get("parent_path") or "",
                 "updated_at": n["updated_at"],
             }
             for n in notes

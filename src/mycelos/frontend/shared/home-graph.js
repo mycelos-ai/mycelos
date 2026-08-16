@@ -449,7 +449,7 @@
           x: position.x,
           y: position.y,
           priorPosition: { ...position },
-          priorParent: this.parentById[node.id] || null,
+          priorParent: this.parentById[node.id] || node.parent_path || null,
           priorSelection: this.graphSelectedId,
         };
         this.graphDropTargetId = null;
@@ -619,6 +619,7 @@
       },
 
       applyGraphParent(path, parent) {
+        if (this.nodeById[path]) this.nodeById[path].parent_path = parent || '';
         const edgeIndex = this.graph.edges.findIndex((edge) => edge?.kind === 'parent' && edge.source === path);
         if (parent) {
           const edge = { source: path, target: parent, kind: 'parent' };

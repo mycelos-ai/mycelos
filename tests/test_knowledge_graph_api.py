@@ -184,6 +184,59 @@ def test_note_move_accepts_a_note_or_topic_for_an_active_topic(
     assert _parent_and_markdown(graph_api_client, source)[0] == target
 
 
+def test_root_note_move_can_be_undone_to_its_stored_notes_parent(
+    graph_api_client: TestClient,
+) -> None:
+    """Undo must restore the stored system parent in the DB and Markdown."""
+    source = _create_note(graph_api_client, "Root source")
+    target = _create_topic(graph_api_client, "Move target")
+    root_parent, root_markdown = _parent_and_markdown(graph_api_client, source)
+    assert root_parent == "notes"
+    assert "parent_path: notes" in root_markdown
+
+    graph = graph_api_client.get("/api/knowledge/graph")
+    graph_node = next(node for node in graph.json()["nodes"] if node["id"] == source)
+    assert graph_node["parent_path"] == "notes"
+
+    moved = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    )
+    assert moved.status_code == 200, moved.text
+    moved_parent, moved_markdown = _parent_and_markdown(graph_api_client, source)
+    assert moved_parent == target
+    assert f"parent_path: {target}" in moved_markdown
+
+    undone = graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": "notes"}
+    )
+    assert undone.status_code == 200, undone.text
+    restored_parent, restored_markdown = _parent_and_markdown(
+        graph_api_client, source
+    )
+    assert restored_parent == "notes"
+    assert "parent_path: notes" in restored_markdown
+
+
+@pytest.mark.parametrize("system_root", ["notes", "tasks"])
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_accepts_only_fixed_system_roots(
+    graph_api_client: TestClient, system_root: str, route: str
+) -> None:
+    """The two fixed system roots can receive a note without topic metadata."""
+    source = _create_note(graph_api_client, f"Source for {system_root}")
+    target = _create_topic(graph_api_client, f"Target for {system_root}")
+    assert graph_api_client.put(
+        f"/api/knowledge/notes/{source}", json={"parent_path": target}
+    ).status_code == 200
+
+    response = _move_request(graph_api_client, route, source, system_root)
+
+    assert response.status_code == 200, response.text
+    parent, markdown = _parent_and_markdown(graph_api_client, source)
+    assert parent == system_root
+    assert f"parent_path: {system_root}" in markdown
+
+
 def test_graph_position_write_is_read_for_the_current_user(
     graph_api_client: TestClient,
 ) -> None:
