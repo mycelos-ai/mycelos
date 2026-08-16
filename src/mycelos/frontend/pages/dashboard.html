@@ -16,6 +16,7 @@
   <script src="/shared/api.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
+  <script src="/shared/home-graph.js"></script>
   <script src="/shared/home.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -27,6 +28,7 @@
     x-data="homeApp()"
     x-init="initHome()"
     @keydown.window="handleGlobalKeydown($event)"
+    @resize.window="handleHomeResize()"
   >
     <h1 class="home-sr-only" x-text="t('home.title')"></h1>
     <header class="home-command-region">
@@ -124,7 +126,7 @@
     </header>
 
     <section class="home-workspace" :aria-label="t('home.knowledge_map')">
-      <div class="home-view-toggle" role="group" :aria-label="t('home.view_label')">
+      <div class="home-view-toggle" x-show="!graphMobile" x-cloak role="group" :aria-label="t('home.view_label')">
         <button type="button" @click="setMode('graph')" :class="{ active: mode === 'graph' }" :aria-pressed="mode === 'graph'">
           <span class="material-symbols-outlined" aria-hidden="true">hub</span>
           <span x-text="t('home.graph')"></span>
@@ -191,13 +193,131 @@
         </div>
       </div>
 
-      <div class="home-graph-placeholder" x-show="mode === 'graph'" x-cloak>
-        <div class="home-graph-orbit" aria-hidden="true">
-          <span></span><span></span><span></span><span></span>
+      <div
+        class="home-graph-surface"
+        x-show="mode === 'graph'"
+        x-cloak
+        @pointermove.window="moveGraphPointer($event)"
+        @pointerup.window="endGraphPointer($event)"
+        @pointercancel.window="cancelGraphPointer()"
+      >
+        <div class="home-graph-tools" role="group" :aria-label="t('home.graph_tools')">
+          <button type="button" @click="zoomGraph(0.15)" :aria-label="t('home.zoom_in')">
+            <span class="material-symbols-outlined" aria-hidden="true">add</span>
+          </button>
+          <button type="button" @click="zoomGraph(-0.15)" :aria-label="t('home.zoom_out')">
+            <span class="material-symbols-outlined" aria-hidden="true">remove</span>
+          </button>
+          <button type="button" class="home-graph-fit" @click="fitGraph()" :aria-label="t('home.fit_graph')">
+            <span class="material-symbols-outlined" aria-hidden="true">fit_screen</span>
+            <span x-text="t('home.fit')"></span>
+          </button>
         </div>
-        <h2 x-text="t('home.graph_next_title')"></h2>
-        <p x-text="t('home.graph_next_body')"></p>
-        <button type="button" class="home-action-secondary" @click="setMode('tree')" x-text="t('home.back_to_tree')"></button>
+
+        <div
+          class="home-graph-canvas"
+          x-ref="graphCanvas"
+          tabindex="0"
+          role="application"
+          :aria-label="t('home.graph_canvas')"
+          @pointerdown="startGraphPan($event)"
+          @wheel.prevent="zoomGraphAt($event)"
+          @keydown="handleGraphKeydown($event)"
+        >
+          <div class="home-graph-stage" :style="graphStageStyle()">
+            <svg class="home-graph-edges" width="2400" height="1600" viewBox="0 0 2400 1600" aria-hidden="true">
+              <template x-for="edge in graphVisibleParentEdges()" :key="'parent:' + edge.source + ':' + edge.target">
+                <line
+                  class="home-graph-edge is-parent"
+                  :x1="graphPosition(edge.source).x"
+                  :y1="graphPosition(edge.source).y"
+                  :x2="graphPosition(edge.target).x"
+                  :y2="graphPosition(edge.target).y"
+                ></line>
+              </template>
+              <template x-for="edge in graphSelectedRelationEdges()" :key="'relation:' + edge.source + ':' + edge.target + ':' + edge.kind">
+                <line
+                  class="home-graph-edge is-relation"
+                  :x1="graphPosition(edge.source).x"
+                  :y1="graphPosition(edge.source).y"
+                  :x2="graphPosition(edge.target).x"
+                  :y2="graphPosition(edge.target).y"
+                ></line>
+              </template>
+            </svg>
+
+            <template x-for="node in graphVisibleNodes()" :key="node.id">
+              <div
+                class="home-graph-node"
+                :class="graphNodeClasses(node)"
+                :style="graphNodeStyle(node)"
+                :data-graph-id="node.id"
+                :data-graph-topic="node.type === 'topic' ? 'true' : 'false'"
+                :data-x="graphPosition(node.id).x"
+                :data-y="graphPosition(node.id).y"
+              >
+                <button
+                  type="button"
+                  class="home-graph-node-main"
+                  @pointerdown.stop="startNodeDrag($event, node)"
+                  @click.stop="activateGraphNode(node)"
+                  @keydown.enter.stop.prevent="openGraphNode(node)"
+                  :aria-pressed="graphSelectedId === node.id"
+                  :aria-label="graphNodeLabel(node)"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true" x-text="rowIcon(node)"></span>
+                  <span class="home-graph-node-title" x-text="node.title || node.id"></span>
+                </button>
+                <button
+                  type="button"
+                  class="home-graph-expand"
+                  x-show="node.type === 'topic' && graphChildCount(node.id) > 0"
+                  @pointerdown.stop
+                  @click.stop="toggleGraphTopic(node.id)"
+                  :aria-expanded="!!graphOpenTopics[node.id]"
+                  :aria-label="(graphOpenTopics[node.id] ? t('home.collapse_topic_named') : t('home.expand_topic_named')).replace('{title}', node.title || node.id)"
+                >
+                  <span class="material-symbols-outlined" aria-hidden="true" x-text="graphOpenTopics[node.id] ? 'remove' : 'add'"></span>
+                  <span x-text="graphChildCount(node.id)"></span>
+                </button>
+              </div>
+            </template>
+          </div>
+
+          <div class="home-graph-empty" x-show="!loading && graph.nodes.length === 0">
+            <img src="/assets/logo-transparent.svg" alt="" aria-hidden="true">
+            <h2 x-text="t('home.empty_title')"></h2>
+            <p x-text="t('home.empty_body')"></p>
+            <button type="button" class="home-action-primary" @click="focusBar()" x-text="t('home.empty_action')"></button>
+          </div>
+        </div>
+
+        <div class="home-graph-batches" x-show="graphMoreBatches().length" x-cloak>
+          <template x-for="batch in graphMoreBatches()" :key="batch.id">
+            <button type="button" class="home-graph-more" @click="moreGraphChildren(batch.id)" :aria-label="graphMoreLabel(batch)" x-text="graphMoreLabel(batch)"></button>
+          </template>
+        </div>
+
+        <div class="home-graph-search-actions" x-show="graphMissingSearchResults().length" x-cloak>
+          <template x-for="result in graphMissingSearchResults()" :key="result.path">
+            <a :href="graphResultHref(result)" :aria-label="t('home.open_result').replace('{title}', result.title || result.path)">
+              <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+              <span x-text="t('home.open_result').replace('{title}', result.title || result.path)"></span>
+            </a>
+          </template>
+        </div>
+
+        <aside class="home-graph-relations" x-show="graphSelectedRelations().length" x-cloak :aria-label="t('home.relations')">
+          <strong x-text="t('home.relations')"></strong>
+          <template x-for="relation in graphSelectedRelations()" :key="relation.key">
+            <button type="button" @click="selectGraphRelation(relation)" x-text="relation.label"></button>
+          </template>
+        </aside>
+
+        <div class="home-graph-notice" x-show="graphNotice.message" x-cloak role="status" :class="{ 'is-error': graphNotice.error }">
+          <span x-text="graphNotice.message"></span>
+          <button type="button" x-show="graphUndo" @click="undoGraphMove()" x-text="t('home.undo_move')"></button>
+        </div>
       </div>
     </section>
 

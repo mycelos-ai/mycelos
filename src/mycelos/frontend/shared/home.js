@@ -1,4 +1,4 @@
-/** Home surface — Package 4a. */
+/** Home surface. */
 
 (function () {
   const MODE_KEY = 'mycelos.home.mode';
@@ -21,8 +21,9 @@
 
   window.homeApp = function () {
     return {
+      ...window.homeGraphMixin(),
       query: '',
-      mode: localStorage.getItem(MODE_KEY) === 'graph' ? 'graph' : 'tree',
+      mode: window.homeGraphInitialMode(),
       expanded: safeJson(localStorage.getItem(EXPANDED_KEY), {}),
       loading: true,
       searching: false,
@@ -30,7 +31,7 @@
       barError: '',
       searchResults: [],
       searchSequence: 0,
-      graph: { nodes: [], edges: [], stats: { notes: 0, links: 0 } },
+      graph: { nodes: [], edges: [], positions: {}, stats: { notes: 0, links: 0 } },
       nodeById: {},
       parentById: {},
       topicChildren: {},
@@ -68,9 +69,11 @@
           this.graph = {
             nodes: Array.isArray(data.nodes) ? data.nodes : [],
             edges: Array.isArray(data.edges) ? data.edges : [],
+            positions: data.positions || {},
             stats: data.stats || {},
           };
           this.buildTreeIndex();
+          this.setupHomeGraph(data);
         } else {
           this.barError = t('home.load_error');
         }
@@ -431,6 +434,10 @@
           this.closeAnswer();
           return;
         }
+        if (this.clearGraphSelection()) {
+          event.preventDefault();
+          return;
+        }
         if (this.query) {
           event.preventDefault();
           this.query = '';
@@ -457,8 +464,11 @@
       },
 
       setMode(mode) {
-        this.mode = mode === 'graph' ? 'graph' : 'tree';
-        localStorage.setItem(MODE_KEY, this.mode);
+        const nextMode = mode === 'graph' ? 'graph' : 'tree';
+        if (this.graphMobile && nextMode === 'graph') return;
+        this.graphPreferredMode = nextMode;
+        this.mode = nextMode;
+        localStorage.setItem(MODE_KEY, nextMode);
       },
 
       toggleTopic(id) {

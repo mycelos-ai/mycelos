@@ -1,4 +1,4 @@
-"""E2E contract for Home, Package 4a."""
+"""E2E contract for the Home surface."""
 
 from __future__ import annotations
 
@@ -118,10 +118,23 @@ def _mock_home(
     return calls
 
 
-def _open_home(page: Page, base_url: str, *, root: bool = False) -> None:
-    page.add_init_script(
+def _open_home(
+    page: Page,
+    base_url: str,
+    *,
+    root: bool = False,
+    stored_mode: str | None = "tree",
+) -> None:
+    mode_script = (
         "localStorage.removeItem('mycelos.home.mode');"
-        "localStorage.removeItem('mycelos.home.expanded');"
+        if stored_mode is None
+        else f"localStorage.setItem('mycelos.home.mode', {json.dumps(stored_mode)});"
+    )
+    page.add_init_script(
+        mode_script
+        + "localStorage.removeItem('mycelos.home.expanded');"
+        + "localStorage.removeItem('mycelos.home.graph.topics');"
+        + "localStorage.removeItem('mycelos.home.graph.viewport');"
     )
     path = "/" if root else "/pages/dashboard.html"
     page.goto(f"{base_url}{path}", wait_until="networkidle")
@@ -192,7 +205,9 @@ def test_search_uses_backend_and_keeps_diacritics(page: Page, base_url: str) -> 
     omnibox = page.locator(".home-omnibox input")
     omnibox.fill("muller")
 
-    expect(page.get_by_text("Müller Filing", exact=True)).to_be_visible(timeout=3000)
+    expect(
+        page.locator(".home-tree-pane").get_by_text("Müller Filing", exact=True)
+    ).to_be_visible(timeout=3000)
     assert "muller" in calls["queries"]
 
 
@@ -382,18 +397,19 @@ def test_tree_expands_and_collapses_topics(page: Page, base_url: str) -> None:
     _mock_home(page)
     _open_home(page, base_url)
 
-    expect(page.get_by_text("Work", exact=True)).to_be_visible()
-    expect(page.get_by_text("Projects", exact=True)).to_be_hidden()
+    tree = page.locator(".home-tree-pane")
+    expect(tree.get_by_text("Work", exact=True)).to_be_visible()
+    expect(tree.get_by_text("Projects", exact=True)).to_be_hidden()
 
     work_row = page.locator(".home-tree-row").filter(has_text="Work").first
     toggle = work_row.locator(".home-tree-toggle")
     expect(toggle).to_have_attribute("aria-expanded", "false")
     toggle.click()
-    expect(page.get_by_text("Projects", exact=True)).to_be_visible()
+    expect(tree.get_by_text("Projects", exact=True)).to_be_visible()
     expect(toggle).to_have_attribute("aria-expanded", "true")
 
     toggle.click()
-    expect(page.get_by_text("Projects", exact=True)).to_be_hidden()
+    expect(tree.get_by_text("Projects", exact=True)).to_be_hidden()
     expect(toggle).to_have_attribute("aria-expanded", "false")
 
 
@@ -488,21 +504,6 @@ def test_mobile_shell_warns_about_an_unprotected_network_service(
     expect(warning.locator("a")).to_have_attribute(
         "href", "/pages/docs.html?doc=raspberry-pi-setup#network-access"
     )
-
-
-def test_graph_toggle_shows_placeholder_and_remembers_choice(
-    page: Page, base_url: str
-) -> None:
-    _mock_home(page)
-    _open_home(page, base_url)
-
-    page.locator(".home-view-toggle").get_by_role(
-        "button", name="Graph", exact=True
-    ).click()
-    placeholder = page.locator(".home-graph-placeholder")
-    expect(placeholder).to_be_visible()
-    expect(placeholder).to_contain_text("The graph workbench comes next")
-    assert page.evaluate("localStorage.getItem('mycelos.home.mode')") == "graph"
 
 
 def test_mobile_home_uses_five_item_bottom_navigation(
