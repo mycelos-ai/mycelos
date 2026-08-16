@@ -56,6 +56,8 @@ def _mock_home(
     inbox_count: int = 0,
     inbox_entries: list[dict[str, Any]] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    health: dict[str, Any] | None = None,
+    kept_note: dict[str, Any] | None = None,
     answer: str = "The filing is due today.",
 ) -> dict[str, list[Any]]:
     """Install deterministic routes before Home starts its first request."""
@@ -75,6 +77,7 @@ def _mock_home(
         "**/api/inbox/placements**",
         lambda route: _json(route, {"placements": placements or []}),
     )
+    page.route("**/api/health", lambda route: _json(route, health or {}))
     page.route(
         "**/api/inbox",
         lambda route: _json(route, {"entries": inbox_entries or []}),
@@ -87,7 +90,8 @@ def _mock_home(
             calls["kept"].append(payload)
             _json(
                 route,
-                {
+                kept_note
+                or {
                     "path": "notes/kept-from-home",
                     "parent_path": "notes",
                     "organizer_state": "pending",
@@ -254,6 +258,28 @@ def test_shift_enter_keeps_the_text(page: Page, base_url: str) -> None:
     expect(omnibox).to_have_value("")
 
 
+def test_keep_reports_the_initial_location_and_pending_organizer(
+    page: Page, base_url: str
+) -> None:
+    _mock_home(
+        page,
+        kept_note={
+            "path": "notes/kept-from-home",
+            "parent_path": "notes",
+            "organizer_state": "pending",
+        },
+    )
+    _open_home(page, base_url)
+
+    omnibox = page.locator(".home-omnibox input")
+    omnibox.fill("A thought worth keeping")
+    omnibox.press("Shift+Enter")
+
+    expect(page.locator(".home-toast")).to_contain_text(
+        "Kept in Notes. Mycelos will still check it.", timeout=3000
+    )
+
+
 @pytest.mark.parametrize("shortcut", ["Control+K", "Meta+K"])
 def test_command_k_focuses_the_omnibox(
     page: Page, base_url: str, shortcut: str
@@ -325,6 +351,33 @@ def test_today_shows_real_inbox_and_due_counts(page: Page, base_url: str) -> Non
     )
 
 
+def test_today_keeps_the_count_endpoint_value_when_fewer_rows_load(
+    page: Page, base_url: str
+) -> None:
+    _mock_home(
+        page,
+        inbox_count=7,
+        inbox_entries=[
+            {"id": "suggestion:4", "kind": "merge", "source": {}},
+        ],
+    )
+    _open_home(page, base_url)
+
+    expect(page.locator(".home-today")).to_contain_text("7 need you")
+    expect(page.locator(".home-today")).not_to_contain_text("1 need you")
+
+
+def test_today_uses_singular_search_result_text(page: Page, base_url: str) -> None:
+    _mock_home(page)
+    _open_home(page, base_url)
+
+    page.locator(".home-omnibox input").fill("muller")
+
+    expect(page.locator(".home-match-hint")).to_contain_text(
+        "1 match in your brain", timeout=3000
+    )
+
+
 def test_tree_expands_and_collapses_topics(page: Page, base_url: str) -> None:
     _mock_home(page)
     _open_home(page, base_url)
@@ -342,6 +395,52 @@ def test_tree_expands_and_collapses_topics(page: Page, base_url: str) -> None:
     toggle.click()
     expect(page.get_by_text("Projects", exact=True)).to_be_hidden()
     expect(toggle).to_have_attribute("aria-expanded", "false")
+
+
+def test_root_notes_have_a_more_action_after_the_first_batch(
+    page: Page, base_url: str
+) -> None:
+    root_notes = [
+        {"id": f"notes/root-{index}", "title": f"Root note {index}", "type": "note"}
+        for index in range(201)
+    ]
+    _mock_home(
+        page,
+        graph={"nodes": root_notes, "edges": [], "stats": {"notes": 201, "links": 0}},
+    )
+    _open_home(page, base_url)
+
+    unfiled = page.locator(".home-tree-row").filter(has_text="Not filed yet").first
+    unfiled.locator(".home-tree-toggle").click()
+    expect(page.get_by_role("button", name="More (1 remaining)")).to_be_visible()
+    expect(page.locator(".home-tree-row.is-note")).to_have_count(200)
+
+    page.get_by_role("button", name="More (1 remaining)").click()
+    expect(page.locator(".home-tree-row.is-note")).to_have_count(201)
+    expect(page.get_by_role("button", name="More (1 remaining)")).to_be_hidden()
+
+
+def test_shell_warns_about_an_unprotected_network_service(
+    page: Page, base_url: str
+) -> None:
+    _mock_home(
+        page,
+        health={
+            "security": {
+                "network_exposed": True,
+                "password_protected": False,
+            }
+        },
+    )
+    _open_home(page, base_url)
+
+    warning = page.locator(".brain-network-warning")
+    expect(warning).to_be_visible()
+    expect(warning).to_contain_text("Network exposed")
+    expect(warning).to_contain_text("No password set")
+    expect(warning).to_have_attribute(
+        "href", "/pages/docs.html?doc=raspberry-pi-setup#network-access"
+    )
 
 
 def test_graph_toggle_shows_placeholder_and_remembers_choice(

@@ -37,6 +37,7 @@
       topicCounts: {},
       placements: {},
       today: { loaded: false, inboxCount: 0, dueEntries: [] },
+      rootNotesShown: 200,
       answer: {
         open: false,
         thinking: false,
@@ -197,7 +198,7 @@
             synthetic: true,
           });
           if (this.expanded.__unfiled__) {
-            for (const node of unfiled.slice(0, 200)) {
+            for (const node of unfiled.slice(0, this.rootNotesShown)) {
               rows.push({
                 key: 'unfiled:' + node.id,
                 id: node.id,
@@ -384,14 +385,26 @@
         this.capture.saving = true;
         this.showCaptureMessage(t('home.filing'), false, 0);
         try {
-          await MycelosAPI.post('/api/knowledge/notes', { title, content });
-          this.showCaptureMessage(t('home.kept'), false, 3200);
+          const created = await MycelosAPI.post('/api/knowledge/notes', { title, content });
+          this.showCaptureMessage(this.captureMessage(created), false, 3200);
           await this.loadHome(false);
         } catch (_error) {
           this.showCaptureMessage(t('home.keep_error'), true, 4800);
         } finally {
           this.capture.saving = false;
         }
+      },
+
+      captureMessage(created) {
+        const parent = String(created?.parent_path || '').trim();
+        if (!parent) return t('home.kept');
+        const location = parent === 'notes'
+          ? t('home.capture_notes_location')
+          : parent;
+        const message = t('home.kept_location').replace('{location}', location);
+        return created?.organizer_state === 'pending'
+          ? message + ' ' + t('home.organizer_pending')
+          : message;
       },
 
       showCaptureMessage(message, error, timeout) {
@@ -474,7 +487,20 @@
       },
 
       matchHint() {
-        return t('home.match_count').replace('{count}', String(this.searchResults.length));
+        if (this.searchResults.length === 1) return t('home.match_count_one');
+        return t('home.match_count_many').replace('{count}', String(this.searchResults.length));
+      },
+
+      rootNotesRemaining() {
+        return Math.max(0, this.rootNotes().length - this.rootNotesShown);
+      },
+
+      moreRootNotes() {
+        this.rootNotesShown += 200;
+      },
+
+      moreRootNotesLabel() {
+        return t('home.more_notes').replace('{count}', String(this.rootNotesRemaining()));
       },
 
       inboxLabel() {

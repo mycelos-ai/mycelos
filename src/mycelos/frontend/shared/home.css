@@ -504,6 +504,53 @@
   font-size: 12px;
 }
 
+.home-tree-more {
+  display: block;
+  margin: 14px auto 0;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid #26343f;
+  border-radius: 8px;
+  color: #8adcef;
+  cursor: pointer;
+  font: 700 12.5px Lato, sans-serif;
+}
+
+.home-tree-more:hover {
+  border-color: #35c7e3;
+  color: #b8edf6;
+}
+
+.brain-network-warning {
+  display: flex;
+  gap: 7px;
+  margin: 0 3px 14px;
+  padding: 9px;
+  background: rgba(200, 116, 116, 0.1);
+  border: 1px solid rgba(200, 116, 116, 0.38);
+  border-radius: 10px;
+  color: #e39a9a;
+  text-decoration: none;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.brain-network-warning .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 17px;
+}
+
+.brain-network-warning strong,
+.brain-network-warning small {
+  display: block;
+}
+
+.brain-network-warning small {
+  margin-top: 2px;
+  color: #b7c5ce;
+  font-size: 10px;
+}
+
 .home-uncertain-mark {
   width: 18px;
   height: 18px;

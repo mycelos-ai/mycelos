@@ -233,7 +233,15 @@ async function _parseError(res) {
 window.sidebarData = function () {
   return {
     inboxCount: 0,
+    security: null,
     async loadSidebar() {
+      try {
+        const health = await MycelosAPI.get('/api/health');
+        this.security = health?.security || null;
+      } catch (e) {
+        this.security = null;
+      }
+
       try {
         const inbox = await MycelosAPI.get('/api/inbox/count');
         this.inboxCount = Number(inbox?.count || 0);

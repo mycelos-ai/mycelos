@@ -179,6 +179,15 @@
               <span class="home-tree-count" x-show="row.type === 'topic'" x-text="row.count"></span>
             </div>
           </template>
+
+          <button
+            type="button"
+            class="home-tree-more"
+            x-show="expanded.__unfiled__ && rootNotesRemaining() > 0"
+            x-cloak
+            @click="moreRootNotes()"
+            x-text="moreRootNotesLabel()"
+          ></button>
         </div>
       </div>
 

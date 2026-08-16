@@ -8,6 +8,19 @@
     <span>mycelos</span>
   </a>
 
+  <a
+    x-show="security && security.network_exposed && !security.password_protected"
+    x-cloak
+    href="/pages/docs.html?doc=raspberry-pi-setup#network-access"
+    class="brain-network-warning"
+  >
+    <span class="material-symbols-outlined" aria-hidden="true">warning</span>
+    <span>
+      <strong x-text="t('sidebar.network_exposed')"></strong>
+      <small x-text="t('sidebar.network_exposed_hint')"></small>
+    </span>
+  </a>
+
   <nav class="brain-nav" :aria-label="t('sidebar.main_navigation')">
     <a
       href="/pages/dashboard.html"
