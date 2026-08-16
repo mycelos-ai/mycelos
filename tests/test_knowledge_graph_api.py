@@ -40,6 +40,133 @@ def _create_note(client: TestClient, title: str = "Graph node") -> str:
     return response.json()["path"]
 
 
+def _create_topic(
+    client: TestClient, name: str, parent: str | None = None
+) -> str:
+    body: dict[str, str] = {"name": name}
+    if parent is not None:
+        body["parent"] = parent
+    response = client.post("/api/knowledge/topics", json=body)
+    assert response.status_code == 200, response.text
+    return response.json()["path"]
+
+
+def _move_request(
+    client: TestClient, route: str, path: str, target: str
+):
+    if route == "update":
+        return client.put(
+            f"/api/knowledge/notes/{path}", json={"parent_path": target}
+        )
+    return client.post(
+        f"/api/knowledge/notes/{path}/move", json={"topic": target}
+    )
+
+
+def _parent_and_markdown(client: TestClient, path: str) -> tuple[str, str]:
+    kb = client.app.state.mycelos.knowledge_base
+    meta = kb._indexer.get_note_meta(path)
+    assert meta is not None
+    return meta["parent_path"], kb._safe_path(path).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_rejects_a_missing_topic_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """A missing target must not change the source note or its Markdown file."""
+    source = _create_note(graph_api_client)
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, "topics/missing")
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_rejects_a_note_target_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """Only an active topic can become the new parent."""
+    source = _create_note(graph_api_client, "Source")
+    target = _create_note(graph_api_client, "Not a topic")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, target)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_note_move_rejects_an_inactive_topic_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """An inactive topic must not become the new parent."""
+    source = _create_note(graph_api_client, "Source")
+    target = _create_topic(graph_api_client, "Inactive target")
+    graph_api_client.app.state.mycelos.knowledge_base.update(target, status="archived")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, target)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_topic_move_rejects_itself_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """A topic must not become its own parent."""
+    source = _create_topic(graph_api_client, "Source topic")
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, source)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+def test_topic_move_rejects_a_descendant_without_changes(
+    graph_api_client: TestClient, route: str
+) -> None:
+    """A topic must not become a child of one of its own children."""
+    source = _create_topic(graph_api_client, "Parent")
+    descendant = _create_topic(graph_api_client, "Child", parent=source)
+    before = _parent_and_markdown(graph_api_client, source)
+
+    response = _move_request(graph_api_client, route, source, descendant)
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "move_rejected"
+    assert _parent_and_markdown(graph_api_client, source) == before
+
+
+@pytest.mark.parametrize("route", ["update", "move"])
+@pytest.mark.parametrize("source_type", ["note", "topic"])
+def test_note_move_accepts_a_note_or_topic_for_an_active_topic(
+    graph_api_client: TestClient, route: str, source_type: str
+) -> None:
+    """A note or topic can move under a different active topic."""
+    target = _create_topic(graph_api_client, "Target")
+    if source_type == "topic":
+        source = _create_topic(graph_api_client, "Source topic")
+    else:
+        source = _create_note(graph_api_client, "Source note")
+
+    response = _move_request(graph_api_client, route, source, target)
+
+    assert response.status_code == 200, response.text
+    assert _parent_and_markdown(graph_api_client, source)[0] == target
+
+
 def test_graph_position_write_is_read_for_the_current_user(
     graph_api_client: TestClient,
 ) -> None:

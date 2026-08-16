@@ -180,14 +180,14 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
     kb = mycelos.knowledge_base
     body = await request.json()
 
-    # Content update (on disk + DB)
-    if "content" in body:
-        result = kb.update(path, content=body["content"])
-
     # Move to a different topic
     if "parent_path" in body:
         new_parent = body["parent_path"]
-        kb.move_to_topic(path, new_parent)
+        if not kb.move_to_topic(path, new_parent):
+            return JSONResponse(
+                {"error": "move_rejected", "path": path, "target": new_parent},
+                status_code=422,
+            )
         try:
             mycelos.audit.log(
                 "knowledge.note.moved",
@@ -196,6 +196,10 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
             )
         except Exception:
             pass
+
+    # Content update (on disk + DB)
+    if "content" in body:
+        result = kb.update(path, content=body["content"])
 
     # Organizer state override (for reclassify)
     if "organizer_state" in body:
@@ -378,9 +382,13 @@ async def knowledge_note_move(path: str, request: Request) -> dict[str, Any]:
     """Move a note to a different topic."""
     body = await request.json()
     kb = request.app.state.mycelos.knowledge_base
-    success = kb.move_to_topic(path, body.get("topic", ""))
+    target = body.get("topic", "")
+    success = kb.move_to_topic(path, target)
     if not success:
-        return JSONResponse({"error": "not_found", "path": path}, status_code=404)
+        return JSONResponse(
+            {"error": "move_rejected", "path": path, "target": target},
+            status_code=422,
+        )
     return {"status": "moved"}
 
 
