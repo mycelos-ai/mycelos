@@ -201,6 +201,19 @@
         );
       },
 
+      graphEdgesMarkup() {
+        const line = (edge, kind) => {
+          const source = this.graphPosition(edge.source);
+          const target = this.graphPosition(edge.target);
+          const coordinate = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+          return `<line class="home-graph-edge ${kind}" x1="${coordinate(source.x)}" y1="${coordinate(source.y)}" x2="${coordinate(target.x)}" y2="${coordinate(target.y)}"></line>`;
+        };
+        return [
+          ...this.graphVisibleParentEdges().map((edge) => line(edge, 'is-parent')),
+          ...this.graphSelectedRelationEdges().map((edge) => line(edge, 'is-relation')),
+        ].join('');
+      },
+
       graphSelectedRelations() {
         return this.graphSelectedRelationEdges().map((edge, index) => {
           const otherId = edge.source === this.graphSelectedId ? edge.target : edge.source;

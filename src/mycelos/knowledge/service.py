@@ -11,9 +11,10 @@ import shutil
 import sqlite3
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mycelos.knowledge import ranking
 from mycelos.knowledge.indexer import KnowledgeIndexer
@@ -1312,14 +1313,52 @@ class KnowledgeBase:
             for row in rows
         }
 
-    def get_home_summary(self, user_id: str) -> dict:
-        """Return today's global import count and one user's source attachments."""
+    def get_home_summary(
+        self,
+        user_id: str,
+        *,
+        now_utc: datetime | None = None,
+    ) -> dict:
+        """Return imports for the user's local day and their source attachments."""
+        timezone_name = None
+        try:
+            timezone_name = self._app.memory.get(
+                user_id, "system", "user.timezone"
+            )
+        except Exception:
+            pass
+        if not timezone_name:
+            user = self._app.storage.fetchone(
+                "SELECT timezone FROM users WHERE id=?", (user_id,)
+            )
+            timezone_name = (user or {}).get("timezone")
+
+        local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
+        if timezone_name:
+            try:
+                local_timezone = ZoneInfo(str(timezone_name))
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning(
+                    "Unknown user timezone %r; using the server timezone",
+                    timezone_name,
+                )
+
+        reference = now_utc or datetime.now(timezone.utc)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        local_day = reference.astimezone(local_timezone).date()
+        start_local = datetime.combine(local_day, time.min, tzinfo=local_timezone)
+        end_local = start_local + timedelta(days=1)
+        start_utc = start_local.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        end_utc = end_local.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
         count_row = self._app.storage.fetchone(
             """SELECT COUNT(*) AS import_count
                  FROM knowledge_notes
                 WHERE created_by = 'import'
-                  AND created_at >= strftime('%Y-%m-%dT00:00:00.000Z', 'now')
-                  AND created_at < strftime('%Y-%m-%dT00:00:00.000Z', 'now', '+1 day')"""
+                  AND created_at >= ?
+                  AND created_at < ?""",
+            (start_utc, end_utc),
         )
         rows = self._app.storage.fetchall(
             """SELECT topic_path, source_id

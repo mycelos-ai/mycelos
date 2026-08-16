@@ -259,26 +259,14 @@
           @keydown="handleGraphKeydown($event)"
         >
           <div class="home-graph-stage" :style="graphStageStyle()">
-            <svg class="home-graph-edges" width="2400" height="1600" viewBox="0 0 2400 1600" aria-hidden="true">
-              <template x-for="edge in graphVisibleParentEdges()" :key="'parent:' + edge.source + ':' + edge.target">
-                <line
-                  class="home-graph-edge is-parent"
-                  :x1="graphPosition(edge.source).x"
-                  :y1="graphPosition(edge.source).y"
-                  :x2="graphPosition(edge.target).x"
-                  :y2="graphPosition(edge.target).y"
-                ></line>
-              </template>
-              <template x-for="edge in graphSelectedRelationEdges()" :key="'relation:' + edge.source + ':' + edge.target + ':' + edge.kind">
-                <line
-                  class="home-graph-edge is-relation"
-                  :x1="graphPosition(edge.source).x"
-                  :y1="graphPosition(edge.source).y"
-                  :x2="graphPosition(edge.target).x"
-                  :y2="graphPosition(edge.target).y"
-                ></line>
-              </template>
-            </svg>
+            <svg
+              class="home-graph-edges"
+              width="2400"
+              height="1600"
+              viewBox="0 0 2400 1600"
+              aria-hidden="true"
+              x-html="graphEdgesMarkup()"
+            ></svg>
 
             <template x-for="node in graphVisibleNodes()" :key="node.id">
               <div

@@ -194,6 +194,21 @@ def test_first_desktop_visit_defaults_to_graph(page: Page, base_url: str) -> Non
     )
 
 
+def test_graph_parent_edges_render_without_javascript_errors(
+    page: Page, base_url: str
+) -> None:
+    """Removing the SVG loop scope must make this test fail."""
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    _mock_graph_home(page)
+
+    _open_graph(page, base_url)
+    _expand(page, "topics/work")
+
+    expect(page.locator(".home-graph-edge.is-parent")).to_have_count(2)
+    assert errors == []
+
+
 def test_initial_graph_failure_shows_retry_instead_of_the_empty_state(
     page: Page, base_url: str
 ) -> None:

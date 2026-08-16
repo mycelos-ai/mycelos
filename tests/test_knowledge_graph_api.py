@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,46 @@ def test_home_summary_counts_today_imports_and_groups_attached_sources(
             work: ["gmail", "yt-summary"],
         },
     }
+
+
+def test_home_summary_uses_the_users_local_day_at_utc_midnight(
+    graph_api_client: TestClient,
+) -> None:
+    """Replacing local day bounds with UTC bounds must make this test fail."""
+    app = graph_api_client.app.state.mycelos
+    kb = app.knowledge_base
+    app.memory.set(
+        "default",
+        "system",
+        "user.timezone",
+        "America/Los_Angeles",
+        created_by="test",
+    )
+    previous_local_day = kb.write(
+        "Previous local day",
+        "Previous",
+        created_by="import",
+    )
+    current_local_day = kb.write(
+        "Current local day",
+        "Current",
+        created_by="import",
+    )
+    app.storage.execute(
+        "UPDATE knowledge_notes SET created_at=? WHERE path=?",
+        ("2026-01-01T07:30:00.000Z", previous_local_day),
+    )
+    app.storage.execute(
+        "UPDATE knowledge_notes SET created_at=? WHERE path=?",
+        ("2026-01-01T08:15:00.000Z", current_local_day),
+    )
+
+    summary = kb.get_home_summary(
+        "default",
+        now_utc=datetime(2026, 1, 1, 8, 30, tzinfo=timezone.utc),
+    )
+
+    assert summary["imports_today"] == 1
 
 
 def test_home_summary_returns_zero_for_a_day_without_imports(
