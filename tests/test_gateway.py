@@ -579,16 +579,14 @@ def test_audit_details_parsed_as_dict(client: TestClient):
 
 
 class TestRootRedirect:
-    def test_root_serves_chat_redirect(self, client: TestClient):
-        """GET / must lead the user to chat — either via HTTP redirect or
-        via an index.html that contains a meta-refresh pointing at chat."""
+    def test_root_serves_home_redirect(self, client: TestClient):
+        """GET / must lead the user to Home."""
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code in (200, 302, 307)
         if resp.status_code in (302, 307):
-            assert "/pages/chat.html" in resp.headers.get("location", "")
+            assert "/pages/dashboard.html" in resp.headers.get("location", "")
         else:
-            # Meta-refresh index.html
-            assert "/pages/chat.html" in resp.text
+            assert "/pages/dashboard.html" in resp.text
 
 
 # --- Workflow run sidebar endpoints ---
