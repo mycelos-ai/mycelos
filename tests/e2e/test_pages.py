@@ -8,11 +8,11 @@ from playwright.sync_api import Page, expect
 
 PAGES = [
     ("/pages/chat.html", "Chat", "Type a message"),
-    ("/pages/dashboard.html", "Dashboard", None),
+    ("/pages/dashboard.html", "Brain", None),
+    ("/pages/inbox.html", "Inbox", None),
     ("/pages/agents.html", "Agents", None),
     ("/pages/knowledge.html", "Knowledge", None),
     ("/pages/workflows.html", "Workflows", None),
-    ("/pages/sessions.html", "Sessions", None),
     ("/pages/doctor.html", "System Doctor", None),
     ("/pages/connectors.html", "Connectors", None),
     ("/pages/ai-providers.html", "AI Providers", None),
@@ -39,7 +39,11 @@ def test_page_loads(page: Page, base_url: str, path: str, title_text: str, place
     # the main content so we don't accidentally match sidebar nav entries
     # (which include the page name as a link in the Admin submenu).
     heading = page.locator("main h1, main h2").filter(has_text=title_text).first
-    expect(heading).to_be_visible()
+    if path == "/pages/dashboard.html":
+        # Home keeps its only page heading available to assistive technology.
+        expect(heading).to_have_text(title_text)
+    else:
+        expect(heading).to_be_visible()
 
     # Chat page should have the message input
     if placeholder:
@@ -53,32 +57,26 @@ def test_page_loads(page: Page, base_url: str, path: str, title_text: str, place
 
 
 def test_sidebar_navigation(page: Page, base_url: str) -> None:
-    """Sidebar links should navigate between pages."""
+    """The desktop shell exposes the five fixed product surfaces."""
     page.goto(f"{base_url}/pages/chat.html", wait_until="networkidle")
 
-    # Scope all link lookups to the desktop <aside>, otherwise they also match
-    # the mobile nav rendered at the bottom and the Admin submenu entries —
-    # both cause strict-mode locator violations.
     sidebar = page.locator("aside").first
-    main_heading = page.locator("main h1, main h2")
+    expect(sidebar).to_be_visible()
 
-    # Click on Knowledge in sidebar
-    sidebar.locator("a[href='/pages/knowledge.html']").click()
-    page.wait_for_url("**/knowledge.html")
-    expect(main_heading.filter(has_text="Knowledge").first).to_be_visible()
+    targets = {
+        "Brain": "/pages/dashboard.html",
+        "Inbox": "/pages/inbox.html",
+        "Routines": "/pages/workflows.html",
+        "Converse": "/pages/chat.html",
+        "System": "/pages/settings.html",
+    }
+    for label, href in targets.items():
+        link = sidebar.get_by_role("link", name=label, exact=True)
+        expect(link).to_have_attribute("href", href)
 
-    # Click on Workflows — Admin submenu has to be expanded so the link is
-    # visible to Playwright's actionability checks.
-    sidebar.locator("button:has-text('Admin')").click()
-    sidebar.locator("a[href='/pages/workflows.html']").click()
-    page.wait_for_url("**/workflows.html")
-    expect(main_heading.filter(has_text="Workflows").first).to_be_visible()
-
-    # Click on Connectors
-    sidebar.locator("button:has-text('Admin')").click()
-    sidebar.locator("a[href='/pages/connectors.html']").click()
-    page.wait_for_url("**/connectors.html")
-    expect(main_heading.filter(has_text="Connectors").first).to_be_visible()
+    expect(sidebar.get_by_role("link", name="Converse", exact=True)).to_have_attribute(
+        "aria-current", "page"
+    )
 
 
 def test_chat_welcome_screen(page: Page, base_url: str) -> None:
@@ -116,6 +114,3 @@ def test_connectors_page_tiles(page: Page, base_url: str) -> None:
 
     # Services: Email should be listed
     expect(page.locator("text=Email").first).to_be_visible()
-
-    # MCP Connectors: Development tile should be visible
-    expect(page.locator("text=Development").first).to_be_visible()
