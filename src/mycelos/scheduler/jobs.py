@@ -11,6 +11,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from mycelos.scheduler.run_recorder import (
+    CAUSES,
+    ORPHANED_RUN_CAUSE,
+    RunRecorder,
+    safe_counts,
+)
+
 logger = logging.getLogger("mycelos.scheduler")
 
 
@@ -37,6 +44,53 @@ def reminder_tick_check(app: Any) -> dict[str, int]:
     return result
 
 
+def _open_run(recorder: Any, kind: str, routine_key: str, user_id: str) -> str | None:
+    """Open a run row, or return None if it could not be written.
+
+    Bookkeeping must not break the job it observes. A sync whose run row
+    cannot be written still runs: the user's data arriving matters more than
+    the record of it arriving. The failure is logged so it does not vanish.
+
+    This is deliberately the opposite of the workflow run-start rule, where a
+    failure to record is fatal — there, refusing one execution loses nothing.
+    """
+    try:
+        return recorder.start(kind, routine_key, user_id)
+    except Exception:
+        logger.warning(
+            "Could not open a run row for %s '%s' — the routine still runs",
+            kind, routine_key, exc_info=True,
+        )
+        return None
+
+
+def _close_run(
+    recorder: Any,
+    run_id: str | None,
+    routine_key: str,
+    counts: dict[str, Any] | None = None,
+    cause: str | None = None,
+) -> None:
+    """Close a run row as completed or failed. Never raises.
+
+    ``cause`` is a fixed string this package authored — see
+    :data:`mycelos.scheduler.run_recorder.CAUSES`. Text from a connector or an
+    exception never reaches here.
+    """
+    if run_id is None:
+        return
+    try:
+        if cause is None:
+            recorder.finish(run_id, counts or {})
+        else:
+            recorder.fail(run_id, cause)
+    except Exception:
+        logger.warning(
+            "Could not close the run row for '%s' — the routine still ran",
+            routine_key, exc_info=True,
+        )
+
+
 def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     """Run one pass of the living-knowledge auto-ingest.
 
@@ -44,6 +98,26 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     (memory key ``auto_ingest_enabled``, default OFF) and the connector
     is active in the registry. Errors in one connector never crash the
     loop — they are recorded and the next connector still runs.
+
+    An interrupt is the one thing that does stop the loop. A
+    ``KeyboardInterrupt`` or a ``SystemExit`` closes the current source's row
+    honestly and is then re-raised, so a shutdown still shuts down.
+
+    Every attempted source leaves a run row saying what happened. A skipped
+    source does not: nothing was attempted, so a row would claim a run that
+    never happened.
+
+    The stored cause is chosen from a fixed set by failure mode. Neither the
+    connector's own error string nor the exception's message reaches the
+    column — both are built from the data that failed, which is exactly the
+    content the column must never carry.
+
+    The returned summary is also the audit payload, and it holds to the same
+    rule. ``errors`` carries the fixed cause each row got, never ``str(e)``,
+    and ``ran`` carries the counts through the recorder's own allowlist. Both
+    used to carry the connector's text straight into ``audit_events.details``,
+    which ``Audit.log`` writes without filtering. Rule 1 names audit payloads
+    beside logs and error columns.
     """
     from mycelos.knowledge.connector_ingest import INGEST_SOURCES
 
@@ -59,6 +133,8 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
         return summary
     summary["enabled"] = True
 
+    recorder = RunRecorder(app.storage)
+
     for name, ingest_fn in INGEST_SOURCES.items():
         try:
             connector = app.connector_registry.get(name)
@@ -68,18 +144,61 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
         if not connector or connector.get("status") != "active":
             summary["skipped"].append(name)
             continue
+
+        run_id = _open_run(recorder, "source_sync", name, user_id)
         try:
             result = ingest_fn(app, user_id=user_id)
             if result.get("error"):
-                summary["errors"][name] = str(result["error"])
+                # The connector answered, and said no. Its error string is
+                # kept out of the run row on purpose: it is built from the
+                # response that failed. The cause names no remedy, because
+                # this branch cannot tell an expired token from a closed
+                # socket — see CAUSES["source_failed"].
+                summary["errors"][name] = CAUSES["source_failed"]
+                _close_run(recorder, run_id, name,
+                           cause=CAUSES["source_failed"])
             else:
-                summary["ran"][name] = {
-                    "created": result.get("created", 0),
-                    "skipped_existing": result.get("skipped_existing", 0),
-                }
-        except Exception as e:
+                # Hand the connector's own counts to the recorder and let its
+                # allowlist be the single filter. Building a dict here instead
+                # discarded every count the two connectors do not share — a
+                # yt-summary sync that updated four notes and rejected one
+                # malformed item recorded `created: 0` and nothing else — and
+                # a `.get(key, 0)` default stated a zero the connector never
+                # reported. An absent count is now absent, not zero.
+                counts = result if isinstance(result, dict) else {}
+                # The summary is this function's return value AND the audit
+                # payload, so it runs the connector's dict through the same
+                # allowlist the row uses. Handing the recorder the whole
+                # result is right for the row, which the allowlist filters;
+                # it is wrong four lines later, where `app.audit.log` writes
+                # the dict to `audit_events.details` with no filter at all.
+                # The same allowlist, imported rather than reimplemented: a
+                # second copy would drift from the row's the first time a
+                # connector grew a count.
+                summary["ran"][name] = safe_counts(counts, name)
+                _close_run(recorder, run_id, name,
+                           counts={**counts, "source": name})
+        except BaseException as e:
+            # BaseException, not Exception: a Ctrl-C, a SystemExit from a
+            # shutdown handler and a GeneratorExit end the sync just as
+            # finally as a RuntimeError does, and each one used to leave the
+            # row 'running' forever. The gateway is stopped mid-sync often
+            # enough — a redeploy is the normal way this process ends — that
+            # the hourly tick has a real chance of landing inside one.
+            # Matches workflows/agent.py:224.
             logger.error("auto-ingest for %s FAILED: %s", name, e, exc_info=True)
-            summary["errors"][name] = str(e)
+            cause = _ingest_failure_cause(e)
+            # The same fixed cause the row gets, not `str(e)`. An ingest
+            # exception's message is built from the data that failed to parse,
+            # and this dict becomes `audit_events.details` verbatim — the
+            # audit payload is named in Rule 1 beside logs and errors.
+            summary["errors"][name] = cause
+            _close_run(recorder, run_id, name, cause=cause)
+            if not isinstance(e, Exception):
+                # An interrupt must still interrupt. The row is closed
+                # honestly first; the loop does not continue to the next
+                # source, and the caller still sees the KeyboardInterrupt.
+                raise
 
     try:
         app.audit.log("knowledge.auto_ingest.run", user_id=user_id,
@@ -87,6 +206,32 @@ def auto_ingest_check(app: Any, user_id: str = "default") -> dict[str, Any]:
     except Exception:
         pass
     return summary
+
+
+def _ingest_failure_cause(exc: BaseException) -> str:
+    """Pick a fixed cause for an ingest exception, from its type alone.
+
+    The exception's *message* is never consulted. An ingest exception is the
+    most likely place in the system to carry the content that failed to parse
+    — a note title, a sender, an account number — because its message is built
+    from exactly that data. The type is safe and is also the part that tells a
+    reader where to look, so it is all we use.
+
+    Args:
+        exc: The exception the connector raised.
+
+    Returns:
+        One of the fixed strings in :data:`run_recorder.CAUSES`.
+    """
+    if isinstance(exc, (ValueError, TypeError, KeyError, IndexError,
+                        AttributeError, json.JSONDecodeError)):
+        return CAUSES["response_unreadable"]
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return CAUSES["source_unreachable"]
+    # An exception type we do not recognise says nothing about authorisation,
+    # so the fallback must not tell the reader to re-authorise. Same reasoning
+    # as the returned-error branch.
+    return CAUSES["source_failed"]
 
 
 def briefing_tick(
@@ -101,6 +246,11 @@ def briefing_tick(
     ``briefing_enabled`` is set (default OFF), the local time has passed
     ``briefing_time`` (default 07:30), and ``briefing_last_sent`` is not
     today. Must never raise — the scheduler loop stays alive.
+
+    Only a real delivery attempt is a run. The tick returns early three ways
+    — not enabled, not due, and a failure before the attempt — and none of
+    them writes a row. A row per tick would be 288 rows a day describing a
+    job that deliberately did nothing.
     """
     from mycelos.knowledge.briefing import (
         DEFAULT_BRIEFING_TIME,
@@ -108,6 +258,8 @@ def briefing_tick(
         is_briefing_due,
     )
 
+    recorder = RunRecorder(app.storage)
+    run_id: str | None = None
     try:
         if not app.memory.get(user_id, "system", "briefing_enabled"):
             return {"enabled": False, "sent": False}
@@ -121,20 +273,53 @@ def briefing_tick(
         if not is_briefing_due(now, briefing_time, last_sent):
             return {"enabled": True, "sent": False, "reason": "not_due"}
 
+        # From here on the briefing is genuinely attempted, so it is a run.
+        run_id = _open_run(recorder, "briefing", "briefing", user_id)
         result = deliver_briefing(app, user_id, reminder_service=reminder_service, now=now)
+        if result.get("sent"):
+            _close_run(recorder, run_id, "briefing",
+                       counts={"sent": 1, "source": "briefing"})
+        else:
+            # Built but not delivered — no channel, or the dispatch refused.
+            # `result["reason"]` is ours, not a provider's, but the fixed
+            # cause is what the column gets either way.
+            _close_run(recorder, run_id, "briefing",
+                       cause=CAUSES["briefing_undeliverable"])
         return {"enabled": True, **result}
-    except Exception as e:
+    except BaseException as e:
+        # BaseException, not Exception — same reasoning as auto_ingest_check
+        # and workflows/agent.py:224. A shutdown during a delivery attempt
+        # used to leave the briefing row 'running' forever.
         logger.error("briefing_tick FAILED: %s", e, exc_info=True)
+        _close_run(recorder, run_id, "briefing", cause=CAUSES["briefing_failed"])
+        if not isinstance(e, Exception):
+            # Recorded honestly, then re-raised: an interrupt still
+            # interrupts, and the scheduler loop is not kept alive through a
+            # SystemExit it was supposed to obey.
+            raise
         return {"sent": False, "error": str(e)}
 
 
 def sweep_orphaned_workflow_runs(app: Any) -> int:
-    """Mark workflow_runs stuck in 'running' as failed (e.g., after crash)."""
+    """Mark runs stuck in 'running' as failed, with an honest cause.
+
+    A row still 'running' at startup tells us one thing only: the run did
+    not finish. A crash, a kill and a clean restart are indistinguishable
+    here. The old message claimed a restart, which sent the reader looking
+    at infrastructure when the real cause was usually a crash. A wrong cause
+    is worse than no cause, so this states what is actually known.
+
+    Runs that recorded their own cause are already 'failed' and untouched.
+
+    The cause itself lives in :data:`~mycelos.scheduler.run_recorder.ORPHANED_RUN_CAUSE`,
+    beside the other fixed causes, because the inbox reads it and should not
+    have to import this module to do so.
+    """
     try:
         cursor = app.storage.execute(
-            """UPDATE workflow_runs SET status = 'failed',
-               error = 'Orphaned: gateway restarted while workflow was running'
-            WHERE status = 'running'"""
+            """UPDATE workflow_runs SET status = 'failed', error = ?
+            WHERE status = 'running'""",
+            (ORPHANED_RUN_CAUSE,),
         )
         count = cursor.rowcount
         if count > 0:
@@ -282,11 +467,69 @@ def execute_background_workflow(
     return run_id
 
 
+def _record_scheduled_failure(
+    app: Any,
+    run_id: str,
+    workflow_id: str,
+    task_id: str,
+    cause: str,
+) -> None:
+    """Make sure a failed scheduled run leaves a row that says so.
+
+    `scheduled_tasks` has no outcome column — `run_count` increments the same
+    way for success and failure — so the run row is the only durable trace.
+    The agent records its own failures, but three paths never reach it: the
+    workflow has no plan, the agent could not be constructed, and the agent
+    returned a non-completed status without writing one.
+
+    Never raises: bookkeeping must not break the scheduler loop, which still
+    has to mark the task executed to avoid a retry storm.
+
+    The row keeps `kind='scheduled_task'`, the same kind the success path
+    writes. `WorkflowAgent` sets it when it starts the run; this function only
+    sets it on the rows it has to create itself, when the agent never got that
+    far.
+
+    Note: `task_id` is not stored on the row. `workflow_runs.task_id`
+    references `tasks(id)`, and a scheduled task lives in `scheduled_tasks` —
+    passing it there fails the foreign key. It is used for logging only.
+
+    Args:
+        app: The application.
+        run_id: The run this attempt used.
+        workflow_id: The scheduled workflow.
+        task_id: The scheduled task, for the log line only.
+        cause: User-facing cause. No traceback, no paths, no content.
+    """
+    try:
+        existing = app.workflow_run_manager.get(run_id)
+        if existing is None:
+            app.workflow_run_manager.start(
+                workflow_id=workflow_id, run_id=run_id,
+                routine_key=workflow_id, kind="scheduled_task",
+            )
+            existing = app.workflow_run_manager.get(run_id)
+        if existing is not None and existing.get("status") == "running":
+            app.workflow_run_manager.fail(run_id, error=cause)
+    except Exception:
+        logger.warning(
+            "Could not record failure for scheduled run %s (task %s)",
+            run_id, task_id[:8], exc_info=True,
+        )
+
+
 def check_scheduled_workflows(app: Any) -> list[str]:
     """Check for due scheduled workflows and execute them.
 
+    Every attempt that ends leaves a run row. A failure records a cause;
+    the task is still marked executed so a broken workflow cannot spin.
+
     Returns list of executed task IDs.
     """
+    import uuid
+
+    from mycelos.workflows.run_cause import describe_exception, sanitize_cause_text
+
     due = app.schedule_manager.get_due_tasks()
     executed: list[str] = []
 
@@ -302,9 +545,13 @@ def check_scheduled_workflows(app: Any) -> list[str]:
             task_id[:8],
         )
 
+        run_id = str(uuid.uuid4())[:16]
+
         try:
             workflow = app.workflow_registry.get(workflow_id)
             if workflow is None:
+                # No workflow means no run row can reference it — the task
+                # itself is the broken thing, and it is not executed.
                 logger.warning(
                     "Workflow '%s' not found for scheduled task %s",
                     workflow_id,
@@ -313,21 +560,31 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 continue
 
             # Execute via WorkflowAgent
-            import uuid
             from mycelos.workflows.agent import WorkflowAgent
 
             plan = workflow.get("plan")
             if not plan:
+                # Used to `continue` silently: no row, no error, no trace.
                 logger.warning(
                     "Workflow '%s' has no plan, skipping", workflow_id
                 )
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    "The workflow has no plan, so there was nothing to run. "
+                    "Re-register the workflow with a plan.",
+                )
+                app.schedule_manager.mark_executed(task_id)
+                executed.append(task_id)
                 continue
 
-            run_id = str(uuid.uuid4())[:16]
             agent = WorkflowAgent(
                 app=app,
                 workflow_def=workflow,
                 run_id=run_id,
+                # A scheduled run says so whether it succeeds or fails. The
+                # kind used to be stamped on the failure path only, so a task
+                # that worked showed no history under its own kind.
+                kind="scheduled_task",
             )
             result = agent.execute(inputs=inputs)
 
@@ -339,9 +596,39 @@ def check_scheduled_workflows(app: Any) -> list[str]:
                 logger.info(
                     "Scheduled workflow '%s' completed successfully", workflow_id
                 )
+            elif result.status == "needs_clarification":
+                # A cron run is headless. Nobody is there to answer, so a
+                # question is not a pause — it is the end of the run, and the
+                # cause is that it needed an answer it could not get. The
+                # question text is the LLM's, built from the run's data, so it
+                # never reaches the row.
+                logger.warning(
+                    "Scheduled workflow '%s' stopped to ask a question", workflow_id
+                )
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    "The workflow stopped to ask a question, but a scheduled "
+                    "run has nobody to answer it. Give the workflow the "
+                    "missing input, or run it from chat.",
+                )
             else:
+                # 'failed' and any status a future version of execute() adds.
+                # An unrecognised ending is still an ending; recording it with
+                # a generic cause beats leaving no row at all.
                 logger.warning(
                     "Scheduled workflow '%s' failed: %s", workflow_id, result.error
+                )
+                # `result.error` is agent-controlled text, unlike the fixed
+                # strings the sibling branches pass. Today the only site that
+                # sets it writes a constant, so nothing leaks — but the comment
+                # above invites a future status, and an unguarded write would
+                # then carry a note title or a path into the column. It is
+                # sanitized for the same reason the raise path is, and a value
+                # the sanitizer empties falls back to the fixed string.
+                sanitized = sanitize_cause_text(result.error or "")
+                _record_scheduled_failure(
+                    app, run_id, workflow_id, task_id,
+                    sanitized or "The workflow run failed without a cause.",
                 )
 
             # Audit log
@@ -356,6 +643,9 @@ def check_scheduled_workflows(app: Any) -> list[str]:
 
         except Exception as e:
             logger.error("Error executing scheduled task %s: %s", task_id[:8], e)
+            _record_scheduled_failure(
+                app, run_id, workflow_id, task_id, describe_exception(e),
+            )
             # Still mark as executed to prevent infinite retry
             app.schedule_manager.mark_executed(task_id)
             executed.append(task_id)

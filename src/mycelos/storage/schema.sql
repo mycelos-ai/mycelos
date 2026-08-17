@@ -152,10 +152,26 @@ CREATE TABLE IF NOT EXISTS workflows (
     updated_at    TEXT
 );
 
--- Workflow Runs (V2: execution state, NOT part of NixOS State)
+-- Routine Runs (execution state, NOT part of NixOS State)
+--
+-- One table, four writers. Every routine run — workflow, scheduled task,
+-- briefing, source sync — leaves a row here. `kind` tells them apart;
+-- `workflow_id` is NULL for the kinds that have no workflow, and those are
+-- identified by `routine_key` instead (the source name, or 'briefing').
+--
+-- `error` is user-facing text: a cause, never a traceback, a file path or
+-- the content that failed to parse.
+--
+-- The CHECK on `kind` is not a style rule. A typo'd kind writes a row that
+-- every kind-filtered read misses, so a failed sync becomes invisible with
+-- no error anywhere. The four values are fixed by the design; keep this list
+-- identical to the one in database.py's rebuilt table.
 CREATE TABLE IF NOT EXISTS workflow_runs (
     id              TEXT PRIMARY KEY,
-    workflow_id     TEXT NOT NULL REFERENCES workflows(id),
+    kind            TEXT NOT NULL DEFAULT 'workflow'
+        CHECK (kind IN ('workflow', 'scheduled_task', 'briefing', 'source_sync')),
+    routine_key     TEXT,                              -- identity when workflow_id is NULL
+    workflow_id     TEXT REFERENCES workflows(id),     -- NULL for briefing / source_sync
     task_id         TEXT REFERENCES tasks(id),
     user_id         TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
     status          TEXT NOT NULL DEFAULT 'running',
@@ -178,18 +194,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_user ON workflow_runs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id ON workflow_runs(session_id);
 
--- Workflow Events (Durable Execution, detail log)
-CREATE TABLE IF NOT EXISTS workflow_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    workflow_id TEXT NOT NULL,
-    run_id      TEXT REFERENCES workflow_runs(id),
-    step_id     TEXT NOT NULL,
-    event_type  TEXT NOT NULL,
-    checkpoint  TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_workflow ON workflow_events(workflow_id, created_at);
+-- workflow_events was removed in W33: it had zero writers and zero readers.
+-- It described a durable step log that was designed but never wired.
 
 -- Credentials (encrypted, Credential Proxy)
 CREATE TABLE IF NOT EXISTS credentials (
@@ -405,7 +411,10 @@ CREATE TABLE IF NOT EXISTS knowledge_notes (
     organizer_attempts INTEGER NOT NULL DEFAULT 0,    -- failed classification attempts; parked as 'manual' at the cap
     source_file TEXT,                                 -- relative path to original document (e.g. documents/report.pdf)
     created_by  TEXT,                                 -- provenance: agent id / 'user' / 'organizer' / 'import'
-    source      TEXT                                  -- provenance JSON: kind, conversation_id, connector, external_id, ...
+    source      TEXT,                                 -- provenance JSON: kind, conversation_id, connector, external_id, ...
+    placement_confidence REAL                         -- confidence when the organizer filed this note; NULL when
+                                                      -- never classified or filed with certainty. Drives the
+                                                      -- "review placements" view.
 );
 
 CREATE INDEX IF NOT EXISTS idx_kn_type ON knowledge_notes(type, status);
@@ -413,6 +422,29 @@ CREATE INDEX IF NOT EXISTS idx_kn_due ON knowledge_notes(due) WHERE due IS NOT N
 CREATE INDEX IF NOT EXISTS idx_kn_updated ON knowledge_notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_kn_path ON knowledge_notes(path);
 CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_notes(parent_path) WHERE parent_path IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
+    user_id     TEXT NOT NULL,
+    note_path   TEXT NOT NULL,
+    x           REAL NOT NULL,
+    y           REAL NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (user_id, note_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kgp_note_path ON knowledge_graph_positions(note_path);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_follow_note_rename
+AFTER UPDATE OF path ON knowledge_notes
+BEGIN
+    UPDATE knowledge_graph_positions SET note_path = NEW.path WHERE note_path = OLD.path;
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_remove_deleted_note
+AFTER DELETE ON knowledge_notes
+BEGIN
+    DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+END;
 
 CREATE TABLE IF NOT EXISTS knowledge_links (
     from_path   TEXT NOT NULL,

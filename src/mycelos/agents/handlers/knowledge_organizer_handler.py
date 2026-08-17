@@ -216,9 +216,13 @@ class KnowledgeOrganizerHandler:
                     # Deterministic rejection — never trust the answer.
                     self._audit(user_id, "organizer.scope_violation",
                                 {"path": note["path"], "proposed": target})
+                    # Its own kind, not 'move': the inbox must select this
+                    # entry by kind, never by sniffing the payload. The
+                    # payload carries the in-scope fallback folder, so
+                    # accepting the entry files the note there.
                     inbox.add(
                         note_path=note["path"],
-                        kind="move",
+                        kind="scope_violation",
                         payload={"target": fallback_path(attachments)},
                         confidence=0.0,
                     )
@@ -276,19 +280,43 @@ class KnowledgeOrganizerHandler:
                 )
                 self._mark_seen(storage, note["path"])
                 suggested += 1
-            else:  # suggest_move
-                inbox.add(
-                    note_path=note["path"],
-                    kind="move",
-                    payload={
-                        "target": result.topic_path or "",
-                        "alternatives": [],
-                        "reason": "low_confidence",
-                    },
-                    confidence=result.confidence,
-                )
-                self._mark_seen(storage, note["path"])
-                suggested += 1
+            else:  # below the silent floor — file it anyway and mark it
+                if result.topic_path and topic_exists:
+                    # Ignoring a placement suggestion changes nothing, so it
+                    # does not belong in the inbox. File the note at once so
+                    # it is searchable and linked, and record the confidence
+                    # so the shaky ones stay reviewable as a set.
+                    try:
+                        # move_to_topic returns False without raising when the
+                        # note is gone from the index — that is a failed move.
+                        if not kb.move_to_topic(note["path"], result.topic_path):
+                            raise RuntimeError("move_to_topic reported failure")
+                    except Exception as e:
+                        # Fail closed: an unfiled note must not be marked
+                        # done. No confidence marker, no 'ok' state — count
+                        # the attempt and let the next run retry it.
+                        logger.warning(
+                            "organizer.uncertain_move failed for %s: %s",
+                            note["path"], e,
+                        )
+                        self._record_classification_failure(storage, note, user_id)
+                        continue
+                    storage.execute(
+                        "UPDATE knowledge_notes SET placement_confidence=? "
+                        "WHERE path=?",
+                        (result.confidence, note["path"]),
+                    )
+                    self._mark_state(storage, note["path"], "ok")
+                    self._audit(user_id, "organizer.uncertain_placement",
+                                {"path": note["path"],
+                                 "target": result.topic_path,
+                                 "confidence": result.confidence})
+                    moved += 1
+                else:
+                    # No usable target: the proposed topic does not exist, so
+                    # filing there would invent a folder nobody approved.
+                    self._record_classification_failure(storage, note, user_id)
+                    continue
 
             # Lazy Linker
             for related in result.related_note_paths or []:

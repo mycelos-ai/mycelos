@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -13,6 +14,8 @@ from mycelos.gateway.routers._helpers import resolve_user_id
 logger = logging.getLogger("mycelos.gateway")
 
 router = APIRouter()
+
+_MAX_GRAPH_COORDINATE = 1_000_000
 
 
 @router.get("/api/knowledge/notes")
@@ -175,16 +178,45 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
     """Update an existing note (content, status, tags, priority, parent_path, organizer_state, archive)."""
     mycelos = request.app.state.mycelos
     kb = mycelos.knowledge_base
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid request"}, status_code=422)
 
-    # Content update (on disk + DB)
-    if "content" in body:
-        result = kb.update(path, content=body["content"])
+    string_fields = ("content", "organizer_state", "status")
+    for field in string_fields:
+        if field in body and not isinstance(body[field], str):
+            return JSONResponse({"error": f"invalid {field}"}, status_code=422)
+    if "tags" in body and (
+        not isinstance(body["tags"], list)
+        or not all(isinstance(tag, str) for tag in body["tags"])
+    ):
+        return JSONResponse({"error": "invalid tags"}, status_code=422)
+    priority: int | None = None
+    if "priority" in body:
+        if isinstance(body["priority"], bool):
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+        try:
+            priority = int(body["priority"])
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+        if not 0 <= priority <= 3:
+            return JSONResponse({"error": "invalid priority"}, status_code=422)
+    if "archive" in body and not isinstance(body["archive"], bool):
+        return JSONResponse({"error": "invalid archive"}, status_code=422)
 
     # Move to a different topic
     if "parent_path" in body:
         new_parent = body["parent_path"]
-        kb.move_to_topic(path, new_parent)
+        if new_parent is not None and not isinstance(new_parent, str):
+            return JSONResponse({"error": "invalid parent_path"}, status_code=422)
+        if not kb.move_to_topic(path, new_parent):
+            return JSONResponse(
+                {"error": "move_rejected", "path": path, "target": new_parent},
+                status_code=422,
+            )
         try:
             mycelos.audit.log(
                 "knowledge.note.moved",
@@ -193,6 +225,10 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
             )
         except Exception:
             pass
+
+    # Content update (on disk + DB)
+    if "content" in body:
+        result = kb.update(path, content=body["content"])
 
     # Organizer state override (for reclassify)
     if "organizer_state" in body:
@@ -211,7 +247,7 @@ async def knowledge_update_note(path: str, request: Request) -> dict[str, Any]:
 
     # Priority update
     if "priority" in body:
-        kb.update(path, priority=int(body["priority"]))
+        kb.update(path, priority=priority)
 
     # Archive shortcut
     if body.get("archive"):
@@ -242,7 +278,43 @@ async def knowledge_note(path: str, request: Request) -> dict[str, Any]:
 async def knowledge_graph(request: Request) -> dict[str, Any]:
     """Return note graph (nodes + links) for web visualization."""
     kb = request.app.state.mycelos.knowledge_base
-    return kb.get_graph_data()
+    return kb.get_graph_data(resolve_user_id(request))
+
+
+@router.get("/api/knowledge/home-summary")
+def knowledge_home_summary(request: Request) -> dict[str, Any]:
+    """Return the values for the Home summary."""
+    kb = request.app.state.mycelos.knowledge_base
+    return kb.get_home_summary(resolve_user_id(request))
+
+
+@router.put("/api/knowledge/graph/positions/{path:path}")
+async def knowledge_update_graph_position(path: str, request: Request) -> dict[str, Any]:
+    """Store the current user's finite graph position for a known node."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "x and y are required"}, status_code=422)
+
+    x = body.get("x")
+    y = body.get("y")
+    coordinates = (x, y)
+    if (
+        any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in coordinates)
+        or any(abs(value) > _MAX_GRAPH_COORDINATE for value in coordinates)
+        or not all(math.isfinite(value) for value in coordinates)
+    ):
+        return JSONResponse(
+            {"error": "x and y must be finite numbers within the graph range"},
+            status_code=422,
+        )
+
+    kb = request.app.state.mycelos.knowledge_base
+    if not kb.store_graph_position(resolve_user_id(request), path, x, y):
+        return JSONResponse({"error": "not_found", "path": path}, status_code=404)
+    return {"path": path, "x": float(x), "y": float(y)}
 
 
 @router.get("/api/knowledge/topics")
@@ -344,11 +416,22 @@ async def knowledge_note_remind(path: str, request: Request) -> dict[str, Any]:
 @router.post("/api/knowledge/notes/{path:path}/move")
 async def knowledge_note_move(path: str, request: Request) -> dict[str, Any]:
     """Move a note to a different topic."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=422)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid request"}, status_code=422)
     kb = request.app.state.mycelos.knowledge_base
-    success = kb.move_to_topic(path, body.get("topic", ""))
+    target = body.get("topic", "")
+    if target is not None and not isinstance(target, str):
+        return JSONResponse({"error": "invalid topic"}, status_code=422)
+    success = kb.move_to_topic(path, target)
     if not success:
-        return JSONResponse({"error": "not_found", "path": path}, status_code=404)
+        return JSONResponse(
+            {"error": "move_rejected", "path": path, "target": target},
+            status_code=422,
+        )
     return {"status": "moved"}
 
 
@@ -427,6 +510,7 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
     failed = 0
     skipped_merges = 0
     skipped_new_topic_confirm = 0
+    skipped_scope_violations = 0
 
     for group in groups:
         if group.get("topic") is None:
@@ -444,6 +528,12 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
                     continue
                 if kind == "new_topic_confirm":
                     skipped_new_topic_confirm += 1
+                    continue
+                if kind == "scope_violation":
+                    # A rejected out-of-scope answer is never resolved in
+                    # bulk. Accepting it as a no-op would clear the only
+                    # signal that a rule or an attachment is wrong.
+                    skipped_scope_violations += 1
                     continue
                 if kind == "link":
                     try:
@@ -500,14 +590,16 @@ async def organizer_accept_all(request: Request) -> dict[str, Any]:
             user_id=user_id,
             details={"accepted": accepted, "topics_created": topics_created,
                      "failed": failed, "skipped_merges": skipped_merges,
-                     "skipped_new_topic_confirm": skipped_new_topic_confirm},
+                     "skipped_new_topic_confirm": skipped_new_topic_confirm,
+                     "skipped_scope_violations": skipped_scope_violations},
         )
     except Exception:
         pass
 
     return {"accepted": accepted, "topics_created": topics_created,
             "failed": failed, "skipped_merges": skipped_merges,
-            "skipped_new_topic_confirm": skipped_new_topic_confirm}
+            "skipped_new_topic_confirm": skipped_new_topic_confirm,
+            "skipped_scope_violations": skipped_scope_violations}
 
 
 @router.post("/api/organizer/suggestions/{sid}/accept")
@@ -524,7 +616,10 @@ async def organizer_accept(sid: int, request: Request) -> Any:
     payload = sug["payload"]
 
     try:
-        if kind == "move":
+        if kind in ("move", "scope_violation"):
+            # A scope_violation carries the in-scope fallback folder the
+            # rejected answer was replaced with. Accepting it means "file
+            # it there" — the same apply as a move, one note at a time.
             target = payload.get("target")
             if not target:
                 return JSONResponse({"error": "invalid suggestion payload"}, status_code=422)
@@ -563,6 +658,18 @@ async def organizer_accept(sid: int, request: Request) -> Any:
                 return JSONResponse({"error": "apply failed: merge failed"}, status_code=500)
         elif kind == "refine_type":
             pass
+        else:
+            # Fail closed (Constitution Rule 3). An unrecognised kind has
+            # no apply branch, so accepting it would mark the row handled
+            # while nothing happened — the exact fail-open that was closed
+            # for scope_violation. Every kind in INBOX_KINDS without a
+            # branch here (failed_run, unclassifiable) lands on this line
+            # and stays pending until it gets one.
+            logger.warning("organizer accept refused: no apply path for kind %s", kind)
+            return JSONResponse(
+                {"error": "unsupported suggestion kind", "kind": kind},
+                status_code=422,
+            )
     except Exception as exc:
         logger.warning("organizer accept failed for suggestion %s: %s", sid, exc)
         return JSONResponse({"error": "apply failed"}, status_code=500)

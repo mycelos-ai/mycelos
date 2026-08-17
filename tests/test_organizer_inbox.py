@@ -38,9 +38,11 @@ def test_accept_suggestion_marks_accepted(storage: SQLiteStorage) -> None:
 
     row = storage.fetchone("SELECT status FROM organizer_suggestions WHERE id=?", (sid,))
     assert row["status"] == "accepted"
+    # One bucket per known kind, all empty. 'scope_violation' joined the
+    # set when the rejection path stopped borrowing the 'move' kind.
     assert inbox.list_pending() == {
         "move": [], "new_topic": [], "new_topic_confirm": [],
-        "link": [], "refine_type": [], "merge": [],
+        "link": [], "refine_type": [], "merge": [], "scope_violation": [],
     }
 
 

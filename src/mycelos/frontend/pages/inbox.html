@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/inbox.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script src="/shared/inbox.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="mycelosApp()" class="review-surface">
+  <div id="sidebar"></div>
+
+  <main class="review-main" x-data="inboxApp()" x-init="initInbox()">
+    <header class="review-header">
+      <div>
+        <h1 x-text="t('inbox.title')"></h1>
+        <p x-text="t('inbox.subtitle')"></p>
+      </div>
+      <span class="review-count" x-show="!loading" x-text="countLabel()"></span>
+    </header>
+
+    <section class="review-list" :aria-label="t('inbox.list_label')">
+      <div class="review-loading" x-show="loading" x-text="t('common.loading')"></div>
+
+      <div class="review-error" x-show="error" role="alert">
+        <span x-text="error"></span>
+        <button type="button" @click="loadInbox()" x-text="t('common.retry')"></button>
+      </div>
+
+      <div class="review-empty" x-show="!loading && !error && entries.length === 0">
+        <span class="material-symbols-outlined" aria-hidden="true">task_alt</span>
+        <h2 x-text="t('inbox.empty_title')"></h2>
+        <p x-text="t('inbox.empty_body')"></p>
+      </div>
+
+      <template x-for="entry in entries" :key="entry.id">
+        <article class="review-entry">
+          <div class="review-entry-icon">
+            <span class="material-symbols-outlined" aria-hidden="true" x-text="entryIcon(entry)"></span>
+          </div>
+          <div class="review-entry-body">
+            <div class="review-entry-head">
+              <h2 x-text="entry.title"></h2>
+              <span x-text="kindLabel(entry)"></span>
+            </div>
+            <p x-text="entry.why"></p>
+            <div class="review-entry-actions">
+              <template x-for="action in supportedActions(entry)" :key="action.id">
+                <button
+                  type="button"
+                  @click="runAction(entry, action.id)"
+                  :disabled="busyId === entry.id"
+                  x-text="actionLabel(action.id)"
+                ></button>
+              </template>
+              <a
+                x-show="entry.source && entry.source.path"
+                :href="noteHref(entry.source && entry.source.path)"
+                x-text="t('inbox.open_note')"
+              ></a>
+            </div>
+          </div>
+        </article>
+      </template>
+    </section>
+  </main>
+
+  <nav id="mobile-nav"></nav>
+</body>
+</html>

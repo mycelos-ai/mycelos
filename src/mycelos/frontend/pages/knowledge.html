@@ -140,7 +140,7 @@
   <div id="quick-capture"></div>
 
   <!-- Main content area: two-panel knowledge browser -->
-  <main class="flex-1 flex flex-col md:pl-64 min-w-0"
+  <main class="flex-1 flex flex-col md:pl-[170px] min-w-0"
         x-data="knowledgeApp()" x-init="initKnowledge()"
         @click="if ($event.target.closest('.wikilink')) { $event.preventDefault(); navigateToNote($event.target.closest('.wikilink').dataset.note); }">
 
@@ -263,7 +263,7 @@
         return {
           topicGroups: [],
           busy: false,
-          expanded: false,
+          expanded: new URLSearchParams(window.location.search).get('inbox') === '1',
           totalCount() {
             return this.topicGroups.reduce((sum, g) => sum + g.notes.length, 0);
           },
@@ -1483,15 +1483,42 @@
           });
 
           // Open note from URL ?note=... (e.g., from chat link or wikilink)
-          const noteParam = new URLSearchParams(window.location.search).get('note');
+          const pageParams = new URLSearchParams(window.location.search);
+          const noteParam = pageParams.get('note');
           if (noteParam) {
             await this.navigateToNote(encodeURIComponent(noteParam));
           }
 
           // Deep-link into the graph view (?view=graph, used by the
           // dashboard hero teaser).
-          const viewParam = new URLSearchParams(window.location.search).get('view');
-          if (viewParam === 'graph' && !noteParam) {
+          const viewParam = pageParams.get('view');
+          const inboxParam = pageParams.get('inbox');
+          const topicParam = pageParams.get('topic');
+          if (topicParam && !noteParam) {
+            const existingTopic = this.topics.find((topic) => topic.path === topicParam);
+            const topicPart = topicParam.split('/').filter(Boolean).pop() || topicParam;
+            const topic = existingTopic || {
+              path: topicParam,
+              title: topicPart.replace(/-/g, ' '),
+              child_count: 0,
+              open_tasks: 0,
+            };
+            this.topics = [topic];
+            this.viewMode = 'topics';
+            this.expandedTopic = topic.path;
+            try {
+              this.topicChildren = await MycelosAPI.get('/api/knowledge/topics/' + encodeURIComponent(topic.path) + '/children');
+            } catch (_error) {
+              this.topicChildren = [];
+            }
+            if (this.mobileView) {
+              this.mobileTopic = topic;
+              this.mobileLevel = 'topic';
+            }
+          } else if (inboxParam === '1' && !noteParam) {
+            this.viewMode = 'tasks';
+            await this.loadTasks();
+          } else if (viewParam === 'graph' && !noteParam) {
             this.viewMode = 'graph';
             this.filteredNotes = this.notes;
             this.$dispatch('load-graph');

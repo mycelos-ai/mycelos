@@ -5,9 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
-from datetime import datetime, timezone
+import shutil
+import sqlite3
+import tempfile
+import threading
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mycelos.knowledge import ranking
 from mycelos.knowledge.indexer import KnowledgeIndexer
@@ -76,6 +83,10 @@ class PathTraversalError(Exception):
     """Raised when a path escapes the knowledge directory."""
 
 
+class _ParentUpdateError(Exception):
+    """Raised when a checked note disappears before its parent update."""
+
+
 class KnowledgeBase:
     """Main knowledge base service.
 
@@ -87,6 +98,7 @@ class KnowledgeBase:
         self._app = app
         self._knowledge_dir = self._resolve_knowledge_dir(app)
         self._knowledge_dir.mkdir(parents=True, exist_ok=True)
+        self._parent_change_lock = threading.Lock()
         self._indexer = KnowledgeIndexer(app.storage)
         self._indexer.ensure_fts(rebuild_content_provider=self._note_body)
         self._embedding_provider = self._init_embedding_provider()
@@ -834,23 +846,110 @@ class KnowledgeBase:
         """List notes belonging to a topic."""
         return self._indexer.list_children(topic_path, limit=limit)
 
-    def move_to_topic(self, path: str, topic_path: str) -> bool:
+    def move_to_topic(self, path: str, topic_path: str | None) -> bool:
         """Move a note to a different topic."""
-        if not self._indexer.get_note_meta(path):
+        if topic_path is not None and not isinstance(topic_path, str):
             return False
-        self._indexer.set_parent(path, topic_path)
-        # Also update the file's frontmatter
         file_path = self._safe_path(path)
-        if file_path.exists():
-            md = file_path.read_text(encoding="utf-8")
-            note = parse_frontmatter(md)
-            note.parent_path = topic_path
-            note.updated_at = _now()
-            file_path.write_text(render_note(note), encoding="utf-8")
-        self._app.audit.log(
-            "knowledge.note.moved",
-            details={"path": path, "topic": topic_path},
-        )
+
+        with self._parent_change_lock:
+            source = self._indexer.get_note_meta(path)
+            if not source:
+                return False
+            system_roots = {"notes", "tasks"}
+            system_root = topic_path in system_roots
+            topic_root = topic_path is None and source.get("type") == "topic"
+            if topic_path is None and not topic_root:
+                return False
+            if not system_root and not topic_root:
+                target = self._indexer.get_note_meta(topic_path)
+                if not target:
+                    return False
+                if target.get("type") != "topic" or target.get("status") != "active":
+                    return False
+                if not self._safe_path(topic_path).exists():
+                    return False
+
+                current_path = topic_path
+                visited: set[str] = set()
+                while current_path:
+                    if current_path == path or current_path in visited:
+                        return False
+                    if current_path in system_roots:
+                        break
+                    visited.add(current_path)
+                    current = self._indexer.get_note_meta(current_path)
+                    if not current:
+                        return False
+                    current_path = current.get("parent_path") or ""
+
+            if not file_path.exists():
+                return False
+
+            staged_path: Path | None = None
+            backup_path: Path | None = None
+            target_replaced = False
+            try:
+                md = file_path.read_text(encoding="utf-8")
+                note = parse_frontmatter(md)
+                note.parent_path = topic_path
+                note.updated_at = _now()
+
+                with tempfile.NamedTemporaryFile(
+                    dir=file_path.parent,
+                    prefix=f".{file_path.name}.new-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as staged_file:
+                    staged_path = Path(staged_file.name)
+                staged_path.write_text(render_note(note), encoding="utf-8")
+                shutil.copymode(file_path, staged_path)
+                with staged_path.open("rb") as staged_stream:
+                    os.fsync(staged_stream.fileno())
+
+                with tempfile.NamedTemporaryFile(
+                    dir=file_path.parent,
+                    prefix=f".{file_path.name}.old-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as backup_file:
+                    backup_path = Path(backup_file.name)
+                shutil.copy2(file_path, backup_path)
+
+                with self._app.storage.transaction():
+                    os.replace(staged_path, file_path)
+                    target_replaced = True
+                    if not self._indexer.set_parent(path, topic_path):
+                        raise _ParentUpdateError(path)
+            except (OSError, sqlite3.Error, _ParentUpdateError):
+                if target_replaced and backup_path is not None:
+                    try:
+                        os.replace(backup_path, file_path)
+                        backup_path = None
+                    except OSError:
+                        logger.exception(
+                            "Could not restore the Markdown file for %s", path
+                        )
+                        raise
+                return False
+            finally:
+                for temporary_path in (staged_path, backup_path):
+                    if temporary_path is None:
+                        continue
+                    try:
+                        temporary_path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning(
+                            "Could not remove the temporary file %s", temporary_path
+                        )
+
+        try:
+            self._app.audit.log(
+                "knowledge.note.moved",
+                details={"path": path, "topic": topic_path},
+            )
+        except Exception:
+            logger.warning("Could not write the move audit for %s", path, exc_info=True)
         return True
 
     # ─── Topic Management ─────────────────────────────────────────────────────
@@ -1203,7 +1302,99 @@ class KnowledgeBase:
         )
         return {"notes": len(notes), "links": edge_count}
 
-    def get_graph_data(self) -> dict:
+    def get_graph_positions(self, user_id: str) -> dict[str, dict[str, float]]:
+        """Return the saved node positions for one user."""
+        rows = self._app.storage.fetchall(
+            "SELECT note_path, x, y FROM knowledge_graph_positions WHERE user_id=?",
+            (user_id,),
+        )
+        return {
+            row["note_path"]: {"x": float(row["x"]), "y": float(row["y"])}
+            for row in rows
+        }
+
+    def get_home_summary(
+        self,
+        user_id: str,
+        *,
+        now_utc: datetime | None = None,
+    ) -> dict:
+        """Return imports for the user's local day and their source attachments."""
+        timezone_name = None
+        try:
+            timezone_name = self._app.memory.get(
+                user_id, "system", "user.timezone"
+            )
+        except Exception:
+            pass
+        if not timezone_name:
+            user = self._app.storage.fetchone(
+                "SELECT timezone FROM users WHERE id=?", (user_id,)
+            )
+            timezone_name = (user or {}).get("timezone")
+
+        local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
+        if timezone_name:
+            try:
+                local_timezone = ZoneInfo(str(timezone_name))
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning(
+                    "Unknown user timezone %r; using the server timezone",
+                    timezone_name,
+                )
+
+        reference = now_utc or datetime.now(timezone.utc)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=timezone.utc)
+        local_day = reference.astimezone(local_timezone).date()
+        start_local = datetime.combine(local_day, time.min, tzinfo=local_timezone)
+        end_local = start_local + timedelta(days=1)
+        start_utc = start_local.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        end_utc = end_local.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+        count_row = self._app.storage.fetchone(
+            """SELECT COUNT(*) AS import_count
+                 FROM knowledge_notes
+                WHERE created_by = 'import'
+                  AND created_at >= ?
+                  AND created_at < ?""",
+            (start_utc, end_utc),
+        )
+        rows = self._app.storage.fetchall(
+            """SELECT topic_path, source_id
+                 FROM source_attachments
+                WHERE user_id = ?
+                ORDER BY topic_path, id""",
+            (user_id,),
+        )
+        sources_by_topic: dict[str, list[str]] = {}
+        for row in rows:
+            sources_by_topic.setdefault(row["topic_path"], []).append(row["source_id"])
+        return {
+            "imports_today": int((count_row or {}).get("import_count") or 0),
+            "sources_by_topic": sources_by_topic,
+        }
+
+    def store_graph_position(self, user_id: str, path: str, x: float, y: float) -> bool:
+        """Store a node position when the node exists."""
+        try:
+            with self._app.storage.transaction():
+                if not self._indexer.get_note_meta(path):
+                    return False
+                self._app.storage.execute(
+                    """INSERT INTO knowledge_graph_positions (user_id, note_path, x, y, updated_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id, note_path) DO UPDATE SET
+                           x=excluded.x,
+                           y=excluded.y,
+                           updated_at=excluded.updated_at""",
+                    (user_id, path, float(x), float(y), _now()),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def get_graph_data(self, user_id: str = "default") -> dict:
         """Return note graph data suitable for web visualization.
 
         Archived notes are excluded; edges carry a ``kind``
@@ -1222,6 +1413,7 @@ class KnowledgeBase:
                 "type": n["type"],
                 "status": n["status"],
                 "priority": n["priority"],
+                "parent_path": n.get("parent_path"),
                 "updated_at": n["updated_at"],
             }
             for n in notes
@@ -1240,6 +1432,11 @@ class KnowledgeBase:
         return {
             "nodes": nodes,
             "edges": edges,
+            "positions": {
+                path: position
+                for path, position in self.get_graph_positions(user_id).items()
+                if path in visible
+            },
             "stats": {"notes": len(nodes), "links": len(edges)},
         }
 

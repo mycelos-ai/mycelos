@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -579,16 +580,18 @@ def test_audit_details_parsed_as_dict(client: TestClient):
 
 
 class TestRootRedirect:
-    def test_root_serves_chat_redirect(self, client: TestClient):
-        """GET / must lead the user to chat — either via HTTP redirect or
-        via an index.html that contains a meta-refresh pointing at chat."""
+    def test_root_serves_home_redirect(self, client: TestClient):
+        """GET / must lead the user to Home."""
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code in (200, 302, 307)
         if resp.status_code in (302, 307):
-            assert "/pages/chat.html" in resp.headers.get("location", "")
+            assert "/pages/dashboard.html" in resp.headers.get("location", "")
         else:
-            # Meta-refresh index.html
-            assert "/pages/chat.html" in resp.text
+            assert re.search(
+                r'<meta\s+http-equiv=["\']refresh["\']\s+content=["\']0;url=/pages/dashboard\.html["\']\s*/?>',
+                resp.text,
+                re.IGNORECASE,
+            )
 
 
 # --- Workflow run sidebar endpoints ---

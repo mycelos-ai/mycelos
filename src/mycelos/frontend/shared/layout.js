@@ -9,7 +9,7 @@
 /**
  * Detect the active page name from the current URL path.
  * Maps /pages/chat.html -> "chat", /pages/dashboard.html -> "dashboard", etc.
- * Falls back to "chat" for the root or unknown paths.
+ * Falls back to Home for the root or unknown paths.
  */
 /* ── Theme bootstrap ────────────────────────────────────────────────
    Applies the user's theme (preset + accent) as early as possible:
@@ -54,9 +54,23 @@ function detectActivePage() {
   const path = window.location.pathname;
   const match = path.match(/\/pages\/(\w+)\.html/);
   if (match) return match[1];
-  // Root redirects to chat
-  return 'chat';
+  return 'dashboard';
 }
+
+/** Map legacy pages onto the five product surfaces. */
+window.surfaceActive = function (activePage, surface) {
+  const query = new URLSearchParams(window.location.search);
+  if (surface === 'brain') {
+    return activePage === 'dashboard' || (activePage === 'knowledge' && query.get('inbox') !== '1');
+  }
+  if (surface === 'inbox') return activePage === 'inbox' || (activePage === 'knowledge' && query.get('inbox') === '1');
+  if (surface === 'routines') return activePage === 'workflows';
+  if (surface === 'converse') return activePage === 'chat';
+  if (surface === 'system') {
+    return !['dashboard', 'knowledge', 'inbox', 'workflows', 'chat'].includes(activePage);
+  }
+  return false;
+};
 
 /**
  * Load an HTML fragment into a container element.

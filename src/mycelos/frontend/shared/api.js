@@ -232,96 +232,22 @@ async function _parseError(res) {
 
 window.sidebarData = function () {
   return {
-    agents: [],
-    activeRuns: [],
-    scheduledRuns: [],
-    reminders: [],
-    recentSessions: [],
+    inboxCount: 0,
     security: null,
     async loadSidebar() {
-      // Load security status from health endpoint (for network access warning)
       try {
-        const health = await MycelosAPI.get("/api/health");
+        const health = await MycelosAPI.get('/api/health');
         this.security = health?.security || null;
       } catch (e) {
         this.security = null;
       }
 
-      // Single source of truth: backend returns only conversational agents.
       try {
-        const raw = await MycelosAPI.get("/api/agents/conversational");
-        this.agents = Array.isArray(raw) ? raw : [];
+        const inbox = await MycelosAPI.get('/api/inbox/count');
+        this.inboxCount = Number(inbox?.count || 0);
       } catch (e) {
-        this.agents = [];
+        this.inboxCount = 0;
       }
-
-      try {
-        this.activeRuns = await MycelosAPI.get("/api/workflow-runs?status=active");
-      } catch (e) {
-        this.activeRuns = [];
-      }
-
-      try {
-        this.scheduledRuns = await MycelosAPI.get("/api/workflow-runs/scheduled");
-      } catch (e) {
-        this.scheduledRuns = [];
-      }
-
-      try {
-        this.reminders = await MycelosAPI.get("/api/reminders/upcoming");
-      } catch (e) {
-        this.reminders = [];
-      }
-
-      try {
-        const s = await MycelosAPI.get("/api/sessions");
-        const list = Array.isArray(s) ? s : (s.sessions || []);
-        this.recentSessions = list.slice(0, 10);
-      } catch (e) {
-        this.recentSessions = [];
-      }
-    },
-
-    sessionLabel(session) { return window.sessionLabel(session); },
-
-    startNewChat() {
-      if (window.location.pathname.endsWith("/pages/chat.html")) {
-        window.dispatchEvent(new CustomEvent("mycelos:new-chat"));
-      } else {
-        window.location.href = "/pages/chat.html?new=1";
-      }
-    },
-
-    selectAgentAndStart(agentId) {
-      if (window.location.pathname.endsWith("/pages/chat.html")) {
-        window.dispatchEvent(new CustomEvent("mycelos:new-chat", { detail: { agentId } }));
-      } else {
-        window.location.href = "/pages/chat.html?new=1&agent=" + encodeURIComponent(agentId);
-      }
-    },
-
-    resumeWorkflowRun(runId) {
-      if (window.location.pathname.endsWith("/pages/chat.html")) {
-        window.dispatchEvent(new CustomEvent("mycelos:resume-run", { detail: { runId } }));
-      } else {
-        window.location.href = "/pages/chat.html?resume_run=" + encodeURIComponent(runId);
-      }
-    },
-
-    openSession(sessionId) {
-      if (window.location.pathname.endsWith("/pages/chat.html")) {
-        window.dispatchEvent(new CustomEvent("mycelos:open-session", { detail: { sessionId } }));
-      } else {
-        window.location.href = "/pages/chat.html?session=" + encodeURIComponent(sessionId);
-      }
-    },
-
-    openScheduledWorkflow(workflowId) {
-      window.location.href = "/pages/workflows.html?workflow=" + encodeURIComponent(workflowId);
-    },
-
-    openReminder(notePath) {
-      window.location.href = "/pages/knowledge.html?note=" + encodeURIComponent(notePath);
     },
   };
 };

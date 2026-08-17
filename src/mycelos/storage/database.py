@@ -109,9 +109,18 @@ class SQLiteStorage:
             ("knowledge_notes", "source", "TEXT"),
             # Classification retry bookkeeping — see KnowledgeOrganizerHandler.
             ("knowledge_notes", "organizer_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            # Organizer confidence at filing time; NULL when never classified
+            # or filed with certainty. Drives the "review placements" view.
+            ("knowledge_notes", "placement_confidence", "REAL"),
             # Typed graph edges: wikilink | parent | related | merged_from.
             ("knowledge_links", "kind", "TEXT"),
         ]
+        # This loop is unconditional and runs on every connect. That matters:
+        # re-applying schema.sql only happens when one of the check-tables
+        # above is missing, so a column added to schema.sql alone never
+        # reaches an existing database. SQLite has no ADD COLUMN IF NOT
+        # EXISTS; the SELECT ... LIMIT 0 probe is what makes each entry
+        # idempotent. Add new columns here, not to schema.sql only.
         for table, column, col_type in _MIGRATIONS:
             try:
                 self._conn.execute(f"SELECT {column} FROM {table} LIMIT 0")
@@ -121,6 +130,8 @@ class SQLiteStorage:
                     self._conn.commit()
                 except sqlite3.OperationalError:
                     pass  # Column might already exist in some edge case
+
+        self._migrate_workflow_runs_to_routine_runs()
 
         # One-shot migration: earlier schema versions wrote '["chat"]' as
         # the default remind_via for every new note, regardless of which
@@ -223,6 +234,207 @@ class SQLiteStorage:
             """
         )
         self._conn.commit()
+
+        # Graph node positions are user-owned. This script also runs for
+        # existing databases because schema.sql is only reapplied when an
+        # older check table is absent.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
+                user_id     TEXT NOT NULL,
+                note_path   TEXT NOT NULL,
+                x           REAL NOT NULL,
+                y           REAL NOT NULL,
+                updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                PRIMARY KEY (user_id, note_path)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kgp_note_path
+                ON knowledge_graph_positions(note_path);
+            CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_follow_note_rename
+            AFTER UPDATE OF path ON knowledge_notes
+            BEGIN
+                UPDATE knowledge_graph_positions
+                SET note_path = NEW.path
+                WHERE note_path = OLD.path;
+            END;
+            CREATE TRIGGER IF NOT EXISTS knowledge_graph_positions_remove_deleted_note
+            AFTER DELETE ON knowledge_notes
+            BEGIN
+                DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+            END;
+            """
+        )
+
+        # The request user can come from an authenticated gateway session
+        # before that user has a local users row. Rebuild the first version
+        # of this table, which had a users foreign key, without that key.
+        foreign_keys = self._conn.execute(
+            "PRAGMA foreign_key_list(knowledge_graph_positions)"
+        ).fetchall()
+        if foreign_keys:
+            self._conn.execute("BEGIN")
+            try:
+                self._conn.execute(
+                    "DROP TRIGGER IF EXISTS knowledge_graph_positions_follow_note_rename"
+                )
+                self._conn.execute(
+                    "DROP TRIGGER IF EXISTS knowledge_graph_positions_remove_deleted_note"
+                )
+                self._conn.execute(
+                    """CREATE TABLE knowledge_graph_positions_new (
+                           user_id     TEXT NOT NULL,
+                           note_path   TEXT NOT NULL,
+                           x           REAL NOT NULL,
+                           y           REAL NOT NULL,
+                           updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                           PRIMARY KEY (user_id, note_path)
+                       )"""
+                )
+                self._conn.execute(
+                    """INSERT INTO knowledge_graph_positions_new
+                           (user_id, note_path, x, y, updated_at)
+                       SELECT user_id, note_path, x, y, updated_at
+                       FROM knowledge_graph_positions"""
+                )
+                self._conn.execute("DROP TABLE knowledge_graph_positions")
+                self._conn.execute(
+                    "ALTER TABLE knowledge_graph_positions_new RENAME TO knowledge_graph_positions"
+                )
+                self._conn.execute(
+                    "CREATE INDEX idx_kgp_note_path ON knowledge_graph_positions(note_path)"
+                )
+                self._conn.execute(
+                    """CREATE TRIGGER knowledge_graph_positions_follow_note_rename
+                       AFTER UPDATE OF path ON knowledge_notes
+                       BEGIN
+                           UPDATE knowledge_graph_positions
+                           SET note_path = NEW.path
+                           WHERE note_path = OLD.path;
+                       END"""
+                )
+                self._conn.execute(
+                    """CREATE TRIGGER knowledge_graph_positions_remove_deleted_note
+                       AFTER DELETE ON knowledge_notes
+                       BEGIN
+                           DELETE FROM knowledge_graph_positions WHERE note_path = OLD.path;
+                       END"""
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        self._conn.commit()
+
+    def _migrate_workflow_runs_to_routine_runs(self) -> None:
+        """Give workflow_runs a routine `kind` and a nullable workflow_id.
+
+        This does not fit the _MIGRATIONS list above. That list can only ADD
+        columns, and this migration must also DROP a NOT NULL constraint —
+        SQLite has no ALTER TABLE for that. The only way is a table rebuild:
+        create the new shape, copy the rows, drop the old table, rename, and
+        recreate the three indexes that went down with the old table.
+
+        Runs on every connect, like the loop above, because re-applying
+        schema.sql only happens when a check-table is missing. Idempotency
+        comes from the `kind` probe: once the rebuilt table is in place the
+        whole block is skipped, so opening the same database repeatedly
+        neither errors nor touches the data.
+
+        The rebuild is wrapped in one transaction. A half-migrated runs
+        table — rows copied but the rename not done, or indexes missing —
+        is the worst outcome here, so it is all-or-nothing.
+
+        Foreign keys must be OFF for the swap. With them ON, dropping the
+        old table would be refused or would leave dangling references from
+        tables that point at it. PRAGMA foreign_keys is a no-op inside a
+        transaction, so it is toggled around the transaction, not within it.
+        """
+        try:
+            self._conn.execute("SELECT kind, routine_key FROM workflow_runs LIMIT 0")
+            already_migrated = True
+        except sqlite3.OperationalError:
+            already_migrated = False
+
+        if not already_migrated:
+            # Column order matches the new schema.sql definition. The copy
+            # lists every column explicitly: SELECT * would depend on the
+            # old table's order and silently misalign if it ever differed.
+            #
+            # This table definition must stay identical to schema.sql's, the
+            # CHECK on `kind` included. A migrated database that accepts a
+            # value a fresh one rejects is a difference no test on one path
+            # alone would show. Every copied row is 'workflow', so the CHECK
+            # holds for existing data.
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                self._conn.executescript(
+                    """
+                    CREATE TABLE workflow_runs_new (
+                        id              TEXT PRIMARY KEY,
+                        kind            TEXT NOT NULL DEFAULT 'workflow'
+                            CHECK (kind IN ('workflow', 'scheduled_task',
+                                            'briefing', 'source_sync')),
+                        routine_key     TEXT,
+                        workflow_id     TEXT REFERENCES workflows(id),
+                        task_id         TEXT REFERENCES tasks(id),
+                        user_id         TEXT NOT NULL DEFAULT 'default' REFERENCES users(id),
+                        status          TEXT NOT NULL DEFAULT 'running',
+                        current_step    TEXT,
+                        completed_steps TEXT,
+                        artifacts       TEXT,
+                        error           TEXT,
+                        cost            REAL NOT NULL DEFAULT 0.0,
+                        budget_limit    REAL,
+                        retry_count     INTEGER NOT NULL DEFAULT 0,
+                        conversation    TEXT,
+                        clarification   TEXT,
+                        notified_at     TEXT,
+                        session_id      TEXT,
+                        created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                        updated_at      TEXT
+                    );
+
+                    INSERT INTO workflow_runs_new
+                        (id, kind, routine_key, workflow_id, task_id, user_id,
+                         status, current_step, completed_steps, artifacts, error,
+                         cost, budget_limit, retry_count, conversation,
+                         clarification, notified_at, session_id, created_at,
+                         updated_at)
+                    SELECT
+                         id, 'workflow', NULL, workflow_id, task_id, user_id,
+                         status, current_step, completed_steps, artifacts, error,
+                         cost, budget_limit, retry_count, conversation,
+                         clarification, notified_at, session_id, created_at,
+                         updated_at
+                      FROM workflow_runs;
+
+                    DROP TABLE workflow_runs;
+                    ALTER TABLE workflow_runs_new RENAME TO workflow_runs;
+
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_status
+                        ON workflow_runs(status);
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_user
+                        ON workflow_runs(user_id, status);
+                    CREATE INDEX IF NOT EXISTS idx_workflow_runs_session_id
+                        ON workflow_runs(session_id);
+                    """
+                )
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
+
+        # workflow_events: zero writers, zero readers. Dropped in W33.
+        # Separate from the rebuild above so a database that already has the
+        # new runs table still loses the dead table.
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS workflow_events")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def initialize(self) -> None:
         """Create database and apply schema."""

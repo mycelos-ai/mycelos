@@ -30,24 +30,38 @@ class WorkflowRunManager:
 
     def start(
         self,
-        workflow_id: str,
+        workflow_id: str | None,
         task_id: str | None = None,
         user_id: str = "default",
         budget_limit: float | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        routine_key: str | None = None,
+        kind: str = "workflow",
     ) -> str:
         """Start a new workflow run.
 
         Args:
-            workflow_id: ID of the workflow to run.
-            task_id: Optional associated task ID.
+            workflow_id: ID of the workflow to run. May be None for an ad-hoc
+                workflow definition that was never registered; `routine_key`
+                then carries its identity.
+            task_id: Optional associated task ID. Must reference `tasks(id)` —
+                a scheduled task id belongs to `scheduled_tasks` and does not
+                go here.
             user_id: Owner of the run.
             budget_limit: Optional maximum cost allowed.
             run_id: Optional pre-assigned run ID (auto-generated if not provided).
             session_id: Optional chat session that initiated this run. Used to
                 link runs back to the originating session in the admin UI. Stays
                 null for headless/scheduled runs.
+            routine_key: Identity for runs with no `workflow_id`.
+            kind: Which routine this run belongs to. Defaults to 'workflow',
+                the ad-hoc and chat-started case. The scheduler passes
+                'scheduled_task' so a scheduled run carries the same kind
+                whether it succeeds or fails — a per-kind history that only
+                held the failures would read as if nothing ever worked. The
+                column's CHECK constraint remains the backstop for a value
+                outside the four known kinds.
 
         Returns:
             The new run ID.
@@ -56,9 +70,10 @@ class WorkflowRunManager:
         self._storage.execute(
             """INSERT INTO workflow_runs
                (id, workflow_id, task_id, user_id, budget_limit, completed_steps,
-                artifacts, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, workflow_id, task_id, user_id, budget_limit, "[]", "{}", session_id),
+                artifacts, session_id, routine_key, kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, workflow_id, task_id, user_id, budget_limit, "[]", "{}",
+             session_id, routine_key, kind),
         )
         return run_id
 
@@ -156,14 +171,35 @@ class WorkflowRunManager:
     def wait_for_input(self, run_id: str, prompt: str = "") -> None:
         """Pause workflow waiting for user input.
 
+        The prompt is deliberately not stored in ``error``. It is the LLM's
+        clarification question, generated from the run's own conversation,
+        which for a knowledge workflow is the user's notes — a note title, a
+        name, an account number. ``error`` carries a cause and never content
+        (Constitution Rule 1), and it ships over HTTP through
+        ``GET /api/workflow-runs``.
+
+        Nothing is lost by dropping it. The caller writes the same question
+        into ``workflow_runs.clarification`` one statement later
+        (``workflows/agent.py``), which is the column every reader in the app
+        and the frontend actually uses for a waiting run. Every reader of
+        ``error`` gates on ``status == 'failed'``, so a ``waiting_input`` row
+        was never rendered through it.
+
+        Deletion rather than sanitization on purpose:
+        :func:`~mycelos.workflows.run_cause.sanitize_cause_text` documents that
+        it cannot classify free prose, and a question is exactly that. Keeping
+        a redacted copy of data that already has a correct home two lines away
+        buys nothing.
+
         Args:
             run_id: The run to pause.
-            prompt: Description of what input is needed.
+            prompt: Description of what input is needed. Used by the caller to
+                fill ``clarification``; not stored by this method.
 
         Raises:
             ValueError: If the run does not exist or transition is invalid.
         """
-        self._transition(run_id, "waiting_input", error=f"waiting: {prompt}")
+        self._transition(run_id, "waiting_input")
 
     def complete(self, run_id: str) -> None:
         """Mark a run as completed.
