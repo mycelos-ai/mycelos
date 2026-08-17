@@ -54,19 +54,15 @@ def test_connectors_page_shows_active_connectors(
         f"Expected active connectors, got: {body[:500]}"
 
 
-def test_connectors_page_use_case_tiles(
+def test_connectors_page_shows_playwright_recipe(
     page: Page, base_url: str,
 ) -> None:
-    """Clicking a MCP use-case tile should expand to show connector options."""
+    """The connectors page should offer the Playwright MCP recipe."""
     page.goto(f"{base_url}/pages/connectors.html", wait_until="networkidle")
 
-    # Click the "Browse the Web" MCP tile
-    browse_tile = page.locator("text=Browse the Web").first
-    browse_tile.click()
-    page.wait_for_timeout(500)
-
-    # Should show Playwright option
-    expect(page.locator("text=Playwright").first).to_be_visible()
+    playwright_recipe = page.locator("#recipe-playwright")
+    expect(playwright_recipe).to_be_visible()
+    expect(playwright_recipe.get_by_role("button", name="Add")).to_be_visible()
 
 
 def test_add_connector_via_page(
@@ -84,5 +80,5 @@ def test_add_connector_via_page(
 
     # Form should appear with name field. Scope to the add-connector form by
     # its placeholder to avoid matching the sidebar's quick-capture input.
-    name_input = page.locator("input[placeholder='e.g. playwright']")
+    name_input = page.get_by_placeholder("e.g. context7")
     expect(name_input).to_be_visible()

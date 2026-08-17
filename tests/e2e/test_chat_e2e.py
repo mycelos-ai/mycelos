@@ -69,16 +69,16 @@ def test_suggested_action_button(
     assert len(body_text) > 100, "Expected a substantial response"
 
 
-def test_new_chat_button(page: Page, base_url: str) -> None:
-    """New Chat button should be visible and clickable."""
+def test_new_session_button(page: Page, base_url: str) -> None:
+    """New Session button should be visible and clickable."""
     page.goto(f"{base_url}/pages/chat.html", wait_until="networkidle")
 
-    # New Chat button should always be visible in sidebar
-    new_chat = page.get_by_role("button", name="New Chat")
-    expect(new_chat).to_be_visible()
+    # The current chat action should always be visible in the status panel.
+    new_session = page.get_by_role("button", name="New Session")
+    expect(new_session).to_be_visible()
 
     # Click it
-    new_chat.click()
+    new_session.click()
     page.wait_for_timeout(500)
 
     # Message input should be empty and ready
