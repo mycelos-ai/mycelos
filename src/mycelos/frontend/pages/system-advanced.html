@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - System Settings</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script defer src="/shared/local-sources.js?v=source-results-2"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1">
+<script defer src="/shared/notifications.js?v=1"></script>
+</head>
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col md:pl-[170px] min-w-0">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- System Settings content -->
+    <section
+      class="flex-1 overflow-y-auto pt-20 pb-24 px-6 md:px-10"
+      x-data="{
+        updateStatus: null,
+        config: {},
+        generations: [],
+        activeGenerationId: null,
+        loading: true,
+        error: null,
+
+        confirmRollback: null,
+        rollbackLoading: false,
+
+        async init() {
+          // Load each section independently so one failure doesn't block all
+          const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+
+          const [configData, genData, updateData] = await Promise.all([
+            safe(() => MycelosAPI.get('/api/config')),
+            safe(() => MycelosAPI.get('/api/config/generations')),
+            safe(() => MycelosAPI.get('/api/system/update-status')),
+          ]);
+          if (updateData) this.updateStatus = updateData;
+          if (configData) {
+            this.config = configData;
+          }
+          if (genData) {
+            this.generations = genData.generations || [];
+            this.activeGenerationId = genData.active_id || null;
+          }
+          this.loading = false;
+        },
+
+        async rollbackTo(genId) {
+          this.rollbackLoading = true;
+          try {
+            await MycelosAPI.post('/api/config/rollback', { generation_id: genId });
+            this.confirmRollback = null;
+            // Refresh config + generations
+            const [configData, genData] = await Promise.all([
+              MycelosAPI.get('/api/config'),
+              MycelosAPI.get('/api/config/generations'),
+            ]);
+            this.config = configData || {};
+            this.generations = genData.generations || [];
+            this.activeGenerationId = genData.active_id || null;
+          } catch (e) {
+            alert('Rollback failed: ' + e.message);
+            this.confirmRollback = null;
+          } finally {
+            this.rollbackLoading = false;
+          }
+        },
+
+        formatDate(ts) {
+          if (!ts) return '';
+          const d = new Date(ts);
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+
+        async toggleUpdateCheck(enabled) {
+          try {
+            await MycelosAPI.put('/api/system/update-check-enabled', { enabled });
+            this.updateStatus = await MycelosAPI.get('/api/system/update-status');
+          } catch (e) {
+            console.warn('Could not update toggle:', e.message);
+          }
+        },
+      }"
+    >
+
+      <!-- Loading state -->
+      <div x-show="loading" class="flex items-center justify-center h-64">
+        <div class="flex items-center gap-3 text-[var(--on-surface-variant)]">
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+          <div class="w-1.5 h-1.5 bg-[var(--primary)] rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+        </div>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="error && !loading" class="card max-w-md mx-auto mt-12 text-center">
+        <span class="material-symbols-outlined text-[var(--error)] text-3xl mb-3">error_outline</span>
+        <p class="text-sm text-[var(--on-surface-variant)]" x-text="'Connection failed: ' + error"></p>
+        <button class="btn-secondary mt-4" @click="loading = true; error = null; init()" x-text="t('common.retry')">Retry</button>
+      </div>
+
+      <!-- System Settings sections -->
+      <div x-show="!loading && !error" class="animate-fade-in max-w-5xl mx-auto space-y-10">
+
+        <!-- Page heading -->
+        <div>
+          <h1 class="font-headline text-2xl font-bold tracking-tight" x-text="t('system_settings.title')">System Settings</h1>
+          <p class="text-[11px] text-[var(--on-surface-variant)] mt-1" x-text="t('system_settings.subtitle')">Config generations, updates, and data management</p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section: Config Generations -->
+        <!-- ============================================================ -->
+        <div id="knowledge-sources"><mycelos-sources></mycelos-sources></div>
+        <div id="generations">
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Konfigurationsverlauf</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Immutable Configuration History</p>
+
+          <div class="card">
+            <template x-if="generations.length === 0">
+              <div class="py-4 text-center">
+                <p class="text-sm text-[var(--on-surface-variant)]">Config state loaded. Generation history available via CLI.</p>
+                <p class="text-[10px] text-[var(--on-surface-variant)] mt-1 font-mono">mycelos config list</p>
+              </div>
+            </template>
+            <div class="space-y-0">
+              <template x-for="(g, idx) in generations" :key="g.id">
+                <div :class="idx > 0 ? 'border-t border-[var(--outline-variant)]/10' : ''" class="flex items-center justify-between py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <span class="font-mono text-xs text-[var(--primary)]" x-text="'#' + g.id"></span>
+                    <div class="min-w-0">
+                      <p class="text-sm" x-text="g.description || g.trigger || 'Configuration change'"></p>
+                      <p class="text-[10px] text-[var(--on-surface-variant)]" x-text="formatDate(g.created_at)"></p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span x-show="g.is_active" class="status-badge status-badge--active">Active</span>
+
+                    <!-- Rollback with confirmation -->
+                    <template x-if="!g.is_active && confirmRollback !== g.id">
+                      <button class="btn-secondary text-[10px] py-1 px-2.5" @click="confirmRollback = g.id">
+                        Rollback
+                      </button>
+                    </template>
+                    <template x-if="!g.is_active && confirmRollback === g.id">
+                      <div class="flex items-center gap-2">
+                        <button
+                          class="text-[10px] text-[var(--error)] font-bold uppercase tracking-wider hover:underline"
+                          @click="rollbackTo(g.id)"
+                          :disabled="rollbackLoading"
+                          x-text="rollbackLoading ? 'Rolling back...' : 'Confirm'"
+                        ></button>
+                        <button
+                          class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-wider hover:underline"
+                          @click="confirmRollback = null"
+                          x-text="t('common.cancel')"
+                        >Cancel</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section: Updates -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Updates</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Mycelos Version</p>
+
+          <div class="card space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm">
+                  Current version:
+                  <span class="font-mono" x-text="updateStatus?.current_version || '—'"></span>
+                </div>
+                <div x-show="updateStatus?.update_available" class="text-[11px] text-[var(--primary)] mt-1">
+                  <span class="material-symbols-outlined text-sm align-middle">cloud_download</span>
+                  <span x-text="updateStatus?.latest_version"></span>
+                  is available.
+                  <a x-show="updateStatus?.release_url" :href="updateStatus?.release_url" target="_blank" rel="noopener" class="underline ml-1">Release notes</a>
+                </div>
+                <div x-show="!updateStatus?.update_available &amp;&amp; updateStatus?.checks_enabled" class="text-[11px] text-[var(--on-surface-variant)] mt-1">
+                  You are on the latest version.
+                </div>
+                <div x-show="updateStatus &amp;&amp; !updateStatus?.checks_enabled" class="text-[11px] text-[var(--on-surface-variant)] mt-1">
+                  Update checks are disabled.
+                </div>
+              </div>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox"
+                       :checked="updateStatus?.checks_enabled !== false"
+                       @change="toggleUpdateCheck($event.target.checked)"
+                       class="rounded border-[var(--outline)] bg-[var(--background)]" />
+                <span class="text-xs">Check daily</span>
+              </label>
+            </div>
+            <div x-show="updateStatus?.update_available" class="text-[11px] text-[var(--on-surface-variant)] font-mono p-2 rounded bg-[var(--background)] border border-[var(--outline)]">
+              docker compose pull &amp;&amp; docker compose up -d
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- Section: Data Management -->
+        <!-- ============================================================ -->
+        <div>
+          <h2 class="font-headline text-lg font-bold tracking-tight mb-1">Data Management</h2>
+          <p class="text-[10px] text-[var(--on-surface-variant)] uppercase tracking-widest font-label mb-4">Export & Reset</p>
+
+          <div class="space-y-4">
+            <div class="card flex items-center justify-between">
+              <div>
+                <p class="text-sm font-bold">Export Credentials</p>
+                <p class="text-[10px] text-[var(--on-surface-variant)] mt-0.5">Download encrypted credential backup</p>
+              </div>
+              <button class="btn-secondary opacity-50 cursor-not-allowed" disabled>
+                <span class="material-symbols-outlined text-sm">download</span>
+                Coming Soon
+              </button>
+            </div>
+
+            <div class="card border-[var(--error)]/20">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[var(--error)] mt-0.5">warning</span>
+                <div>
+                  <p class="text-sm font-bold text-[var(--error)]">Danger Zone</p>
+                  <p class="text-[10px] text-[var(--on-surface-variant)] mt-1 leading-relaxed">
+                    Resetting will delete all sessions, memory, and audit logs. Credentials and config are preserved.
+                    This action cannot be undone.
+                  </p>
+                  <p class="text-[10px] text-[var(--on-surface-variant)] mt-2 font-mono">mycelos db reset</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+</body>
+</html>
