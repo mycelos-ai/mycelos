@@ -70,10 +70,6 @@ _TEXTS: dict[str, dict[str, str]] = {
         "de": "Du entscheidest — Agent fuer Agent, Zugriff fuer Zugriff. Volle Kontrolle.",
         "en": "You decide — agent by agent, access by access. Full control.",
     },
-    "gamification_value": {
-        "de": "Das System waechst mit dir. Smarte Tipps helfen dir, alles zu entdecken.",
-        "en": "The system grows with you. Smart hints help you discover everything.",
-    },
     "kb_user_1": {
         "de": 'Du: "Geniale Idee — eine App die Rezepte aus Kuehlschrank-Fotos generiert!"',
         "en": 'You: "Great idea — an app that generates recipes from fridge photos!"',
@@ -128,10 +124,6 @@ _TEXTS: dict[str, dict[str, str]] = {
     "perm_opt_3": {"de": "3. Erlauben fuer alle Agents (immer)", "en": "3. Allow for all agents (always)"},
     "perm_opt_4": {"de": "4. Ablehnen", "en": "4. Deny"},
     "perm_opt_5": {"de": "5. Niemals fuer Creator erlauben", "en": "5. Never allow for Creator"},
-    "gamification_sub": {
-        "de": "Dein Level waechst mit deiner Nutzung. Smarte Hinweise begleiten dich.",
-        "en": "Your level grows with your usage. Smart hints guide you to the next level.",
-    },
     "start_ready": {"de": "Bereit zum Ausprobieren?", "en": "Ready to try?"},
     "demo_complete": {"de": "Demo abgeschlossen!", "en": "Demo complete!"},
     "demo_cancelled": {"de": "Demo beendet.", "en": "Demo cancelled."},
@@ -427,32 +419,6 @@ def _permission_system(lang: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Section 9 — Gamification
-# ---------------------------------------------------------------------------
-
-def _gamification(lang: str) -> None:
-    _section_header(10, "Your Progress" if lang == "en" else "Dein Fortschritt")
-    console.print(f"  [italic]{_t('gamification_value', lang)}[/italic]")
-    console.print()
-    levels = Text("  ")
-    levels.append("🌱 Newcomer", style="dim")
-    levels.append("  →  ", style="white")
-    levels.append("🔍 Explorer", style="white")
-    levels.append("  →  ", style="white")
-    levels.append("🔧 Builder", style="white")
-    levels.append("  →  ", style="white")
-    levels.append("🏗️  Architect", style="bold white")
-    levels.append("  →  ", style="white")
-    levels.append("⚡ Power User", style="bold yellow")
-    levels.append("  →  ", style="white")
-    levels.append("🧙 Guru", style="bold magenta")
-    console.print(levels)
-    console.print()
-    console.print(f"  [dim]{_t('gamification_sub', lang)}[/dim]")
-    _pause(1.5)
-
-
-# ---------------------------------------------------------------------------
 # Section 10 — Getting Started
 # ---------------------------------------------------------------------------
 
@@ -543,8 +509,6 @@ def demo_cmd(fast: bool, lang: str | None) -> None:
         _workflows(lang)
         _wait_for_key()
         _permission_system(lang)
-        _wait_for_key()
-        _gamification(lang)
         _wait_for_key()
         _getting_started(lang)
         console.print()

@@ -35,7 +35,7 @@ DEFAULT_HOST = "127.0.0.1"
 @click.option("--password", type=str, default=None, help="Require Basic Auth password (recommended with --host 0.0.0.0).")
 @click.option("--debug", is_flag=True, help="Enable debug logging (intents, models, tokens, events).")
 @click.option("--status", "show_status", is_flag=True, help="Check if gateway is running.")
-@click.option("--no-scheduler", is_flag=True, help="Disable background scheduler (Huey).")
+@click.option("--no-scheduler", is_flag=True, help="Pause model routines. Local source checks stay available.")
 @click.option(
     "--role",
     type=click.Choice(["all", "gateway", "proxy"]),

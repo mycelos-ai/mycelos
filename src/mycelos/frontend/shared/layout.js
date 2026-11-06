@@ -34,27 +34,12 @@ function applyTheme(theme) {
   }
 }
 
-(function bootstrapTheme() {
-  try {
-    const cached = JSON.parse(localStorage.getItem('mycelos-theme') || 'null');
-    if (cached) applyTheme(cached);
-  } catch (e) { /* corrupt cache — server value below wins */ }
-  fetch('/api/ui/theme')
-    .then((r) => (r.ok ? r.json() : null))
-    .then((theme) => {
-      if (!theme) return;
-      applyTheme(theme);
-      localStorage.setItem('mycelos-theme',
-        JSON.stringify({ preset: theme.preset, accent: theme.accent }));
-    })
-    .catch(() => { /* offline — cached/default theme stands */ });
-})();
 
 function detectActivePage() {
   const path = window.location.pathname;
   const match = path.match(/\/pages\/(\w+)\.html/);
   if (match) return match[1];
-  return 'dashboard';
+  return 'chat';
 }
 
 /** Map legacy pages onto the five product surfaces. */
@@ -117,10 +102,7 @@ function mycelosApp() {
     async init() {
       // Load shared layout fragments in parallel
       await Promise.all([
-        loadFragment('/shared/sidebar.html', 'sidebar'),
         loadFragment('/shared/header.html', 'header'),
-        loadFragment('/shared/mobile-nav.html', 'mobile-nav'),
-        loadFragment('/shared/quick-capture.html', 'quick-capture'),
       ]);
 
       // Re-initialize Alpine.js on the injected fragments so that

@@ -11,6 +11,7 @@ from mycelos.cli.connector_cmd import connector_cmd
 from mycelos.cli.demo_cmd import demo_cmd
 from mycelos.cli.init_cmd import init_cmd
 from mycelos.cli.knowledge_cmd import knowledge_cmd
+from mycelos.cli.source_cmd import source_cmd
 from mycelos.cli.schedule_cmd import schedule_cmd
 from mycelos.cli.model_cmd import model_group
 from mycelos.cli.serve_cmd import serve_cmd
@@ -58,4 +59,5 @@ cli.add_command(reset_cmd, "reset")
 cli.add_command(stop_cmd, "stop")
 cli.add_command(doctor_cmd, "doctor")
 cli.add_command(knowledge_cmd, "knowledge")
+cli.add_command(source_cmd, "source")
 cli.add_command(embeddings_cmd, "embeddings")

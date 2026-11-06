@@ -38,7 +38,7 @@ class MemoryService(Protocol):
 class LLMBroker(Protocol):
     """Interface for LLM access and conversation management."""
 
-    def complete(self, messages: list[dict], model: str | None = None, tools: list[dict] | None = None, stream: bool = False) -> Any: ...
+    def complete(self, messages: list[dict], model: str | None = None, tools: list[dict] | None = None, stream: bool = False, fallback_models: list[str] | None = None, purpose: str = "execution") -> Any: ...
     def count_tokens(self, messages: list[dict], model: str | None = None) -> int: ...
 
 
@@ -176,7 +176,7 @@ class SecurityProxyProtocol(Protocol):
     def llm_complete(self, model: str, messages: list[dict],
                      tools: list[dict] | None = None, stream: bool = False,
                      user_id: str = "default", agent_id: str | None = None,
-                     purpose: str = "chat") -> Any: ...
+                     purpose: str = "chat", generation_options: dict | None = None) -> Any: ...
     def stt_transcribe(self, audio: bytes, filename: str = "audio.ogg",
                        language: str = "auto", model: str = "whisper-1",
                        user_id: str = "default",

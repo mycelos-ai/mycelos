@@ -10,6 +10,9 @@ The Chat-Agent ("Mycelos") is the primary interface. It can:
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar, copy_context
+from functools import wraps
+from threading import Lock, RLock
 from datetime import datetime
 from typing import Any
 
@@ -277,6 +280,16 @@ def _partition_tool_calls(tool_calls: list[dict]) -> list[list[dict]]:
     return batches
 
 
+def _serialized_session(method):
+    @wraps(method)
+    def run(self, message, session_id, *args, **kwargs):
+        with self._session_locks_guard:
+            lock = self._session_locks.setdefault(session_id, RLock())
+        with lock:
+            return method(self, message, session_id, *args, **kwargs)
+    return run
+
+
 class ChatService:
     """Channel-agnostic chat message handler with tool use.
 
@@ -289,6 +302,12 @@ class ChatService:
 
     def __init__(self, app: App) -> None:
         self._app = app
+        self._request_session = ContextVar(f"chat_session_{id(self)}", default="")
+        self._request_user = ContextVar(f"chat_user_{id(self)}", default="default")
+        self._request_events = ContextVar(f"chat_events_{id(self)}", default=None)
+        self._permissions_by_session: dict[str, dict] = {}
+        self._session_locks: dict[str, Any] = {}
+        self._session_locks_guard = Lock()
         self._conversations: dict[str, list[dict[str, Any]]] = {}
         # Active interview sessions per session_id
         self._interviews: dict[str, Any] = {}  # session_id -> InterviewEngine
@@ -310,8 +329,6 @@ class ChatService:
         self._task_reminder_counter: dict[str, int] = {}
         # session_ids that explicitly skipped onboarding flow this run
         self._onboarding_skipped: set[str] = set()
-        # session_ids that have already seen the "user level" intro card
-        self._level_shown_sessions: set[str] = set()
         # Pending permission prompt awaiting the user's reply ({session_id, …})
         self._pending_permission: dict[str, Any] | None = None
         # Events queued by long-running tools for the next flush point
@@ -325,6 +342,48 @@ class ChatService:
         # context dispatch can resolve the current session/user.
         self._current_session_id: str = ""
         self._current_user_id: str = "default"
+
+    @property
+    def _current_session_id(self):
+        return self._request_session.get()
+
+    @_current_session_id.setter
+    def _current_session_id(self, value):
+        self._request_session.set(value)
+
+    @property
+    def _current_user_id(self):
+        return self._request_user.get()
+
+    @_current_user_id.setter
+    def _current_user_id(self, value):
+        self._request_user.set(value)
+
+    @property
+    def _pending_events(self):
+        events = self._request_events.get()
+        if events is None:
+            events = []
+            self._request_events.set(events)
+        return events
+
+    @_pending_events.setter
+    def _pending_events(self, value):
+        self._request_events.set(value)
+
+    @property
+    def _pending_permission(self):
+        return self._permissions_by_session.get(self._current_session_id)
+
+    @_pending_permission.setter
+    def _pending_permission(self, value):
+        if value is None:
+            self._permissions_by_session.pop(self._current_session_id, None)
+        else:
+            session_id = value.get("session_id") or self._current_session_id
+            self._permissions_by_session[session_id] = value
+            if not self._current_session_id:
+                self._current_session_id = session_id
 
     def _get_session_tools(
         self,
@@ -481,6 +540,15 @@ class ChatService:
             _log.debug("Failed to resolve model for agent %s", agent_id, exc_info=True)
         return None  # Use default
 
+    def _complete_for_agent(self, messages: list[dict], agent_id: str, tools=None):
+        """Resolve the current agent chain for each round, including retries."""
+        models = self._app.model_registry.resolve_models(agent_id, "execution")
+        if models:
+            return self._app.llm.complete(
+                messages, tools=tools, model=models[0], fallback_models=models[1:],
+            )
+        return self._app.llm.complete(messages, tools=tools)
+
     def resume_session(self, session_id: str) -> list[dict[str, Any]]:
         """Resume an existing session, loading its messages."""
         messages = self._app.session_store.load_messages(session_id)
@@ -610,6 +678,7 @@ class ChatService:
 
         return _prompt_loader.load("mycelos", **variables)
 
+    @_serialized_session
     def handle_message(
         self,
         message: str,
@@ -622,6 +691,8 @@ class ChatService:
         """Process a user message and return response events."""
         events: list[ChatEvent] = []
         self._current_session_id = session_id  # for request_action
+        self._current_user_id = user_id
+        self._pending_events = []
 
         # Proactive notification: check for completed background tasks
         try:
@@ -884,19 +955,6 @@ class ChatService:
         except Exception:
             _log.debug("Failed during onboarding check", exc_info=True)
 
-        # Level system greeting (show level-up or hint)
-        # Shows once per session, but gamification.py controls frequency
-        # (beginners see hints every session, advanced users less often)
-        try:
-            from mycelos.gamification import get_session_greeting
-            if session_id not in self._level_shown_sessions:
-                self._level_shown_sessions.add(session_id)
-                greeting = get_session_greeting(self._app, user_id)
-                if greeting:
-                    events.append(system_response_event(greeting))
-        except Exception:
-            _log.debug("Failed to generate session greeting", exc_info=True)
-
         # Check for pending PERMISSION prompt FIRST (system-level, not LLM)
         pending_perm = self._pending_permission
         if pending_perm and pending_perm.get("session_id") == session_id:
@@ -1015,8 +1073,8 @@ class ChatService:
 
             self._conversations[session_id] = conversation
             _t0 = _time.monotonic()
-            response = self._app.llm.complete(
-                conversation, tools=tools, model=agent_model
+            response = self._complete_for_agent(
+                conversation, active_agent_id, tools=tools
             )
             _perf.info("LLM initial call: %.1fs (agent=%s, model=%s, tokens=%d)",
                        _time.monotonic() - _t0, active_agent_id, response.model, response.total_tokens)
@@ -1318,15 +1376,14 @@ class ChatService:
                             new_tool_names = {t["function"]["name"] for t in new_tools}
                             if "connector_tools" in new_tool_names or "connector_call" in new_tool_names:
                                 new_tools = self._augment_tools_with_connectors(new_tools)
-                            new_model = self._get_model_for_agent(new_agent_id)
                             _t_handoff = _time.monotonic()
                             try:
                                 # Tool loop for the new agent (max 10 rounds)
                                 handoff_tokens = 0
                                 for _handoff_round in range(10):
-                                    new_response = self._app.llm.complete(
+                                    new_response = self._complete_for_agent(
                                         validate_conversation(conversation),
-                                        tools=new_tools, model=new_model,
+                                        new_agent_id, tools=new_tools,
                                     )
                                     handoff_tokens += new_response.total_tokens
                                     _perf.info("LLM handoff round %d: %.1fs (agent=%s, tokens=%d)",
@@ -1463,8 +1520,8 @@ class ChatService:
                 # Continue conversation — LLM sees tool results now
                 conversation = validate_conversation(conversation)
                 self._conversations[session_id] = conversation
-                response = self._app.llm.complete(
-                    conversation, tools=tools, model=agent_model
+                response = self._complete_for_agent(
+                    conversation, active_agent_id, tools=tools
                 )
                 total_tokens += response.total_tokens
                 _resp_cost = getattr(response, 'cost', 0.0)
@@ -1751,7 +1808,8 @@ class ChatService:
         results: dict[str, Any] = {}
         with ThreadPoolExecutor(max_workers=min(len(parsed), MAX_TOOL_CONCURRENCY)) as pool:
             futures = {
-                pool.submit(self._execute_tool, name, args, user_id=user_id): (tc, name)
+                pool.submit(copy_context().run, self._execute_tool, name, args,
+                            user_id=user_id, session_id=session_id): (tc, name)
                 for tc, name, args in parsed
             }
             for future in as_completed(futures):
@@ -2431,7 +2489,7 @@ class ChatService:
             handler = handlers.get(active_agent_id, handlers.get("mycelos"))
             tools = self._get_session_tools(handler, session_id, user_id=user_id) if handler else []
 
-            response = self._app.llm.complete(conversation, tools=tools)
+            response = self._complete_for_agent(conversation, active_agent_id, tools=tools)
 
             content = response.content or ""
             conversation.append({"role": "assistant", "content": content})
@@ -2484,7 +2542,7 @@ class ChatService:
             handlers = self._app.get_agent_handlers()
             handler = handlers.get(active_agent_id, handlers.get("mycelos"))
             tools = self._get_session_tools(handler, session_id) if handler else []
-            response = self._app.llm.complete(conversation, tools=tools)
+            response = self._complete_for_agent(conversation, active_agent_id, tools=tools)
 
             if response.tool_calls:
                 # LLM wants to call tools — process them
@@ -2757,5 +2815,3 @@ def _build_system_info(now: Any, user_tz: str | None = None) -> str:
         parts.append("Node.js: not found (MCP connectors need it)")
 
     return "\n".join(parts)
-
-

@@ -30,24 +30,48 @@ def create_socket_dir() -> str:
     system_tmp = tempfile.gettempdir()
     sock_dir = tempfile.mkdtemp(prefix="mycelos-sec-", dir=system_tmp)
     os.chmod(sock_dir, 0o700)
+    Path(sock_dir, "owner.pid").write_text(str(os.getpid()))
     return sock_dir
 
 
 def cleanup_stale_socket_dirs() -> int:
     """Remove stale mycelos-sec-* dirs from the system temp directory.
 
-    A dir is stale if it contains no active socket (proxy.sock missing or
-    not connected). Returns the number of directories removed.
+    A directory is stale only when its socket is absent, its owner is gone,
+    and it is at least one minute old. The age guard protects creation of
+    the owner marker. Returns the number of directories removed.
     """
     system_tmp = tempfile.gettempdir()
     count = 0
     for pattern in ("mycelos-sec-*", "maicel-sec-*"):
         for d in glob.glob(os.path.join(system_tmp, pattern)):
-            sock = os.path.join(d, "proxy.sock")
-            if not os.path.exists(sock):
-                # No socket file — definitely stale
-                shutil.rmtree(d, ignore_errors=True)
+            directory = Path(d)
+            try:
+                if directory.is_symlink() or not directory.is_dir():
+                    continue
+                if (directory / "proxy.sock").exists():
+                    continue
+                if time.time() - directory.stat().st_mtime < 60:
+                    continue
+                try:
+                    owner_pid = int((directory / "owner.pid").read_text().strip())
+                except FileNotFoundError:
+                    owner_pid = None  # Directory from an older launcher.
+                if owner_pid is not None:
+                    if owner_pid <= 0:
+                        continue
+                    try:
+                        os.kill(owner_pid, 0)
+                    except ProcessLookupError:
+                        pass
+                    else:
+                        continue
+                shutil.rmtree(directory)
                 count += 1
+            except (OSError, ValueError):
+                # Permission errors and concurrent cleanup cannot establish
+                # that an owner has exited. Leave the directory alone.
+                continue
     if count:
         logger.info("Cleaned up %d stale proxy socket directories", count)
     return count

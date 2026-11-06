@@ -87,6 +87,7 @@ class LlmCompleteRequest(BaseModel):
     tools: list[dict] | None = None
     stream: bool = False
     purpose: str = "chat"
+    generation_options: dict = {}
 
 
 class CredentialBootstrapRequest(BaseModel):
@@ -162,6 +163,8 @@ def create_proxy_app() -> FastAPI:
         "openrouter": "openrouter",
         "mistral": "mistral",
         "vertex_ai": "vertex_ai",
+        "ollama": "ollama",
+        "custom": "custom",
     }
 
     # Mutable state container — avoids closures over app.state before app is created
@@ -723,10 +726,30 @@ def create_proxy_app() -> FastAPI:
             "messages": req.messages,
             "stream": req.stream,
         }
+        allowed = {'reasoning_effort', 'max_completion_tokens', 'drop_params'}
+        if set(req.generation_options) - allowed:
+            return JSONResponse({'error': 'Unbekannte Modelleinstellung'}, status_code=400)
+        effort = req.generation_options.get('reasoning_effort')
+        limit = req.generation_options.get('max_completion_tokens')
+        if (effort is not None and effort not in ('none', 'low', 'medium', 'high')
+                or limit is not None and (type(limit) is not int or not 1 <= limit <= 1000000)
+                or req.generation_options.get('drop_params', False) is not False):
+            return JSONResponse({'error': 'Ungültige Modelleinstellung'}, status_code=400)
+        kwargs.update(req.generation_options)
+        if provider == "custom":
+            from mycelos.llm.custom import custom_completion_kwargs
+            try:
+                kwargs.update(custom_completion_kwargs(req.model, cred))
+                from mycelos.llm.custom import custom_generation_kwargs
+                kwargs.update(custom_generation_kwargs(req.model, req.generation_options))
+            except ValueError:
+                return JSONResponse({"error": "Custom-Server ist nicht vollständig eingerichtet"}, status_code=400)
         if req.tools:
             kwargs["tools"] = req.tools
         if api_key:
             kwargs["api_key"] = api_key
+        if provider == "ollama" and cred and cred.get("api_base"):
+            kwargs["api_base"] = cred["api_base"]
         if provider == "vertex_ai" and cred:
             for field in ("vertex_credentials", "vertex_project", "vertex_location"):
                 if cred.get(field):
@@ -773,7 +796,7 @@ def create_proxy_app() -> FastAPI:
         try:
             response = litellm.completion(**kwargs)
         except Exception as e:
-            return JSONResponse({"error": _sanitize_llm_error(e)}, status_code=500)
+            return JSONResponse({"error": _sanitize_llm_error(e), 'error_type': type(e).__name__}, status_code=500)
 
         duration = time.time() - t_start
 
@@ -816,6 +839,7 @@ def create_proxy_app() -> FastAPI:
 
         return JSONResponse({
             "content": content,
+            "finish_reason": getattr(choice, "finish_reason", None),
             "tool_calls": tool_calls,
             "usage": usage_dict,
             "model": req.model,

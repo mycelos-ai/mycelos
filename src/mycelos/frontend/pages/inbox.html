@@ -1,12 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
   <script src="/shared/tailwind-config.js"></script>
@@ -17,9 +16,11 @@
   <script src="/shared/layout.js"></script>
   <script src="/shared/inbox.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1">
+<script defer src="/shared/notifications.js?v=1"></script>
 </head>
 <body x-data="mycelosApp()" class="review-surface">
-  <div id="sidebar"></div>
+  <div id="header"></div>
 
   <main class="review-main" x-data="inboxApp()" x-init="initInbox()">
     <header class="review-header">

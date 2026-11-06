@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -366,6 +367,40 @@ def _start_telegram_channel(mycelos: App, api: FastAPI, debug: bool = False) -> 
 start_telegram_channel = _start_telegram_channel
 
 
+_scheduler_start_lock = threading.Lock()
+
+
+def start_background_scheduler(mycelos: App, api: FastAPI) -> bool:
+    """Start one task consumer, including when the gateway started paused."""
+    from mycelos.scheduler.huey_app import create_huey, start_consumer_thread
+    from mycelos.scheduler.jobs import register_periodic_jobs
+    from mycelos.scheduler.local_source_task import register_local_source_task
+    from mycelos.tasks.pipeline_task import register_pipeline_tasks
+
+    with _scheduler_start_lock:
+        consumer = getattr(api.state, "scheduler_thread", None)
+        if consumer is not None and consumer.is_alive():
+            api.state.scheduler_running = True
+            api.state.no_scheduler = False
+            return True
+        api.state.scheduler_running = False
+        huey = create_huey(mycelos.data_dir)
+        register_periodic_jobs(huey, mycelos)
+        api.state.huey = huey
+        api.state.pipeline_task = register_pipeline_tasks(huey, mycelos)
+        api.state.chat_service._pipeline_task = api.state.pipeline_task
+        # Decode old queue entries without executing legacy imports.
+        register_local_source_task(huey, mycelos)
+        consumer = start_consumer_thread(huey, workers=1, periodic=True)
+        api.state.scheduler_thread = consumer
+        if not consumer.is_alive():
+            raise RuntimeError("Scheduler consumer stopped during startup")
+        api.state.scheduler_running = True
+        api.state.no_scheduler = False
+        logger.info("Scheduler started")
+        return True
+
+
 def create_app(
     data_dir: Path | None = None,
     debug: bool = False,
@@ -380,7 +415,7 @@ def create_app(
     Args:
         data_dir: Mycelos data directory. Defaults to ~/.mycelos.
         debug: Enable debug logging (intents, models, tokens, events).
-        no_scheduler: Disable the background Huey scheduler.
+        no_scheduler: Disable model routines. The isolated source-check queue remains available.
         host: Bind address. Used to decide localhost-only restriction.
         port: Bind port. Used to build absolute origin URLs for the
             CSRF allowlist when bound to 0.0.0.0.
@@ -609,52 +644,26 @@ def create_app(
     api.state.default_user_id = row["id"] if row else "default"
     api.state.default_user = dict(row) if row else {"id": "default", "name": "Default User"}
 
-    # Startup health check: verify LLM connectivity
-    _proxy_ok = mycelos.llm._proxy_client is not None
-    logger.info("LLM broker: proxy_client=%s, default_model=%s", _proxy_ok, mycelos.llm.default_model)
-    if _proxy_ok:
-        try:
-            test_result = mycelos.llm.complete(
-                [{"role": "user", "content": "ping"}],
-                model=mycelos.llm.default_model,
-            )
-            logger.info("LLM health check: OK (model=%s, tokens=%d)", test_result.model, test_result.total_tokens)
-        except Exception as e:
-            logger.error("LLM health check: FAILED — %s", e)
-    else:
-        logger.warning("LLM health check: SKIPPED — no SecurityProxy (credentials may not be available)")
+    # Server startup must not send user data or spend model tokens.
+    logger.info("Model connectivity test skipped at startup; configuration remains available")
 
     api.state.no_scheduler = no_scheduler
 
     setup_routes(api)
 
-    # Start Huey scheduler as daemon thread
-    if not getattr(api.state, "no_scheduler", False):
+    from mycelos.scheduler.source_check_task import attach_source_check_runtime
+    attach_source_check_runtime(api, mycelos)
+    from mycelos.scheduler.local_source_task import attach_source_import_runtime
+    attach_source_import_runtime(api, mycelos)
+
+    api.state.scheduler_running = False
+    if not no_scheduler:
         try:
-            from mycelos.scheduler.huey_app import create_huey, start_consumer_thread
-            from mycelos.scheduler.jobs import register_periodic_jobs
-
-            huey = create_huey(data_dir)
-            register_periodic_jobs(huey, mycelos)
-            consumer_thread = start_consumer_thread(huey, workers=1, periodic=True)
-            api.state.huey = huey
-
-            # Register background pipeline task
-            from mycelos.tasks.pipeline_task import register_pipeline_tasks
-            api.state.pipeline_task = register_pipeline_tasks(huey, mycelos)
-            api.state.chat_service._pipeline_task = api.state.pipeline_task
-
-            api.state.scheduler_running = True
-
-            if debug:
-                logger.debug("Scheduler started (Huey consumer thread)")
+            start_background_scheduler(mycelos, api)
         except Exception as e:
             logger.warning("Failed to start scheduler: %s", e)
-            api.state.scheduler_running = False
-    else:
-        api.state.scheduler_running = False
-        if debug:
-            logger.debug("Scheduler disabled (--no-scheduler)")
+    elif debug:
+        logger.debug("Scheduler disabled (--no-scheduler)")
 
     # Start the Telegram channel BEFORE MCP connectors. In the
     # two-container deployment the channel needs the SecurityProxy to

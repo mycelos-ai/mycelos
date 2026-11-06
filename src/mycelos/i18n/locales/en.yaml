@@ -910,3 +910,6 @@ embeddings:
     counts: "Vector rows: {vectors} / notes: {notes}"
     present_true: "yes"
     present_false: "no"
+
+collector:
+  operation_failed: "The collector cannot complete this operation. Check the connection and the local source access."

@@ -13,17 +13,17 @@ from mycelos.tools.registry import ToolPermission
 
 
 _URL_TARGETS: dict[str, str] = {
-    "connectors": "/pages/connectors.html",
-    "settings_models": "/pages/ai-providers.html#models",
-    "settings_generations": "/pages/settings.html#generations",
+    "connectors": "/pages/settings.html#connectors",
+    "settings_models": "/pages/settings.html#models",
+    "settings_generations": "/pages/system-advanced.html#generations",
     "doctor": "/pages/doctor.html",
 }
 
 _DEFAULT_LABELS: dict[str, str] = {
-    "connectors": "Open Connectors page",
-    "settings_models": "Open Model settings",
-    "settings_generations": "Open Config Generations",
-    "doctor": "Open Doctor",
+    "connectors": "MCP-Verbindungen öffnen",
+    "settings_models": "Modelle öffnen",
+    "settings_generations": "Konfigurationsverlauf öffnen",
+    "doctor": "Systemprüfung öffnen",
 }
 
 
@@ -65,7 +65,7 @@ OPEN_PAGE_SCHEMA = {
                     "description": (
                         "Optional button text the user sees. "
                         "Defaults to a generic per-target label like "
-                        "'Open Connectors page'."
+                        "'MCP-Verbindungen öffnen'."
                     ),
                 },
             },
@@ -93,18 +93,8 @@ def execute_open_page(args: dict[str, Any], context: dict) -> dict:
         }
 
     url = _URL_TARGETS[target]
-    anchor = (args.get("anchor") or "").strip().lstrip("#")
-    if anchor:
-        # Recipes on the Connectors page are rendered with id="recipe-<id>"
-        # to avoid collisions with other section ids on the page. We add
-        # the prefix here so the LLM can pass the bare recipe id (its
-        # natural mental model) and we still hit the right element.
-        if target == "connectors" and not anchor.startswith("recipe-"):
-            anchor = f"recipe-{anchor}"
-        # Replace any existing default anchor with the explicit one so the
-        # caller can target arbitrary sub-sections, not just the default.
-        base, _, _ = url.partition("#")
-        url = f"{base}#{anchor}"
+    # Old recipe/provider anchors no longer exist. Keep the canonical section
+    # so previously generated tool calls still reach the correct form.
 
     label = (args.get("label") or "").strip() or _DEFAULT_LABELS[target]
 

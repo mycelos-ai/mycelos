@@ -140,6 +140,21 @@ def _insert_note(storage: SQLiteStorage, **fields) -> None:
     )
 
 
+def test_archived_knowledge_survives_background_run(handler_env, tmp_path):
+    handler, storage, kb, audit = handler_env
+    kb._knowledge_dir = tmp_path
+    original = tmp_path / "notes" / "old.md"
+    original.parent.mkdir()
+    original.write_text("An old, valuable solution")
+    _insert_note(storage, path="notes/old", title="Old solution", type="note",
+                 status="archived", organizer_state="archived",
+                 organizer_seen_at="2020-01-01T00:00:00Z")
+    result = handler.run("default")
+    assert storage.fetchone("SELECT path FROM knowledge_notes WHERE path='notes/old'")
+    assert original.read_text() == "An old, valuable solution"
+    assert result["hard_deleted"] == 0
+
+
 def test_silent_move_on_high_confidence_existing_topic(storage: SQLiteStorage) -> None:
     _insert_note(
         storage,

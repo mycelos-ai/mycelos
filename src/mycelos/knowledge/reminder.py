@@ -92,7 +92,7 @@ class ReminderService:
         return None
 
     def generate_message(self, tasks: list[dict]) -> str:
-        """Generate a natural reminder message via LLM (Haiku)."""
+        """Generate a reminder with the configured background model chain."""
         llm = getattr(self._app, "_llm", None) or getattr(self._app, "llm", None)
         if not llm:
             return self._fallback_message(tasks)
@@ -112,14 +112,12 @@ class ReminderService:
         )
 
         try:
-            model = self._app.resolve_cheapest_model()
-
             response = llm.complete(
                 [
                     {"role": "system", "content": "You are a helpful reminder assistant. Be brief and friendly."},
                     {"role": "user", "content": prompt},
                 ],
-                model=model,
+                purpose="classification",
             )
             if response.content and "error" not in response.content.lower()[:20]:
                 return response.content

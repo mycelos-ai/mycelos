@@ -898,3 +898,6 @@ embeddings:
     counts: "Vektor-Zeilen: {vectors} / Notizen: {notes}"
     present_true: "ja"
     present_false: "nein"
+
+collector:
+  operation_failed: "Der Sammler kann den Auftrag nicht ausführen. Prüfe die Verbindung und den Zugriff auf die lokale Quelle."

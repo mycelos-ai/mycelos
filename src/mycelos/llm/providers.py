@@ -107,7 +107,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
     ),
     "custom": ProviderConfig(
         id="custom",
-        name="Custom Server",
+        name="Custom (OpenAI-kompatibel)",
         env_var=None,
         requires_key=False,
     ),

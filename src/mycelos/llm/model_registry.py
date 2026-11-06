@@ -51,10 +51,14 @@ class ModelRegistry:
     ) -> None:
         """Add or update a model in the registry."""
         self._storage.execute(
-            """INSERT OR REPLACE INTO llm_models
+            """INSERT INTO llm_models
                (id, provider, tier, input_cost_per_1k, output_cost_per_1k, max_context, status,
                 updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+               ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, tier=excluded.tier,
+               input_cost_per_1k=excluded.input_cost_per_1k,
+               output_cost_per_1k=excluded.output_cost_per_1k,
+               max_context=excluded.max_context, status=excluded.status, updated_at=excluded.updated_at""",
             (
                 model_id,
                 provider,

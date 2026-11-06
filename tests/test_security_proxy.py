@@ -337,7 +337,7 @@ class TestLlmProxy:
     def test_llm_complete_non_streaming(self, client):
         with patch("mycelos.security.proxy_server.litellm") as mock_llm:
             mock_resp = MagicMock()
-            mock_resp.choices = [MagicMock(message=MagicMock(content="Hello", tool_calls=None))]
+            mock_resp.choices = [MagicMock(message=MagicMock(content="Hello", tool_calls=None), finish_reason="stop")]
             mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5, total_tokens=15)
             mock_resp.model = "anthropic/claude-haiku-4-5"
             mock_llm.completion.return_value = mock_resp
@@ -354,6 +354,7 @@ class TestLlmProxy:
             assert resp.status_code == 200
             data = resp.json()
             assert data["content"] == "Hello"
+            assert data["finish_reason"] == "stop"
             assert data["usage"]["total_tokens"] == 15
 
     def test_llm_complete_streaming(self, client):

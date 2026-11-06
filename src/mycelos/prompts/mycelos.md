@@ -172,8 +172,6 @@ Prefer connector_call over http_get when a connector exists.
 
 {available_agents}
 
-{level_guidance}
-
 {pending_workflows}
 
 {handoff_rules}

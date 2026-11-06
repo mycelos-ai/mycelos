@@ -127,7 +127,7 @@ def test_oauth_callback_success_redirects(client_with_mock_proxy):
     )
     assert resp.status_code in (302, 307)
     loc = resp.headers["location"]
-    assert loc == "/connectors.html?connected=gmail"
+    assert loc == "/pages/connectors-advanced.html?connected=gmail"
     assert mock.oauth_callback.called
     call = mock.oauth_callback.call_args
     assert call.kwargs["recipe_id"] == "gmail"

@@ -1,22 +1,25 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos - Chat</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
   <script src="/shared/tailwind-config.js"></script>
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
+  <script defer src="/shared/local-sources.js?v=source-results-2"></script>
+  <script defer src="/shared/model-settings.js"></script>
+  <script defer src="/shared/telegram-settings.js"></script>
+  <script defer src="/shared/knowledge-connectors.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/shared/mermaid.min.js"></script>
-  <script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+  <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
   <script>
     // Diagram zoom + export — adds a magnifier button to mermaid containers
     // and opens a 90vw/90vh modal with PNG/SVG download.
@@ -282,6 +285,10 @@
       scrollbar-color: rgba(70, 72, 77, 0.4) transparent;
     }
   </style>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1">
+<link rel="stylesheet" href="/shared/chat-surface.css?v=1">
+<script defer src="/shared/knowledge-card.js?v=1"></script>
+<script defer src="/shared/notifications.js?v=1"></script>
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
@@ -291,19 +298,20 @@
   <div id="quick-capture"></div>
 
   <!-- Main content area -->
-  <main class="flex-1 flex flex-col md:pl-[170px] md:pr-72 min-w-0"
+  <main class="chat-main flex-1 flex flex-col min-w-0"
         x-data="chatApp()" x-init="initChat()"
+        @knowledge-focus.window="focusItem = $event.detail"
         @new-session.window="newSession()"
         @run-command.window="handleClickedCommand($event.detail.command)"
         @dragover.prevent="dragOver = true"
         @dragleave.prevent="dragOver = false"
-        @drop.prevent="dragOver = false; handleFileUpload($event.dataTransfer.files[0])">
+        @drop.prevent="dragOver = false; handleFiles($event.dataTransfer.files)">
 
     <!-- Header container (loaded by layout.js) -->
     <div id="header"></div>
 
     <!-- Session selector bar -->
-    <div class="fixed top-0 left-0 md:left-64 md:right-72 right-0 z-20 pt-16 px-3 md:px-8">
+    <div class="chat-sessions">
       <div class="max-w-4xl mx-auto flex items-center gap-2 md:gap-3 py-3 min-w-0">
         <!-- Session dropdown -->
         <div class="relative min-w-0" x-data="{ open: false }">
@@ -312,23 +320,23 @@
                          bg-[var(--surface-container)] text-[var(--on-surface-variant)]
                          hover:text-[var(--primary)] transition-colors">
             <span class="material-symbols-outlined text-sm flex-shrink-0">forum</span>
-            <span x-text="(() => { if (!activeSessionId) return t('chat.no_session'); const s = sessions.find(s => (s.session_id || s.id) === activeSessionId); return s?.title || (s?.timestamp ? new Date(s.timestamp).toLocaleString([], {hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + activeSessionId.slice(0, 8)); })()" class="truncate max-w-[90px] md:max-w-[160px]"></span>
+            <span x-text="(() => { if (!activeSessionId) return t('chat.no_session'); const s = sessions.find(s => (s.session_id || s.id) === activeSessionId); return s?.title || (s?.timestamp ? new Date(s.timestamp).toLocaleString([], {hour: '2-digit', minute: '2-digit'}) : 'Neues Gespräch'); })()" class="truncate max-w-[200px] md:max-w-[320px]"></span>
             <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
           </button>
           <div x-show="open" @click.outside="open = false" x-transition
                class="absolute top-full left-0 mt-2 w-64 glass-card-strong rounded-xl py-2 z-50 session-dropdown max-h-64 overflow-y-auto">
-            <button @click="newSession(); open = false"
+            <button @click="newSession(); open = false" :disabled="sending"
                     class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--primary)] hover:bg-[var(--surface-container)] transition-colors">
-              <span class="material-symbols-outlined text-sm">add_circle</span>
-              <span x-text="t('chat.new_session')">New Session</span>
+              <span class="material-symbols-outlined text-sm" aria-hidden="true">add</span>
+              <span>Neues Gespräch</span>
             </button>
             <div class="mycelium-line mx-4 my-1"></div>
             <template x-for="session in sessions" :key="(session.session_id || session.id)">
-              <button @click="switchSession((session.session_id || session.id)); open = false"
+              <button @click="switchSession((session.session_id || session.id)); open = false" :disabled="sending"
                       class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)] transition-colors"
                       :class="(session.session_id || session.id) === activeSessionId && 'text-[var(--primary)] bg-[var(--surface-container)]'">
                 <span class="material-symbols-outlined text-sm">chat_bubble</span>
-                <span class="truncate" x-text="session.title || (session.timestamp ? 'Chat · ' + new Date(session.timestamp).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : t('chat.session_prefix') + (session.session_id || session.id).slice(0, 8))"></span>
+                <span class="truncate" x-text="session.title || (session.timestamp ? 'Chat · ' + new Date(session.timestamp).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : 'Gespräch ohne Titel')"></span>
               </button>
             </template>
             <p x-show="sessions.length === 0" class="px-4 py-2 text-xs text-[var(--on-surface-variant)]/50 font-label"
@@ -338,30 +346,6 @@
           </div>
         </div>
 
-        <!-- Agent selector dropdown -->
-        <div class="relative min-w-0" x-data="{ open: false }">
-          <button @click="open = !open"
-                  class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-label uppercase tracking-widest min-w-0
-                         bg-[var(--surface-container)] transition-colors"
-                  :class="selectedAgentId !== 'mycelos' ? 'text-[var(--primary)] border border-[var(--primary)]/30' : 'text-[var(--on-surface-variant)] hover:text-[var(--primary)]'">
-            <span class="material-symbols-outlined text-sm flex-shrink-0">smart_toy</span>
-            <span x-text="selectedAgentName" class="truncate max-w-[70px] md:max-w-[100px]"></span>
-            <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
-          </button>
-          <div x-show="open" @click.outside="open = false" x-transition
-               class="absolute top-full left-0 mt-2 w-56 glass-card-strong rounded-xl py-2 z-50 session-dropdown max-h-64 overflow-y-auto">
-            <template x-for="agent in availableAgents" :key="agent.id">
-              <button @click="selectTargetAgent(agent); open = false"
-                      class="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)] transition-colors"
-                      :class="agent.id === selectedAgentId && 'text-[var(--primary)] bg-[var(--surface-container)]'">
-                <span class="material-symbols-outlined text-sm" x-text="agent.id === 'mycelos' ? 'sensors' : (agent.id === 'builder' ? 'construction' : 'smart_toy')"></span>
-                <span class="truncate" x-text="agent.display_name || agent.name || agent.id"></span>
-              </button>
-            </template>
-            <p x-show="availableAgents.length === 0" class="px-4 py-2 text-xs text-[var(--on-surface-variant)]/50 font-label"
-               x-text="t('chat.no_agents')"></p>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -379,47 +363,34 @@
 
     <!-- mb-56 (not pb-56) ends the scroll region above the fixed footer so the
          native scrollbar stays reachable; pb-8 gives breathing room inside. -->
-    <section id="chat-area" class="flex-1 overflow-y-auto pt-28 pb-8 mb-56 px-8 scroll-smooth">
+    <section id="chat-area" class="chat-messages">
       <div class="max-w-4xl mx-auto w-full space-y-6">
 
-        <!-- Empty state: shown when no messages -->
-        <div x-show="messages.length === 0" class="flex flex-col items-center justify-center min-h-[60vh] text-center">
-          <div class="w-20 h-20 rounded-full bg-gradient-to-tr from-primary/20 to-secondary/10 p-[1px] mb-6">
-            <div class="w-full h-full rounded-full bg-surface-container-low flex items-center justify-center relative overflow-hidden">
-              <img alt="Mycelos" class="w-12 h-12 object-contain opacity-80" src="/assets/logo-transparent.svg">
-              <div class="absolute inset-0 bg-primary/5 animate-pulse"></div>
-            </div>
-          </div>
-          <h2 class="font-headline text-2xl font-bold tracking-tight glow-text mb-2" x-text="activeAgent || 'Mycelos'"></h2>
-          <p class="text-on-surface-variant max-w-md text-sm leading-relaxed"
-             x-text="t('chat.empty_description')"></p>
-          <div class="flex flex-wrap justify-center gap-3 mt-8 max-w-lg">
-            <button @click="input = t('chat.suggestion_capabilities'); sendMessage()"
-                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
-                           hover:text-primary transition-colors"
-                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
-                    x-text="t('chat.suggestion_capabilities')"></button>
-            <button @click="input = t('chat.suggestion_create_agent'); sendMessage()"
-                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
-                           hover:text-primary transition-colors"
-                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
-                    x-text="t('chat.suggestion_create_agent')"></button>
-            <button @click="input = t('chat.suggestion_show_workflows'); sendMessage()"
-                    class="px-4 py-2 rounded-full glass-card text-on-surface-variant text-sm
-                           hover:text-primary transition-colors"
-                    style="box-shadow: 0 0 0 1px rgba(106, 214, 255, 0.08);"
-                    x-text="t('chat.suggestion_show_workflows')"></button>
+        <div x-show="messages.length === 0" class="chat-welcome">
+          <img src="/assets/logo-transparent.svg" width="42" height="42" alt="">
+          <h1>Was möchtest du wissen?</h1>
+          <p>Finde Zusammenhänge. Halte einen Gedanken fest.</p>
+          <div class="welcome-actions">
+            <button @click="openKnowledge()">Meine Struktur</button>
+            <button @click="openSources('add')">Quelle hinzufügen</button>
           </div>
         </div>
 
         <!-- Messages loop -->
         <template x-for="(msg, index) in messages" :key="index">
           <div class="animate-fade-in">
+            <template x-if="msg.role === 'knowledge'"><div><mycelos-knowledge :view="msg.view || 'tree'"></mycelos-knowledge></div></template>
+            <template x-if="msg.role === 'local-sources'">
+              <div class="w-full mb-4"><mycelos-sources :view="msg.sourceView || 'list'" :source-id="msg.sourceId || ''"></mycelos-sources></div>
+            </template>
 
+            <template x-if="msg.role === 'settings-models'"><div class="p-5 mb-4 rounded-xl" style="background:white"><mycelos-models></mycelos-models></div></template>
+            <template x-if="msg.role === 'settings-telegram'"><div class="p-5 mb-4 rounded-xl" style="background:white"><mycelos-telegram></mycelos-telegram></div></template>
+            <template x-if="msg.role === 'settings-connectors'"><div class="p-5 mb-4 rounded-xl" style="background:white"><mycelos-connectors style="--on-surface:#233638;--on-surface-variant:#536568;--surface-container-low:#fff;--outline-variant:#dce6e4;--surface:#fff;--primary:#176366"></mycelos-connectors></div></template>
             <!-- User message -->
             <div x-show="msg.role === 'user'" class="flex justify-end w-full">
               <div class="max-w-[80%] text-on-secondary-container px-6 py-4 rounded-xl rounded-tr-sm shadow-lg shadow-black/20"
-                   style="background: linear-gradient(135deg, var(--secondary-container), var(--on-secondary-fixed-variant));">
+                   style="background:var(--secondary-container);box-shadow:none">
                 <!-- Image preview: shown inline at adaptive size, click → lightbox -->
                 <template x-if="msg.attachment && msg.attachment.kind === 'image'">
                   <div class="mb-2">
@@ -430,17 +401,23 @@
                          loading="lazy">
                   </div>
                 </template>
-                <!-- PDF / DOC card: file icon + filename + Open link -->
+                <!-- Documents open inline; the magnifier provides a focused view. -->
                 <template x-if="msg.attachment && (msg.attachment.kind === 'pdf' || msg.attachment.kind === 'doc')">
-                  <a :href="msg.attachment.url" target="_blank" rel="noopener"
-                     class="flex items-center gap-3 mb-2 px-3 py-2 rounded-lg bg-on-secondary-container/10 hover:bg-on-secondary-container/20 transition-colors no-underline">
-                    <span class="material-symbols-outlined text-2xl"
-                          x-text="msg.attachment.kind === 'pdf' ? 'picture_as_pdf' : 'description'"></span>
-                    <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium truncate" x-text="msg.attachment.filename"></div>
-                      <div class="text-xs opacity-70" x-text="(msg.attachment.size / 1024 / 1024).toFixed(1) + ' MB · click to open'"></div>
+                  <div>
+                    <button @click="msg.showPreview = !msg.showPreview" class="flex items-center gap-3 mb-2 px-3 py-2 rounded-lg text-left">
+                      <span class="material-symbols-outlined" aria-hidden="true">description</span>
+                      <span x-text="msg.attachment.filename"></span>
+                    </button>
+                    <div x-show="msg.showPreview" x-cloak>
+                      <template x-if="msg.showPreview && msg.attachment.kind === 'pdf'">
+                        <iframe :src="msg.attachment.url" :title="msg.attachment.filename" style="width:100%;height:360px;border:1px solid #dce6e1;border-radius:8px"></iframe>
+                      </template>
+                      <div class="flex items-center gap-3 py-2">
+                        <button x-show="msg.attachment.kind === 'pdf'" @click="documentPreview = msg.attachment" aria-label="Dokument vergrößern" title="Dokument vergrößern"><span class="material-symbols-outlined">zoom_in</span></button>
+                        <a :href="msg.attachment.url" target="_blank" rel="noopener">Original öffnen</a>
+                      </div>
                     </div>
-                  </a>
+                  </div>
                 </template>
                 <!-- Generic attachment card for unsupported preview kinds -->
                 <template x-if="msg.attachment && msg.attachment.kind === 'other'">
@@ -647,12 +624,29 @@
 
     </section>
 
+    <dialog x-ref="documentDialog" @close="documentPreview = null" class="document-dialog">
+      <div class="flex items-center justify-between mb-3"><strong x-text="documentPreview?.filename"></strong><button @click="$refs.documentDialog.close()" aria-label="Dokument schließen">Schließen</button></div>
+      <template x-if="documentPreview"><iframe :src="documentPreview.url" :title="documentPreview.filename" style="width:100%;height:calc(90dvh - 80px);border:0"></iframe></template>
+    </dialog>
+
     <!-- Chat input footer -->
-    <footer class="fixed bottom-0 left-0 md:left-64 md:right-72 right-0 px-8 pb-8 pt-4 bg-gradient-to-t from-background via-background/95 to-transparent z-30">
+    <footer class="chat-composer">
       <div class="max-w-4xl mx-auto">
+        <div x-show="focusItem" x-cloak class="chat-focus"><span>Im Fokus: <strong x-text="focusItem?.title"></strong></span><button @click="focusItem = null" aria-label="Gesprächsfokus aufheben">×</button></div>
+        <details class="relative mb-2 text-sm">
+          <summary class="cursor-pointer text-on-surface-variant w-fit px-2 py-1">Aktionen</summary>
+          <div class="absolute bottom-full mb-2 p-2 rounded-lg bg-surface-container border border-primary/20 flex flex-col z-50">
+            <button class="text-left px-3 py-2" @click="openKnowledge(); $el.closest('details').open = false">Meine Struktur</button>
+            <button class="text-left px-3 py-2" @click="openKnowledge('recent'); $el.closest('details').open = false">Zuletzt geändert</button>
+            <a class="text-left px-3 py-2" href="/pages/workflows.html">Routinen</a>
+            <details class="px-3 py-2"><summary>Gesprächsdetails</summary><p class="text-sm" x-text="modelUsed || 'Noch kein Modellaufruf'"></p><p class="text-sm" x-show="tokenCount > 0" x-text="tokenCount + ' Tokens · ' + costTotal.toFixed(4) + ' USD'"></p><div x-show="activeSessionId" class="flex flex-col gap-2 mt-2"><a :href="'/api/sessions/' + encodeURIComponent(activeSessionId) + '/download?format=markdown'">Als Markdown speichern</a><a :href="'/api/sessions/' + encodeURIComponent(activeSessionId) + '/download?format=json'">Als JSON speichern</a><a :href="'/api/sessions/' + encodeURIComponent(activeSessionId) + '/download?format=jsonl'">Als JSONL speichern</a></div></details>
+            <button class="text-left px-3 py-2" @click="openSources('add'); $el.closest('details').open = false">Quelle hinzufügen</button>
+            <button class="text-left px-3 py-2" @click="openSources('list'); $el.closest('details').open = false">Meine Quellen</button><button class="text-left px-3 py-2" @click="openSettings('models'); $el.closest('details').open = false">Modelle einrichten</button><button class="text-left px-3 py-2" @click="openSettings('telegram'); $el.closest('details').open = false">Telegram einrichten</button><button class="text-left px-3 py-2" @click="openSettings('connectors'); $el.closest('details').open = false">MCP-Verbindungen</button>
+          </div>
+        </details>
         <div class="relative group">
           <!-- Ambient glow behind input -->
-          <div class="absolute -inset-1 bg-gradient-to-r from-primary/20 to-secondary/20 rounded-2xl blur opacity-25 group-focus-within:opacity-50 transition duration-500"></div>
+
           <!-- Input container -->
           <div class="relative bg-surface-container/90 backdrop-blur-xl rounded-2xl flex items-end p-2 transition-colors"
                style="border: 1px solid rgba(70, 72, 77, 0.2);"
@@ -662,13 +656,13 @@
             <!-- Attach file button -->
             <button @click="$refs.fileInput.click()"
                     :disabled="sending"
-                    aria-label="Attach file"
+                    aria-label="Dokument anhängen" title="Dokument anhängen"
                     class="p-2 text-on-surface-variant hover:text-primary transition-colors flex-shrink-0 self-end disabled:opacity-40">
-              <span class="material-symbols-outlined">add_circle</span>
+              <span class="material-symbols-outlined">attach_file</span>
             </button>
-            <input type="file" x-ref="fileInput" class="hidden"
+            <input type="file" multiple x-ref="fileInput" class="hidden"
                    accept=".pdf,.docx,.doc,.txt,.csv,.json,.md,.html,.png,.jpg,.jpeg,.gif,.webp"
-                   @change="handleFileUpload($event.target.files[0]); $event.target.value = ''">
+                   @change="handleFiles($event.target.files); $event.target.value = ''">
             <!-- Slash command autocomplete dropdown -->
             <div x-show="slashSuggestions.length > 0" x-transition
                  class="absolute bottom-full left-0 right-0 mb-1 mx-2 glass-card-strong rounded-xl py-1.5 z-50 max-h-64 overflow-y-auto"
@@ -685,13 +679,13 @@
             <!-- Auto-resizing textarea (hidden during recording) -->
             <textarea x-show="!recording" x-model="input"
                       :disabled="sending"
-                      aria-label="Message input"
+                      aria-label="Nachricht"
                       @input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 128) + 'px'; updateSlashSuggestions()"
-                      @keydown.enter.prevent="if (slashSuggestions.length > 0 && slashSelectedIdx >= 0) { selectSlashCommand(slashSuggestions[slashSelectedIdx].name); } else if (!$event.shiftKey) { sendMessage(); }"
+                      @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); if (slashSuggestions.length > 0 && slashSelectedIdx >= 0) { selectSlashCommand(slashSuggestions[slashSelectedIdx].name); } else { sendMessage(); } }"
                       @keydown.arrow-up.prevent="if (slashSuggestions.length > 0) slashSelectedIdx = Math.max(0, slashSelectedIdx - 1)"
                       @keydown.arrow-down.prevent="if (slashSuggestions.length > 0) slashSelectedIdx = Math.min(slashSuggestions.length - 1, slashSelectedIdx + 1)"
                       @keydown.escape="slashSuggestions = []; slashSelectedIdx = 0"
-                      @keydown.tab.prevent="if (slashSuggestions.length > 0) selectSlashCommand(slashSuggestions[slashSelectedIdx].name)"
+                      @keydown.tab="if (slashSuggestions.length > 0) { $event.preventDefault(); selectSlashCommand(slashSuggestions[slashSelectedIdx].name); }"
                       @keydown.shift.enter="void 0"
                       class="flex-1 min-w-0 bg-transparent border-none focus:ring-0 text-on-surface text-[15px] py-3 resize-none max-h-32 placeholder:text-on-surface-variant/40 disabled:opacity-50"
                       :placeholder="t('chat.placeholder')"
@@ -725,7 +719,7 @@
               <!-- Send button -->
               <button @click="sendMessage()"
                       :disabled="sending || !input.trim()"
-                      aria-label="Send message"
+                      aria-label="Nachricht senden"
                       class="w-10 h-10 rounded-lg flex items-center justify-center active:scale-90 transition-all flex-shrink-0"
                       :class="input.trim() && !sending
                         ? 'bg-primary text-on-primary-fixed shadow-lg shadow-primary/20 cursor-pointer'
@@ -753,158 +747,10 @@
       </div>
     </footer>
 
-    <!-- First-time Setup Dialog (shown when Mycelos has no credentials yet) -->
-    <div x-show="setupModal.open" x-transition
-         class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-         @keydown.escape.window="setupModal.open = false">
-      <div class="bg-[var(--surface)] rounded-2xl shadow-2xl w-full max-w-lg p-6"
-           @click.outside="setupModal.open = false">
-        <h3 class="text-lg font-semibold text-on-surface mb-2">Welcome to Mycelos 🌱</h3>
-        <p class="text-sm text-on-surface-variant mb-4">
-          Paste an API key (Anthropic <code>sk-ant-…</code>, OpenAI <code>sk-…</code>)
-          or an Ollama URL to get started. Mycelos will auto-detect the provider,
-          store the credential securely, and register the right models for you.
-        </p>
-        <label class="block text-xs text-on-surface-variant mb-1">API Key</label>
-        <input type="password" x-model="setupModal.apiKey"
-               placeholder="sk-ant-… or sk-…"
-               class="w-full px-3 py-2 rounded-lg border border-[var(--outline)] bg-[var(--background)] text-on-surface mb-3"
-               @keydown.enter="submitSetup()" />
-        <label class="block text-xs text-on-surface-variant mb-1">…or Ollama URL</label>
-        <input type="text" x-model="setupModal.ollamaUrl"
-               placeholder="http://localhost:11434"
-               class="w-full px-3 py-2 rounded-lg border border-[var(--outline)] bg-[var(--background)] text-on-surface mb-3" />
-        <p x-show="setupModal.error" class="text-sm text-error mb-2" x-text="setupModal.error"></p>
-        <div class="flex gap-2 justify-end">
-          <button @click="setupModal.open = false"
-                  class="px-4 py-2 rounded-lg text-on-surface-variant hover:bg-white/5">Cancel</button>
-          <button @click="submitSetup()" :disabled="setupModal.loading"
-                  class="px-4 py-2 rounded-lg bg-primary text-on-primary font-medium disabled:opacity-50">
-            <span x-show="!setupModal.loading">Set up</span>
-            <span x-show="setupModal.loading">Setting up…</span>
-          </button>
-        </div>
-      </div>
-    </div>
 
   </main>
 
-  <!-- Right panel: Agent Status (desktop only) -->
-  <aside class="fixed right-0 top-0 h-full w-72 bg-[var(--surface)] flex-col py-8 px-6 overflow-y-auto z-40 hidden md:flex"
-         style="border-left: 1px solid rgba(70, 72, 77, 0.15);"
-         x-data>
-    <header class="mb-8 pt-8">
-      <h3 class="text-secondary font-headline font-bold text-sm tracking-widest uppercase mb-1" x-text="t('panel.agent_status')"></h3>
-      <p class="text-on-surface/40 text-[10px] font-label tracking-widest uppercase" x-text="t('panel.session_activity')"></p>
-    </header>
 
-    <!-- Active agent display -->
-    <div class="space-y-4 mb-8">
-      <div class="flex items-center justify-between p-3 rounded-lg bg-surface-container">
-        <div class="flex items-center gap-3">
-          <span class="material-symbols-outlined text-primary">sensors</span>
-          <div>
-            <span class="text-[11px] font-label uppercase tracking-widest text-primary block"
-                  x-text="$store.chat.activeAgent">Mycelos</span>
-            <span class="text-[10px] text-on-surface-variant" x-text="t('panel.active_agent')"></span>
-          </div>
-        </div>
-        <div class="w-2 h-2 rounded-full bg-primary animate-pulse" style="box-shadow: 0 0 8px rgba(106, 214, 255, 0.8);"></div>
-      </div>
-
-      <div class="flex items-center justify-between p-3 rounded-lg hover:bg-surface-container transition-colors">
-        <div class="flex items-center gap-3">
-          <span class="material-symbols-outlined text-on-surface-variant/40">psychology</span>
-          <span class="text-[11px] font-label uppercase tracking-widest text-on-surface-variant/40" x-text="t('panel.processing')"></span>
-        </div>
-        <span class="text-[10px] font-bold text-on-surface-variant/40"
-              x-text="$store.chat.sending ? t('panel.status_active') : t('panel.status_idle')"></span>
-      </div>
-    </div>
-
-    <!-- Empty state: before any message, the four zero-value metric cards
-         are meaningless and waste the panel. Show a single quiet line
-         instead; the full metrics appear once the session has activity. -->
-    <div x-show="!$store.chat.messageCount"
-         class="flex items-center gap-2 mb-8 px-3 py-2 rounded-lg bg-surface-container-low text-[11px] text-on-surface-variant/60">
-      <span class="material-symbols-outlined text-sm">monitoring</span>
-      <span x-text="t('panel.metrics_idle')">Metrics appear once you start chatting.</span>
-    </div>
-
-    <!-- Session metrics (only once there's activity) -->
-    <div class="space-y-4 mb-8" x-show="$store.chat.messageCount">
-      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
-        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.tokens_used')"></p>
-        <div class="flex items-end justify-between">
-          <span class="text-2xl font-headline font-bold text-on-surface"
-                x-text="$store.chat.tokenCount">0</span>
-          <span class="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded" x-text="t('panel.last_msg')"></span>
-        </div>
-      </div>
-
-      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
-        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.model')"></p>
-        <div class="flex items-end justify-between">
-          <span class="text-sm font-headline font-bold text-on-surface truncate"
-                x-text="$store.chat.modelUsed || t('panel.model_awaiting')"></span>
-        </div>
-      </div>
-
-      <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);">
-        <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.session_cost')"></p>
-        <div class="flex items-end justify-between">
-          <span class="text-2xl font-headline font-bold text-on-surface"
-                x-text="'$' + ($store.chat.costTotal).toFixed(4)">$0.0000</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Messages count (only once there's activity) -->
-    <div class="bg-surface-container-low p-4 rounded-xl" style="border: 1px solid rgba(70, 72, 77, 0.1);"
-         x-show="$store.chat.messageCount">
-      <p class="text-[10px] text-on-surface-variant uppercase tracking-tighter mb-2" x-text="t('panel.messages')"></p>
-      <div class="flex items-end justify-between">
-        <span class="text-2xl font-headline font-bold text-on-surface"
-              x-text="$store.chat.messageCount">0</span>
-        <span class="text-[10px] text-tertiary font-bold" x-text="t('panel.this_session')"></span>
-      </div>
-    </div>
-
-    <!-- Download session -->
-    <div class="mt-6" x-data="{ open: false }" @click.outside="open = false"
-         x-show="$store.chat.activeSessionId">
-      <div class="relative">
-        <button @click="open = !open"
-                class="w-full py-2.5 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-widest
-                       text-on-surface-variant hover:text-primary transition-all rounded-lg"
-                style="border: 1px solid rgba(70, 72, 77, 0.3);">
-          <span class="material-symbols-outlined text-sm">download</span>
-          <span x-text="t('panel.download_session')">Download</span>
-          <span class="material-symbols-outlined text-sm transition-transform" :class="open && 'rotate-180'">expand_more</span>
-        </button>
-        <div x-show="open" x-transition
-             class="absolute bottom-full left-0 right-0 mb-1 bg-[var(--surface-container-high)] rounded-lg shadow-lg py-1 z-10">
-          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=markdown'); open = false"
-                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">Markdown</button>
-          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=json'); open = false"
-                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">JSON</button>
-          <button @click="window.open('/api/sessions/' + $store.chat.activeSessionId + '/download?format=jsonl'); open = false"
-                  class="w-full text-left px-4 py-2 text-sm text-[var(--on-surface-variant)] hover:bg-[var(--surface-container)] hover:text-[var(--on-surface)]">JSONL</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Flush / New session at bottom -->
-    <div class="mt-auto pt-6" style="border-top: 1px solid rgba(70, 72, 77, 0.1);">
-      <button @click="window.dispatchEvent(new CustomEvent('new-session'))"
-              class="w-full py-2.5 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-widest
-                     text-on-surface-variant hover:text-primary transition-all rounded-lg"
-              style="border: 1px solid rgba(70, 72, 77, 0.3);">
-        <span class="material-symbols-outlined text-sm">add_circle</span>
-        <span x-text="t('chat.new_session')">New Session</span>
-      </button>
-    </div>
-  </aside>
 
   <!-- Mobile navigation container (loaded by layout.js) -->
   <nav id="mobile-nav"></nav>
@@ -1123,6 +969,20 @@
      */
     function chatApp() {
       return {
+        focusItem: null,
+        documentPreview: null,
+        openKnowledge(view = 'tree') {
+          this.messages.push({role:'knowledge', view});
+          this.scrollToBottom();
+        },
+        openSettings(section) {
+          this.messages.push({role:'settings-' + section});
+          this.scrollToBottom();
+        },
+        openSources(view = 'list', sourceId = '') {
+          this.messages.push({role: 'local-sources', sourceView: view, sourceId});
+          this.scrollToBottom();
+        },
         sessions: [],
         activeSessionId: null,
         messages: [],
@@ -1176,44 +1036,14 @@
           visibleFields: [], hasAdvanced: false, showAdvanced: false,
           isLastStep: false, providerDetected: '', error: '', submitting: false,
         },
-        setupModal: { open: false, apiKey: '', ollamaUrl: '', loading: false, error: '' },
         pendingWorkflowRunId: null,
         pendingHandoffAgentId: null,
-
-        async submitSetup() {
-          if (this.setupModal.loading) return;
-          const key = (this.setupModal.apiKey || '').trim();
-          const ollama = (this.setupModal.ollamaUrl || '').trim();
-          if (!key && !ollama) {
-            this.setupModal.error = 'Enter an API key or an Ollama URL.';
-            return;
-          }
-          this.setupModal.loading = true;
-          this.setupModal.error = '';
-          try {
-            const body = ollama ? { ollama_url: ollama } : { api_key: key };
-            const res = await MycelosAPI.post('/api/setup', body);
-            if (res && res.ok) {
-              this.setupModal.open = false;
-              this.messages.push({
-                role: 'system',
-                content: `✅ Setup complete — provider: ${res.provider}, models: ${(res.models || []).join(', ')}. You can chat now.`,
-              });
-              this.scrollToBottom();
-            } else {
-              this.setupModal.error = 'Setup failed: unexpected response.';
-            }
-          } catch (e) {
-            this.setupModal.error = (e && e.message) || 'Setup failed.';
-          } finally {
-            this.setupModal.loading = false;
-          }
-        },
 
         /**
          * Initialize: load sessions from the API.
          */
         async initChat() {
+          this.$watch('documentPreview', value => { if (value) this.$nextTick(() => this.$refs.documentDialog.showModal()); });
           this.$watch('activeSessionId', (id) => { this.$store.chat.activeSessionId = id; });
           try {
             const data = await MycelosAPI.get('/api/sessions');
@@ -1438,6 +1268,8 @@
          * Create a new chat session.
          */
         async newSession() {
+          if (this.sending) return;
+          this.focusItem = null;
           try {
             const data = await MycelosAPI.post('/api/sessions', {});
             this.activeSessionId = data.session_id || data.id;
@@ -1449,9 +1281,7 @@
             this.activeAgent = this.selectedAgentName;
           } catch (e) {
             console.warn('Could not create session:', e.message);
-            // Generate a local ID for offline dev
-            this.activeSessionId = 'local-' + Date.now();
-            this.messages = [];
+            this.messages.push({role:'system',content:'Das neue Gespräch konnte nicht starten. Bitte erneut versuchen.',type:'error'});
           }
         },
 
@@ -1459,6 +1289,8 @@
          * Switch to a different session.
          */
         async switchSession(sessionId) {
+          if (this.sending) return;
+          this.focusItem = null;
           this.activeSessionId = sessionId;
           this.messages = [];
           this.tokenCount = 0;
@@ -1587,7 +1419,7 @@
 
           try {
             const payload = {
-              message: message,
+              message: this.focusItem && !message.trimStart().startsWith('/') ? message + '\n\n[Ausgewählter Wissenseintrag: ' + this.focusItem.title + '; Pfad: ' + this.focusItem.path + ']' : message,
               session_id: this.activeSessionId,
             };
             if (this.pendingWorkflowRunId) {
@@ -1622,7 +1454,7 @@
                 case 'system-response':
                   // Onboarding: Mycelos has no credentials yet — open the setup modal
                   if (data.widget === 'setup_required') {
-                    this.setupModal = { open: true, apiKey: '', ollamaUrl: '', loading: false, error: '' };
+                    this.openSettings('models');
                     if (this.messages[assistantIdx] && !this.messages[assistantIdx].content) {
                       this.messages[assistantIdx] = { ...this.messages[assistantIdx], content: data.content, agent: 'System' };
                     } else {
@@ -1683,6 +1515,14 @@
 
                 case 'widget': {
                   const w = data.widget || {};
+                  if (w.type === 'settings' && ['models','telegram','connectors'].includes(w.section)) {
+                    this.openSettings(w.section);
+                    break;
+                  }
+                  if (w.type === 'local_sources') {
+                    this.openSources(w.view || 'list', w.source_id || '');
+                    break;
+                  }
                   // Initialize reactive state flags so Alpine bindings start from a defined value
                   w._loading = false;
                   w._completed = false;
@@ -1963,6 +1803,11 @@
         /**
          * Handle file upload — send to /api/upload and stream the response.
          */
+        async handleFiles(files) {
+          if (this.sending) return;
+          for (const file of Array.from(files || [])) await this.handleFileUpload(file);
+        },
+
         async handleFileUpload(file) {
           if (!file) return;
 

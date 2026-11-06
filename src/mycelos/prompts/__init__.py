@@ -14,7 +14,6 @@ Available variables (built by build_prompt_variables):
     {registered_workflows}  — workflows for Builder (ID, description, steps)
     {available_capabilities} — all capabilities from connectors (deduplicated)
     {available_connectors}  — connectors for Builder (ID, name, type)
-    {level_guidance}        — user-level-aware guidance (Newcomer→Guru)
     {handoff_rules}         — agent routing rules with custom agents
     {pending_workflows}     — paused/waiting workflow runs
     {agent_name}            — custom display name if user renamed the agent
@@ -169,14 +168,6 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
         variables["registered_workflows"] = ""
         variables["available_capabilities"] = ""
         variables["available_connectors"] = ""
-
-    # --- level_guidance: Newcomer→Guru ---
-    try:
-        from mycelos.gamification import check_milestones, get_level_prompt
-        level = check_milestones(app)
-        variables["level_guidance"] = get_level_prompt(level)
-    except Exception:
-        variables["level_guidance"] = ""
 
     # --- handoff_rules: agent routing ---
     try:
