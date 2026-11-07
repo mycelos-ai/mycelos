@@ -1,5 +1,15 @@
 # Changelog
 
+## Week 45 (2026)
+
+### Documentation archive from agentpark
+
+- **Original planning docs preserved.** The design specs, implementation
+  plans, reviews and framework comparisons that existed only in the old
+  `agentpark` repository now live in `docs/archive/agentpark/`, with a
+  README explaining what they are. This lets the old repository be archived
+  or deleted without losing the project's design history.
+
 ## Week 33 (2026)
 
 ### Every routine run leaves a record
