@@ -1,10 +1,31 @@
 import json
+import threading
+import time
 
 import httpx
 import pytest
 
 from mycelos.collector.crypto import decode
 from mycelos.app import App
+
+
+def _patch_client_sleep(monkeypatch, fake):
+    """Replace time.sleep for this test's thread only.
+
+    The collector client imports the time module, so patching its sleep
+    patches it process-wide. Background threads left by other tests (for
+    example the gateway restart watchdog) must keep sleeping for real and
+    must not show up in the recorded delays.
+    """
+    real_sleep = time.sleep
+    owner = threading.get_ident()
+
+    def sleep(delay):
+        if threading.get_ident() != owner:
+            return real_sleep(delay)
+        return fake(delay)
+
+    monkeypatch.setattr('mycelos.collector.client.time.sleep', sleep)
 
 
 def test_client_pins_invitation_and_uses_https_fallback(tmp_path):
@@ -151,7 +172,7 @@ def test_running_client_uses_same_key_replacement_invitation(connected, monkeypa
         sleeps.append(1)
         if len(sleeps) > 30:
             (client.directory/'stop').touch()
-    monkeypatch.setattr('mycelos.collector.client.time.sleep', sleep)
+    _patch_client_sleep(monkeypatch, sleep)
     client.run()
     assert states == ['active', 'pending']
     assert server._device(device['id'])['status'] == 'pending'

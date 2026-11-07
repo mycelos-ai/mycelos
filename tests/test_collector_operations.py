@@ -10,26 +10,8 @@ from click.testing import CliRunner
 from mycelos.collector.client import CollectorClient
 from mycelos.collector.cli import cli
 from mycelos.collector.local import LocalCollector
-from tests.test_collector_client import connected, add_documents
+from tests.test_collector_client import _patch_client_sleep, add_documents, connected
 
-
-def _patch_client_sleep(monkeypatch, fake):
-    """Replace time.sleep for this test's thread only.
-
-    The collector client imports the time module, so patching its sleep
-    patches it process-wide. Background threads left by other tests (for
-    example the gateway restart watchdog) must keep sleeping for real and
-    must not show up in the recorded delays.
-    """
-    real_sleep = time.sleep
-    owner = threading.get_ident()
-
-    def sleep(delay):
-        if threading.get_ident() != owner:
-            return real_sleep(delay)
-        return fake(delay)
-
-    monkeypatch.setattr('mycelos.collector.client.time.sleep', sleep)
 
 
 def test_history_waits_for_receiving_ack_without_waiting_for_processing(connected, tmp_path):
