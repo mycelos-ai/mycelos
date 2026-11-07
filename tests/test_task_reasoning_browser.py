@@ -25,7 +25,7 @@ def test_task_settings_can_be_saved_on_mobile(page):
     page.goto('http://settings.test/')
     page.add_script_tag(path=str(Path('src/mycelos/frontend/shared/model-settings.js').resolve()))
     page.get_by_role('button',name='Denkschritte für Verknüpfung ändern',exact=True).click()
-    page.get_by_label('Denkschritte',exact=True).select_option('none')
+    page.get_by_role('combobox',name='Denkschritte',exact=True).select_option('none')
     page.get_by_label('Ausgabelimit in Tokens · leer für Modellstandard').fill('8000')
     page.get_by_role('button',name='Speichern',exact=True).click()
     expect(page.get_by_text('Einstellungen für die Aufgabe gespeichert.',exact=True)).to_be_visible()
