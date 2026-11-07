@@ -10,6 +10,7 @@ from mycelos.widgets.types import (
     Compose,
     Confirm,
     ImageBlock,
+    KnowledgeView,
     ProgressBar,
     StatusCard,
     Table,
@@ -27,6 +28,7 @@ _DISPATCH: dict[type, str] = {
     Confirm: "render_confirm",
     ImageBlock: "render_image_block",
     Compose: "render_compose",
+    KnowledgeView: "render_knowledge_view",
 }
 
 
@@ -43,6 +45,7 @@ class WidgetRenderer(Protocol):
     def render_confirm(self, widget: Confirm) -> Any: ...
     def render_image_block(self, widget: ImageBlock) -> Any: ...
     def render_compose(self, widget: Compose) -> Any: ...
+    def render_knowledge_view(self, widget: KnowledgeView) -> Any: ...
 
 
 def dispatch_render(renderer: Any, widget: Any) -> Any:

@@ -581,14 +581,14 @@ def test_audit_details_parsed_as_dict(client: TestClient):
 
 class TestRootRedirect:
     def test_root_serves_home_redirect(self, client: TestClient):
-        """GET / must lead the user to Home."""
+        """GET / must lead the user to the conversation, which is Home."""
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code in (200, 302, 307)
         if resp.status_code in (302, 307):
-            assert "/pages/dashboard.html" in resp.headers.get("location", "")
+            assert "/pages/chat.html" in resp.headers.get("location", "")
         else:
             assert re.search(
-                r'<meta\s+http-equiv=["\']refresh["\']\s+content=["\']0;url=/pages/dashboard\.html["\']\s*/?>',
+                r'<meta\s+http-equiv=["\']refresh["\']\s+content=["\']0;url=/pages/chat\.html["\']\s*/?>',
                 resp.text,
                 re.IGNORECASE,
             )

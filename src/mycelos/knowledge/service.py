@@ -454,6 +454,8 @@ class KnowledgeBase:
         # path escapes self._knowledge_dir.
         file_path = self._safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
+        from mycelos.knowledge.file_journal import record_file
+        record_file(file_path)
         file_path.write_text(render_note(note), encoding="utf-8")
 
         # remind_via is resolved at fire time by ReminderService, not here.
@@ -629,7 +631,8 @@ class KnowledgeBase:
             "content": note.content,
             "type": note.type,
             "tags": note.tags,
-            "links": note.links,
+            "links": sorted(set(note.links or []) | {r["to_path"] for r in self._indexer.article_relations(path)}),
+            "relations": self._indexer.article_relations(path),
             "status": note.status,
             "priority": note.priority,
             "due": note.due,
@@ -724,6 +727,8 @@ class KnowledgeBase:
                 note.content = content
         note.updated_at = _now()
 
+        from mycelos.knowledge.file_journal import record_file
+        record_file(file_path)
         file_path.write_text(render_note(note), encoding="utf-8")
 
         # Re-index. Preserve columns that `update()` does not manage —
@@ -1281,7 +1286,9 @@ class KnowledgeBase:
                 continue
 
             targets: set[str] = set()
-            for frontmatter_link in note.get("links", []) or []:
+            # Read only file-owned links here. read() also exposes database relations.
+            file_note = parse_frontmatter(self._safe_path(path).read_text(encoding="utf-8"))
+            for frontmatter_link in file_note.links or []:
                 if frontmatter_link in all_paths and frontmatter_link != path:
                     targets.add(frontmatter_link)
 
@@ -1420,7 +1427,7 @@ class KnowledgeBase:
         ]
         edges = [
             {"source": l["from_path"], "target": l["to_path"],
-             "kind": l.get("kind") or "wikilink"}
+             "kind": l.get("kind") or "wikilink", "reason": l.get("reason") or ""}
             for l in links
             if l["from_path"] in visible and l["to_path"] in visible
         ]

@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "click>=8.1",
     "cryptography>=43.0",
+    "noiseprotocol==0.3.1",
+    "keyring>=25.0,<26",
     "ddgs>=9.0",
     "httpx>=0.27",
     "litellm>=1.40",
@@ -83,6 +85,8 @@ Repository = "https://github.com/mycelos-ai/mycelos"
 
 [project.scripts]
 mycelos = "mycelos.cli.main:cli"
+mycelos-collector = "mycelos.collector.cli:cli"
+mycelos-collector-admin = "mycelos.collector.admin:cli"
 
 [tool.hatch.build]
 artifacts = [

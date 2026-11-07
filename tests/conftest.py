@@ -71,3 +71,23 @@ def _reset_proxy_client():
         yield
     finally:
         http_tools._proxy_client = original
+
+
+@pytest.fixture(autouse=True)
+def _drop_gateway_log_handlers():
+    """create_app() attaches a root FileHandler for <data_dir>/gateway.log.
+
+    Tests build gateways in temporary directories that are deleted after the
+    test. If that handler stays on the root logger and gets closed in between
+    (uvicorn's dictConfig closes all handlers), the next warning logged by an
+    unrelated test tries to reopen the file in the deleted directory and
+    raises FileNotFoundError. Remove those handlers after each test.
+    """
+    import logging
+
+    yield
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename.endswith("gateway.log"):
+            root.removeHandler(handler)
+            handler.close()

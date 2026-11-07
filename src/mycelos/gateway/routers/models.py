@@ -11,6 +11,21 @@ from fastapi.responses import JSONResponse
 router = APIRouter()
 
 
+@router.get('/api/models/task-settings')
+async def get_task_settings(request: Request):
+    from mycelos.llm.task_settings import TASKS, read
+    return {key: read(request.app.state.mycelos.storage, key) for key in TASKS}
+
+
+@router.put('/api/models/task-settings/{purpose}')
+async def put_task_settings(request: Request, purpose: str, payload: dict[str, Any]):
+    from mycelos.llm.task_settings import save
+    try:
+        return save(request.app.state.mycelos, purpose, payload)
+    except ValueError as error:
+        return JSONResponse({'error': str(error)}, status_code=400)
+
+
 @router.get("/api/models")
 async def list_models(request: Request) -> dict[str, Any]:
     """All models, registered agents, and agent assignments.
@@ -463,3 +478,167 @@ async def update_agent_assignments(
             )
     mycelos.model_registry.set_agent_models(agent_id, model_ids, purpose=purpose)
     return {"ok": True, "agent_id": agent_id, "purpose": purpose, "model_ids": model_ids}
+
+
+@router.get('/api/models/settings')
+def model_settings(request: Request) -> dict[str, Any]:
+    """Local configuration only; never query a provider or expose secrets."""
+    from dataclasses import asdict
+    from mycelos.llm.providers import PROVIDERS
+    app = request.app.state.mycelos
+    services = {c['service'] for c in app.storage.fetchall("SELECT service FROM credentials WHERE user_id = 'default'")}
+    providers = []
+    for provider in PROVIDERS.values():
+        row = asdict(provider)
+        row['configured'] = provider.id in services
+        if provider.id in ('ollama', 'custom'):
+            saved_url = app.memory.get('default', 'system', provider.id + '_url')
+            row['url'] = saved_url or provider.default_url
+            row['configured'] = row['configured'] or bool(saved_url)
+        providers.append(row)
+    return {'providers': providers}
+
+
+@router.put('/api/models/providers/{provider_id}')
+def save_model_provider(request: Request, provider_id: str, payload: dict[str, Any]):
+    """Save provider access independently from onboarding and model assignment."""
+    from urllib.parse import urlsplit
+    from fastapi import HTTPException
+    from mycelos.llm.providers import PROVIDERS
+    from mycelos.setup import _validate_multi_field_credentials, SetupError, ensure_master_key
+    provider = PROVIDERS.get(provider_id)
+    if provider is None:
+        raise HTTPException(400, 'Dieser Anbieter ist nicht verfügbar.')
+    app = request.app.state.mycelos
+    ensure_master_key(app.data_dir)
+    if provider_id in ('ollama', 'custom'):
+        url = str(payload.get('url') or '').strip().rstrip('/')
+        parsed = urlsplit(url)
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise HTTPException(400, 'Bitte eine gültige Server-Adresse mit http oder https eingeben.')
+        credential = {'api_base': url}
+        if provider_id == 'custom':
+            old = app.credentials.get_credential('custom') or {}
+            key = str(payload.get('api_key') or '').strip() or old.get('api_key')
+            if not key or any(c in key for c in ('\r', '\n')):
+                raise HTTPException(400, 'Bitte ein gültiges Bearer-Token eingeben.')
+            credential['api_key'] = key
+        app.credentials.store_credential(provider_id, credential)
+        app.memory.set('default', 'system', provider_id + '_url', url)
+    elif provider.credential_fields:
+        try:
+            cleaned = _validate_multi_field_credentials(provider, payload.get('credentials') or {})
+        except (SetupError, TypeError, AttributeError) as exc:
+            raise HTTPException(400, str(exc))
+        app.credentials.store_credential(provider_id, cleaned)
+    else:
+        key = str(payload.get('api_key') or '').strip()
+        if not key:
+            if not app.credentials.get_credential(provider_id):
+                raise HTTPException(400, 'Bitte den API-Schlüssel eingeben.')
+        else:
+            app.credentials.store_credential(provider_id, {'api_key': key})
+    app.audit.log('models.provider_saved', details={'provider': provider_id})
+    return {'ok': True, 'provider': provider_id}
+
+
+@router.get('/api/models/catalog/{provider_id}')
+def model_catalog(request: Request, provider_id: str):
+    """Catalog lookup uses no completion; local discovery lists installed models."""
+    from dataclasses import asdict
+    from mycelos.llm.providers import PROVIDERS, get_provider_models
+    from fastapi import HTTPException
+    if provider_id not in PROVIDERS:
+        raise HTTPException(400, 'Dieser Anbieter ist nicht verfügbar.')
+    if provider_id == 'custom':
+        from mycelos.llm.provider_test import discover_custom_models
+        try:
+            return {'models': discover_custom_models(request.app.state.mycelos)}
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+    if provider_id == 'ollama':
+        from mycelos.llm.ollama import discover_ollama_models, classify_ollama_tier
+        app = request.app.state.mycelos
+        url = app.memory.get('default', 'system', 'ollama_url') or 'http://localhost:11434'
+        models = discover_ollama_models(url)
+        return {'models': [{'id': m.id, 'name': m.name, 'tier': classify_ollama_tier(m)} for m in models
+                           if 'embed' not in m.id.lower()]}
+    return {'models': [asdict(m) for m in get_provider_models(provider_id)]}
+
+
+@router.post('/api/models')
+def save_model(request: Request, payload: dict[str, Any]):
+    from fastapi import HTTPException
+    from mycelos.llm.providers import PROVIDERS
+    provider = payload.get('provider')
+    model_id = str(payload.get('model_id') or '').strip()
+    tier = payload.get('tier', 'sonnet')
+    if provider not in PROVIDERS or tier not in ('haiku', 'sonnet', 'opus'):
+        raise HTTPException(400, 'Bitte Anbieter und Leistungsstufe wählen.')
+    if not model_id or any(c.isspace() for c in model_id):
+        raise HTTPException(400, 'Bitte eine Modell-ID ohne Leerzeichen eingeben.')
+    if '/' in model_id and not model_id.startswith(provider + '/'):
+        # OpenRouter model names include their upstream provider.
+        if provider not in ('openrouter', 'custom'):
+            raise HTTPException(400, 'Die Modell-ID gehört zu einem anderen Anbieter.')
+    if not model_id.startswith(provider + '/'):
+        model_id = provider + '/' + model_id
+    app = request.app.state.mycelos
+    existing = app.model_registry.get_model(model_id) or {}
+    from mycelos.setup import register_system_agents
+    register_system_agents(app)
+    app.model_registry.add_model(model_id, provider, tier,
+        input_cost_per_1k=existing.get('input_cost_per_1k'),
+        output_cost_per_1k=existing.get('output_cost_per_1k'),
+        max_context=existing.get('max_context'))
+    return {'ok': True, 'model_id': model_id}
+
+
+@router.post('/api/models/providers/{provider_id}/test')
+def test_model_provider(request: Request, provider_id: str):
+    from fastapi import HTTPException
+    from mycelos.llm.providers import PROVIDERS
+    from mycelos.llm.provider_test import check_provider
+    if provider_id not in PROVIDERS:
+        raise HTTPException(400, 'Dieser Anbieter ist nicht verfügbar.')
+    return check_provider(request.app.state.mycelos, provider_id)
+
+
+@router.post('/api/models/providers/{provider_id}/discover')
+def discover_provider_models(request: Request, provider_id: str):
+    from fastapi import HTTPException
+    from mycelos.llm.provider_test import discover_custom_models
+    if provider_id != 'custom':
+        raise HTTPException(400, 'Diese Modellerkennung ist für Custom vorgesehen.')
+    app = request.app.state.mycelos
+    try:
+        models = discover_custom_models(app)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if models:
+        from mycelos.setup import register_system_agents
+        register_system_agents(app)
+    with app.storage.transaction():
+        for model in models:
+            # Discovery adds missing aliases; existing choices remain untouched.
+            if not app.model_registry.get_model(model['id']):
+                app.model_registry.add_model(model['id'], 'custom', model['tier'])
+    return {'models': models, 'count': len(models)}
+
+
+@router.get('/api/models/providers/{provider_id}/delete-preview')
+async def provider_delete_preview(request: Request, provider_id: str):
+    from mycelos.llm.provider_delete import preview
+    try:
+        return preview(request.app.state.mycelos, provider_id)
+    except ValueError as error:
+        return JSONResponse(status_code=422, content={'detail':str(error)})
+
+
+@router.delete('/api/models/providers/{provider_id}')
+async def delete_provider(request: Request, provider_id: str, payload: dict[str, Any]):
+    from mycelos.llm.provider_delete import delete
+    try:
+        return delete(request.app.state.mycelos, provider_id, payload.get('token'))
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={'detail':str(error)})

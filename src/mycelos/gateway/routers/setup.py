@@ -185,6 +185,102 @@ def _scrub_token(text: str, token: str) -> str:
     return text.replace(token, "<redacted>")
 
 
+def _telegram_token(mycelos: Any) -> str:
+    credential = mycelos.credentials.get_credential("telegram") or {}
+    return credential.get("api_key") or ""
+
+
+@router.get("/api/telegram/config")
+async def telegram_config(request: Request) -> dict[str, Any]:
+    """Read saved settings without a Telegram API request or secret output."""
+    import mycelos.channels.telegram as telegram
+    mycelos = request.app.state.mycelos
+    row = mycelos.storage.fetchone("SELECT * FROM channels WHERE id = 'telegram'")
+    # Credential metadata also works when a proxy owns the encrypted secret.
+    credentials = mycelos.storage.fetchall("SELECT service FROM credentials WHERE user_id = 'default'")
+    token_configured = any(item["service"] == "telegram" for item in credentials)
+    return {
+        "token_configured": token_configured,
+        "chat_id": str(mycelos.memory.get("default", "system", "telegram_chat_id") or ""),
+        "enabled": bool(row and row["status"] == "active"),
+        "mode": row["mode"] if row else "polling",
+        "running": bool(
+            (telegram._polling_thread and telegram._polling_thread.is_alive())
+            or (getattr(request.app.state, "telegram_mode", None) == "webhook"
+                and getattr(request.app.state, "telegram_bot", None))
+        ),
+    }
+
+
+@router.put("/api/telegram/config")
+async def save_telegram_config(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """Save a private Telegram chat and apply its local channel state."""
+    import json
+    import re
+    mycelos = request.app.state.mycelos
+    enabled = body.get("enabled", True)
+    token = body.get("token", "")
+    if not isinstance(enabled, bool) or not isinstance(token, str):
+        return JSONResponse({"error": "Invalid Telegram settings"}, status_code=400)
+    token = token.strip()
+    chat_id = body.get("chat_id", mycelos.memory.get("default", "system", "telegram_chat_id") or "")
+    if isinstance(chat_id, int) and not isinstance(chat_id, bool):
+        chat_id = str(chat_id)
+    valid_chat = isinstance(chat_id, str) and re.fullmatch(r"[1-9][0-9]{0,15}", chat_id.strip())
+    if (enabled or chat_id) and not valid_chat:
+        return JSONResponse({"error": "Enter a positive private Telegram chat ID"}, status_code=400)
+    chat_id = chat_id.strip() if isinstance(chat_id, str) else ""
+    if token and not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", token):
+        return JSONResponse({"error": "Invalid bot token format"}, status_code=400)
+    current = await telegram_config(request)
+    if enabled and not token and not current["token_configured"]:
+        return JSONResponse({"error": "Bot token required"}, status_code=400)
+    if enabled and current["mode"] != "polling":
+        return JSONResponse({"error": "This bot uses a webhook. Use its channel configuration."}, status_code=400)
+    try:
+        if token:
+            from mycelos.setup import ensure_master_key
+            ensure_master_key(mycelos.data_dir)
+            mycelos.credentials.store_credential("telegram", {"api_key": token})
+        if chat_id:
+            mycelos.memory.set("default", "system", "telegram_chat_id", chat_id)
+        mycelos.storage.execute(
+            """INSERT INTO channels (id, channel_type, mode, status, config, allowed_users)
+               VALUES ('telegram', 'telegram', 'polling', ?, '{}', ?)
+               ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+               allowed_users=CASE WHEN ? THEN excluded.allowed_users ELSE channels.allowed_users END""",
+            ("active" if enabled else "inactive", json.dumps([int(chat_id)] if chat_id else []), enabled),
+        )
+        if not mycelos.connector_registry.get("telegram"):
+            mycelos.connector_registry.register(
+                connector_id="telegram", name="Telegram", connector_type="channel",
+                capabilities=[], description="Chat via Telegram", setup_type="channel",
+            )
+        mycelos.config.apply_from_state(
+            state_manager=mycelos.state_manager,
+            description="Telegram settings updated", trigger="channel_setup",
+        )
+    except Exception:
+        return JSONResponse({"error": "Could not save Telegram settings"}, status_code=500)
+    runtime_error = None
+    try:
+        if enabled:
+            from mycelos.gateway.server import start_telegram_channel
+            start_telegram_channel(mycelos, request.app, debug=False)
+        else:
+            from mycelos.channels.telegram import stop_polling
+            stop_polling()
+            request.app.state.telegram_bot = None
+            request.app.state.telegram_mode = None
+    except Exception:
+        runtime_error = "Settings saved, but the Telegram channel could not change state"
+    mycelos.audit.log("telegram.settings.saved", user_id=_resolve_user_id(request), details={"enabled": enabled})
+    result = await telegram_config(request)
+    if runtime_error:
+        result["runtime_error"] = runtime_error
+    return result
+
+
 @router.post("/api/telegram/check")
 async def telegram_check(request: Request) -> dict[str, Any]:
     """Check for Telegram bot messages to detect chat ID.
@@ -197,7 +293,8 @@ async def telegram_check(request: Request) -> dict[str, Any]:
     from mycelos.channels.telegram import call_telegram_api_with_token
     mycelos = request.app.state.mycelos
     body = await request.json()
-    token = (body.get("token") or "").strip()
+    token = body.get("token") or _telegram_token(mycelos)
+    token = token.strip() if isinstance(token, str) else ""
     if not token or ":" not in token:
         return JSONResponse({"error": "Invalid bot token format"}, status_code=400)
 
@@ -227,36 +324,21 @@ async def telegram_check(request: Request) -> dict[str, Any]:
         http_method="GET", timeout=10,
     )
 
-    if not updates_data.get("ok") and "Conflict" in (updates_data.get("description") or ""):
-        # Long-polling is running — stop temporarily and retry
-        tg_channel = getattr(request.app.state, "_telegram_channel", None)
-        if tg_channel and hasattr(tg_channel, "stop"):
-            try:
-                await tg_channel.stop()
-            except Exception:
-                pass
-        import asyncio
-        await asyncio.sleep(1)
-        updates_data = call_telegram_api_with_token(
-            mycelos, token, "getUpdates",
-            payload={"limit": 100, "timeout": 2},
-            http_method="GET", timeout=10,
-        )
-        if tg_channel and hasattr(tg_channel, "start"):
-            try:
-                await tg_channel.start()
-            except Exception:
-                pass
-
-    # Find any chat ID from updates
+    # Never interrupt the active receiver to discover a chat. A conflict can
+    # also originate from another host or a webhook.
     results = updates_data.get("result", []) if updates_data.get("ok") else []
+    chats = {}
     for update in reversed(results):
-        msg = update.get("message") or update.get("my_chat_member", {}).get("chat")
-        if msg and isinstance(msg, dict):
-            chat = msg.get("chat", msg)
-            if isinstance(chat, dict) and chat.get("id"):
-                chat_id = str(chat["id"])
-                break
+        message = update.get("message") or {}
+        chat = message.get("chat") or {}
+        if chat.get("type") == "private" and chat.get("id"):
+            identifier = str(chat["id"])
+            chats[identifier] = {
+                "id": identifier,
+                "title": chat.get("first_name") or chat.get("username") or identifier,
+                "type": "private",
+            }
+    chat_id = next(iter(chats)) if len(chats) == 1 else None
 
     mycelos.audit.log(
         "telegram.setup.check_succeeded",
@@ -269,6 +351,11 @@ async def telegram_check(request: Request) -> dict[str, Any]:
         "bot_username": bot_username,
         "chat_id": chat_id,
         "updates": len(results),
+        "chats": list(chats.values()),
+        "discovery_error": (
+            _scrub_token(updates_data.get("description") or "Could not read Telegram chats", token)
+            if not updates_data.get("ok") else None
+        ),
     }
 
 
@@ -407,3 +494,18 @@ async def set_memory(request: Request) -> dict[str, Any]:
     mycelos.memory.set(user_id, scope, key, value)
     mycelos.audit.log("memory.set", details={"scope": scope, "key": key}, user_id=user_id)
     return {"status": "stored", "scope": scope, "key": key}
+
+
+@router.post("/api/system/scheduler/start")
+def start_system_scheduler(request: Request) -> dict[str, bool]:
+    """Start background tasks only after an explicit user action."""
+    from mycelos.gateway.server import start_background_scheduler
+
+    try:
+        start_background_scheduler(request.app.state.mycelos, request.app)
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Die Automatik konnte nicht starten. Bitte erneut versuchen.",
+        ) from None
+    return {"running": True}

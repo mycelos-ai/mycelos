@@ -197,13 +197,13 @@ def test_delete_topic_removes_attachments(app) -> None:
     assert svc.list_attachments("gmail") == []
 
 
-def test_hard_delete_sweep_removes_attachments_on_archived_topic(app) -> None:
-    """A topic can disappear without ever going through delete_topic:
-    archive_note has no type='topic' guard, so a topic archived via the
-    note_archive tool / gateway PATCH shortcut is hard-deleted by the
-    organizer's 30-day sweep exactly like any other archived note — bypassing
-    delete_topic entirely. The attachment cleanup must happen at the sweep
-    too, or it silently survives pointing at a path that no longer exists."""
+def test_organizer_sweep_keeps_archived_topic_and_its_attachments(app) -> None:
+    """Archived knowledge is retained until an explicit deletion request.
+
+    The organizer no longer hard-deletes archived notes after 30 days. An
+    archived topic therefore still exists, and a source attached to it keeps
+    pointing at a real path. Cleanup happens only in delete_topic.
+    """
     import freezegun
 
     from mycelos.agents.handlers.knowledge_organizer_handler import (
@@ -216,7 +216,6 @@ def test_hard_delete_sweep_removes_attachments_on_archived_topic(app) -> None:
     svc.attach("gmail", topic)
 
     kb.archive_note(topic)
-    # Backdate past the 30-day hard-delete threshold.
     app.storage.execute(
         "UPDATE knowledge_notes SET organizer_seen_at=datetime('now', '-31 days') "
         "WHERE path=?",
@@ -228,6 +227,6 @@ def test_hard_delete_sweep_removes_attachments_on_archived_topic(app) -> None:
         handler.run(user_id="default")
 
     note = app.storage.fetchone(
-        "SELECT path FROM knowledge_notes WHERE path=?", (topic,))
-    assert note is None                              # note row is gone
-    assert svc.list_attachments("gmail") == []        # attachment cleaned up too
+        "SELECT path, status FROM knowledge_notes WHERE path=?", (topic,))
+    assert note is not None and note["status"] == "archived"
+    assert svc.list_attachments("gmail") == [topic]

@@ -9,6 +9,7 @@ from mycelos.widgets.types import (
     Compose,
     Confirm,
     ImageBlock,
+    KnowledgeView,
     ProgressBar,
     StatusCard,
     Table,
@@ -88,3 +89,9 @@ class TelegramRenderer:
     def render_compose(self, widget: Compose) -> str:
         parts = [self.render(child) for child in widget.children]
         return "\n\n".join(parts)
+
+    def render_knowledge_view(self, widget: KnowledgeView) -> str:
+        # Telegram has no view renderer: title plus the deterministic fallback.
+        parts = [f"*{widget.title}*"] if widget.title else []
+        parts.append(widget.fallback_text)
+        return "\n".join(parts)

@@ -1,0 +1,39 @@
+/* Gemeinsame, ruhige Oberfläche für Gespräch und Fachansichten. */
+:root,html[data-theme]{
+ color-scheme:light;--surface:#f9fbfa!important;--background:#f9fbfa;--surface-dim:#f9fbfa;
+ --surface-container-lowest:#fff;--surface-container-low:#fff;--surface-container:#f0f5f3;
+ --surface-container-high:#e8efec;--surface-container-highest:#e0e9e5;--surface-variant:#edf3f0;--surface-bright:#fff;
+ --on-surface:#233638;--on-background:#233638;--on-surface-variant:#536568;
+ --primary:#176366!important;--primary-dim:#124e51;--primary-container:#dcece7;--on-primary:#fff;--on-primary-fixed:#fff;
+ --secondary:#236667;--secondary-container:#e7f0ec;--on-secondary-container:#233638;--on-secondary-fixed-variant:#e7f0ec;
+ --tertiary:#635780;--error:#ad3333;--warning:#866213;--outline-variant:#dce6e1;--outline:#6b8077
+}
+body{font-family:system-ui,sans-serif!important;background:var(--surface);color:var(--on-surface)}
+.font-headline,.font-body,.font-label{font-family:system-ui,sans-serif!important}
+#sidebar,#mobile-nav,#quick-capture{display:none!important}
+body>main{padding-left:0!important;padding-right:0!important;width:100%;min-width:0}
+body>main>section{padding-top:100px}
+.product-header{position:fixed;inset:0 0 auto;height:72px;z-index:45;background:#fff;border-bottom:1px solid var(--outline-variant);display:flex;align-items:center;justify-content:space-between;padding:0 max(24px,calc((100vw - 1180px)/2));gap:20px}
+.product-brand{display:flex;align-items:center;gap:10px;color:#233638;text-decoration:none;font-size:23px;font-weight:650;letter-spacing:-.6px}
+.product-brand img{width:30px;height:30px}
+.product-nav{display:flex;align-items:center;gap:8px}
+.product-nav a{color:#536568;text-decoration:none;padding:10px 12px;border-radius:8px}
+.product-nav a:hover,.product-nav a[aria-current=page]{background:#edf4f0;color:#17595c}
+.product-nav .bell{display:flex;align-items:center}
+.glass-card,.glass-card-strong{background:#fff!important;backdrop-filter:none!important;box-shadow:none!important;border:1px solid var(--outline-variant)!important}
+.glow-text{text-shadow:none!important}
+.tracking-widest,.tracking-wider{letter-spacing:normal!important}
+.uppercase{text-transform:none!important}
+:focus-visible{outline:3px solid #4a9297!important;outline-offset:3px}
+button:disabled{cursor:not-allowed}
+@media(max-width:680px){.product-header{height:64px;padding:0 16px;gap:8px}.product-brand{font-size:21px}.product-brand img{width:25px;height:25px}.product-nav{gap:0}.product-nav a{padding:9px}.product-nav .nav-chat{display:none}body>main>section{padding-top:82px}}
+
+body::before,body::after{display:none!important}
+.card,.card:hover{background:white;box-shadow:none;border:1px solid var(--outline-variant);border-radius:14px}
+.card-low{background:var(--surface);box-shadow:none;border-radius:8px}
+.btn-primary,.btn-primary:hover{background:#176366;color:white;box-shadow:none;border-radius:8px}
+.btn-secondary{background:white;color:#176366;border-color:var(--outline-variant);backdrop-filter:none;letter-spacing:normal;text-transform:none;font-size:13px}
+:root{--success:#28754c}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+*,*::before,*::after{box-sizing:border-box}

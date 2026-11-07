@@ -41,6 +41,8 @@ _session_map: dict[int, str] = {}  # telegram_user_id → mycelos_session_id
 _webhook_secret: str | None = None
 _allowed_users: set[int] = set()  # Telegram user IDs allowed to use the bot
 _polling_thread: threading.Thread | None = None
+_polling_loop: asyncio.AbstractEventLoop | None = None
+_polling_task: asyncio.Task | None = None
 _pending_permissions: dict[str, dict] = {}  # permission_id → {telegram_user_id, permission}
 # Maps session_id → filename of an attachment uploaded without a caption.
 # Cleared when the next text message arrives in that session — that text
@@ -268,7 +270,7 @@ def start_polling() -> threading.Thread | None:
         return _polling_thread
 
     def _run_polling() -> None:
-        global _polling_started_at
+        global _polling_started_at, _polling_loop, _polling_task
         attempt = 0
         while not _heartbeat_stop.is_set():
             loop = asyncio.new_event_loop()
@@ -278,12 +280,19 @@ def start_polling() -> threading.Thread | None:
             try:
                 # handle_signals=False — signal handlers only work in
                 # the main thread; we're in a daemon worker.
-                loop.run_until_complete(
-                    dp.start_polling(_bot, handle_signals=False)
-                )
+                # aiogram keeps these events across runs; each worker owns a new loop.
+                dp._stop_signal = None
+                dp._stopped_signal = None
+                _polling_loop = loop
+                _polling_task = loop.create_task(dp.start_polling(_bot, handle_signals=False))
+                if _heartbeat_stop.is_set():
+                    _polling_task.cancel()
+                loop.run_until_complete(_polling_task)
                 # Clean exit (e.g. dp.shutdown via stop_polling). Do
                 # not respawn — the user asked us to stop.
                 logger.info("Telegram polling exited cleanly")
+                return
+            except asyncio.CancelledError:
                 return
             except Exception as e:
                 run_secs = time.monotonic() - run_started
@@ -317,11 +326,19 @@ def start_polling() -> threading.Thread | None:
                 if _heartbeat_stop.wait(delay):
                     return
             finally:
+                _polling_task = None
+                _polling_loop = None
                 try:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                     loop.close()
                 except Exception:
                     pass
 
+    _heartbeat_stop.clear()
     _polling_thread = threading.Thread(
         target=_run_polling,
         daemon=True,
@@ -339,7 +356,11 @@ def stop_polling() -> None:
     global _polling_thread
     _heartbeat_stop.set()
     if _polling_thread and _polling_thread.is_alive():
-        dp.shutdown()
+        if _polling_loop and _polling_task and not _polling_loop.is_closed():
+            _polling_loop.call_soon_threadsafe(_polling_task.cancel)
+        _polling_thread.join(timeout=10)
+        if _polling_thread.is_alive():
+            raise RuntimeError("Telegram receiver did not stop")
         logger.info("Telegram polling stopped")
     _polling_thread = None
 
@@ -1113,6 +1134,10 @@ def call_telegram_api_with_token(
 
     url = f"https://api.telegram.org/bot{{credential}}/{method}"
 
+    if http_method.upper() == "GET" and payload:
+        from urllib.parse import urlencode
+        url += "?" + urlencode(payload)
+
     from mycelos.connectors import http_tools as _http_tools
     pc = getattr(_http_tools, "_proxy_client", None)
     if pc is not None:
@@ -1133,7 +1158,7 @@ def call_telegram_api_with_token(
                     timeout=timeout,
                 )
         except Exception as e:
-            return {"ok": False, "description": f"proxy transport error: {e}"}
+            return {"ok": False, "description": f"proxy transport error: {e}".replace(token, "<redacted>")}
 
         body = resp.get("body", "")
         if not body:
@@ -1162,7 +1187,7 @@ def call_telegram_api_with_token(
                 return parsed
             return {"ok": False, "description": "non-dict response"}
     except Exception as e:
-        return {"ok": False, "description": str(e)}
+        return {"ok": False, "description": str(e).replace(token, "<redacted>")}
 
 
 def call_telegram_api(

@@ -176,7 +176,7 @@ def extract_session_memory(app: Any, messages: list[dict]) -> dict | None:
     conversation = "\n".join(conv_text[-20:])  # Last 20 messages max
 
     try:
-        # Use cheapest configured model for background extraction
+        # Use the configured background chain for extraction
         response = app.llm.complete(
             messages=[
                 {"role": "system", "content": SUMMARY_PROMPT},
@@ -185,7 +185,7 @@ def extract_session_memory(app: Any, messages: list[dict]) -> dict | None:
                     "content": f"Conversation to analyze:\n\n{conversation}",
                 },
             ],
-            model=app.resolve_cheapest_model(),
+            purpose="classification",
         )
 
         result = json.loads(response.content)
@@ -265,7 +265,7 @@ def review_agent_memory_entries(
                     f"Conversation context:\n{conv_text}"
                 )},
             ],
-            model=app.resolve_cheapest_model(),
+            purpose="classification",
         )
 
         result = json.loads(response.content)

@@ -16,6 +16,7 @@ from mycelos.widgets.types import (
     Compose,
     Confirm,
     ImageBlock,
+    KnowledgeView,
     ProgressBar,
     StatusCard,
     Table,
@@ -89,3 +90,14 @@ class CLIRenderer:
     def render_compose(self, widget: Compose) -> None:
         for child in widget.children:
             self.render(child)
+
+    def render_knowledge_view(self, widget: KnowledgeView) -> None:
+        # Text() keeps note content literal: no Rich markup is interpreted.
+        self.console.print(
+            Panel(
+                Text(widget.fallback_text),
+                title=Text(widget.title) if widget.title else None,
+                subtitle=Text(widget.reason, style="dim") if widget.reason else None,
+                border_style="blue",
+            )
+        )

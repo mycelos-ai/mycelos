@@ -22,6 +22,26 @@ NOTE_WRITE_SCHEMA = {
             "properties": {
                 "title": {"type": "string", "description": "Note title"},
                 "content": {"type": "string", "description": "Note content (Markdown)"},
+                "source": {
+                    "type": "object",
+                    "description": (
+                        "Source of a selected connector result. Set this only when you save "
+                        "useful knowledge from a live query, or when the user asks to save it. "
+                        "Do not save every tool result. Copy source details from the result."
+                    ),
+                    "properties": {
+                        "connector": {"type": "string", "description": "Connector ID"},
+                        "tool": {"type": "string", "description": "Tool name within the connector"},
+                        "url": {"type": "string", "description": "Source URL, when present"},
+                        "external_id": {"type": "string", "description": "Source item ID, when present"},
+                        "timestamp": {
+                            "type": "string",
+                            "description": "Query time with timezone (ISO 8601); defaults to save time",
+                        },
+                    },
+                    "required": ["connector", "tool"],
+                    "additionalProperties": False,
+                },
                 "note_type": {
                     "type": "string",
                     "enum": ["note", "task", "decision", "reference", "fact", "journal"],
@@ -195,6 +215,30 @@ def execute_note_write(args: dict, context: dict) -> Any:
     # Provenance: which agent created this note, from which conversation.
     creator = context.get("agent_id") or "mycelos"
     origin: dict = {"kind": "chat"}
+    if "source" in args:
+        from datetime import datetime, timezone
+
+        source = args["source"]
+        if not isinstance(source, dict):
+            return {"error": "source must be an object"}
+        for key in ("connector", "tool"):
+            if not isinstance(source.get(key), str) or not source[key].strip():
+                return {"error": f"source.{key} must be a non-empty string"}
+        origin = {"kind": "connector"}
+        for key in ("connector", "tool", "url", "external_id", "timestamp"):
+            if key in source:
+                if not isinstance(source[key], str) or not source[key].strip():
+                    return {"error": f"source.{key} must be a non-empty string"}
+                origin[key] = source[key].strip()
+        if "timestamp" in origin:
+            try:
+                query_time = datetime.fromisoformat(origin["timestamp"].replace("Z", "+00:00"))
+                if query_time.tzinfo is None:
+                    raise ValueError("timezone required")
+            except ValueError:
+                return {"error": "source.timestamp must be an ISO 8601 time with timezone"}
+        else:
+            origin["timestamp"] = datetime.now(timezone.utc).isoformat()
     if context.get("session_id"):
         origin["conversation_id"] = context["session_id"]
 

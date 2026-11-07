@@ -1,0 +1,2264 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mycelos - Connectors</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/base.css">
+  <script src="/shared/api.js"></script>
+  <script src="/shared/oauth_setup.js"></script>
+  <script src="/shared/i18n.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    /* Status dot animations */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(72, 199, 142, 0.8); }
+      50% { opacity: 0.6; box-shadow: 0 0 4px rgba(72, 199, 142, 0.4); }
+    }
+    .dot-connected {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    .dot-disconnected {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--on-surface-variant);
+      opacity: 0.4;
+    }
+    .dot-error {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: var(--error);
+      box-shadow: 0 0 6px rgba(255, 113, 108, 0.6);
+    }
+
+    /* Toast animation */
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes toast-out {
+      from { opacity: 1; transform: translateY(0); }
+      to   { opacity: 0; transform: translateY(12px); }
+    }
+    .toast-enter { animation: toast-in 0.3s ease-out; }
+    .toast-leave { animation: toast-out 0.3s ease-in forwards; }
+
+    /* Expand/collapse transition */
+    .tools-list {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-in-out;
+    }
+    .tools-list.expanded {
+      max-height: 600px;
+    }
+
+    /* Use-case tile */
+    .usecase-tile {
+      background: var(--surface-container);
+      border: 1px solid rgba(70, 72, 77, 0.15);
+      border-radius: var(--radius-xl);
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: border-color var(--transition-normal), box-shadow var(--transition-normal), transform var(--transition-fast);
+    }
+    .usecase-tile:hover {
+      border-color: rgba(106, 214, 255, 0.3);
+      box-shadow: 0 0 20px rgba(106, 214, 255, 0.06);
+      transform: translateY(-1px);
+    }
+    .usecase-tile.installed {
+      border-color: rgba(72, 199, 142, 0.25);
+    }
+
+    /* Section blocks (Channels, MCP Connectors, Installed) */
+    .section-block {
+      margin-top: 1.5rem;
+    }
+
+    .section-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 0 0 0.75rem 0;
+      color: var(--on-surface, #1f2937);
+    }
+
+    /* Recipe grid — mirrors the inline Tailwind grid used by the
+       Channels / MCP / Installed containers so the layout still works
+       if the inline utility classes are ever removed. */
+    .recipe-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 0.75rem;
+    }
+  </style>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1"><script defer src="/shared/notifications.js?v=1"></script>
+</head>
+
+<body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
+
+  <!-- Sidebar container (loaded by layout.js) -->
+  <div id="sidebar"></div>
+  <div id="quick-capture"></div>
+
+  <!-- Main content area -->
+  <main class="flex-1 flex flex-col md:pl-[170px] min-w-0"
+        x-data="connectorsApp()" x-init="init()">
+
+    <!-- Header container (loaded by layout.js) -->
+    <div id="header"></div>
+
+    <!-- Page content -->
+    <section class="flex-1 overflow-y-auto pt-20 pb-12 px-8">
+      <div class="max-w-5xl mx-auto w-full">
+
+        <!-- Page header -->
+        <div class="flex items-center justify-between mb-8">
+          <div>
+            <h1 class="font-headline text-2xl font-bold tracking-tight glow-text mb-1" x-text="t('connectors.title')">Connectors</h1>
+            <p class="text-on-surface-variant text-sm">Your installed connectors plus what's available to add.</p>
+          </div>
+          <button @click="showAddForm = !showAddForm"
+                  class="btn-secondary"
+                  :class="showAddForm && 'border-primary/50 text-primary'">
+            <span class="material-symbols-outlined text-sm" x-text="showAddForm ? 'close' : 'add_circle'"></span>
+            <span x-text="showAddForm ? 'Cancel' : t('connectors.add')">Add Connector</span>
+          </button>
+        </div>
+
+        <!-- Add Connector Form -->
+        <div x-show="showAddForm" x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 -translate-y-2"
+             x-transition:enter-end="opacity-1 translate-y-0"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-1"
+             x-transition:leave-end="opacity-0 -translate-y-2"
+             class="card mb-8">
+
+          <div class="flex items-center gap-2 mb-5">
+            <span class="material-symbols-outlined text-primary">extension</span>
+            <h2 class="font-headline font-bold text-sm tracking-widest uppercase text-primary">New Connector</h2>
+            <div class="h-[1px] flex-1 mycelium-line"></div>
+            <button @click="pasteJson.open = !pasteJson.open; pasteJson.error = ''"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label
+                           text-tertiary hover:bg-tertiary/10 transition-colors">
+              <span class="material-symbols-outlined text-sm" x-text="pasteJson.open ? 'close' : 'content_paste'"></span>
+              <span x-text="pasteJson.open ? 'Hide paste' : 'Paste config'"></span>
+            </button>
+          </div>
+
+          <!-- Paste-config block: accepts standard MCP JSON snippets
+               (Claude Desktop / Cursor / VS Code style) and fills the
+               form fields automatically. -->
+          <div x-show="pasteJson.open"
+               x-transition:enter="transition ease-out duration-150"
+               x-transition:enter-start="opacity-0 -translate-y-1"
+               x-transition:enter-end="opacity-1 translate-y-0"
+               class="mb-5 p-4 rounded-xl bg-tertiary/5 border border-tertiary/20">
+            <p class="text-xs text-on-surface-variant mb-2">
+              Paste a config snippet from the provider's docs (e.g. <code class="font-mono">{ "mcpServers": { ... } }</code>).
+              Name, command, and environment variables will be extracted.
+            </p>
+            <textarea x-model="pasteJson.input"
+                      class="input-field font-mono text-xs resize-y mb-2"
+                      rows="5"
+                      placeholder='{ "mcpServers": { "yt-dlp": { "command": "npx", "args": ["-y", "@kevinwatt/yt-dlp-mcp@latest"] } } }'></textarea>
+
+            <!-- Multi-server picker: shows when the pasted JSON contains
+                 more than one server under mcpServers. -->
+            <div x-show="pasteJson.servers.length > 1" class="mb-2">
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">
+                Multiple servers found — pick one
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="srv in pasteJson.servers" :key="srv.name">
+                  <button @click="applyPastedServer(srv)" type="button"
+                          class="px-3 py-1.5 rounded-lg text-xs font-mono bg-surface-container
+                                 hover:bg-tertiary/20 transition-colors"
+                          x-text="srv.name"></button>
+                </template>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-3">
+              <p x-show="pasteJson.error" class="text-xs text-error flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm">error</span>
+                <span x-text="pasteJson.error"></span>
+              </p>
+              <p x-show="!pasteJson.error && pasteJson.applied" class="text-xs text-[var(--success)] flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm">check_circle</span>
+                Applied — review the fields below
+              </p>
+              <div class="flex-1"></div>
+              <button @click="parsePastedJson()"
+                      :disabled="!pasteJson.input.trim()"
+                      class="px-3 py-1.5 rounded-lg text-xs font-medium bg-tertiary text-on-tertiary
+                             hover:bg-tertiary/80 transition-colors disabled:opacity-30
+                             disabled:cursor-not-allowed">
+                Parse
+              </button>
+            </div>
+          </div>
+
+          <!-- Name -->
+          <div class="mb-5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Name</label>
+            <input type="text" x-model="newConnector.name"
+                   class="input-field" placeholder="e.g. context7">
+          </div>
+
+          <!-- Command -->
+          <div class="mb-5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Command</label>
+            <textarea x-model="newConnector.command"
+                      @blur="onCommandBlur()"
+                      class="input-field resize-none"
+                      rows="2"
+                      placeholder="npx -y @upstash/context7-mcp"></textarea>
+          </div>
+
+          <!-- Environment Variables -->
+          <div class="mb-5">
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant">Environment Variables</label>
+              <span x-show="newConnector.lookupHit > 0"
+                    class="text-[10px] text-tertiary font-label">
+                MCP Registry suggested <span x-text="newConnector.lookupHit"></span> variable(s)
+              </span>
+            </div>
+            <template x-for="(row, idx) in newConnector.envVars" :key="idx">
+              <div class="flex items-center gap-2 mb-2">
+                <input type="text" x-model="row.key"
+                       class="input-field flex-1" placeholder="Key">
+                <input :type="row.isSecret ? 'password' : 'text'" x-model="row.value"
+                       class="input-field flex-1" placeholder="Value">
+                <button @click="removeEnvVar(idx)" type="button"
+                        class="p-2 rounded-lg text-on-surface-variant/40 hover:text-error hover:bg-error/10 transition-colors"
+                        title="Remove">
+                  <span class="material-symbols-outlined text-base">delete</span>
+                </button>
+              </div>
+            </template>
+            <button @click="addEnvVar()" type="button"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-label
+                           text-on-surface-variant/60 hover:text-primary hover:bg-primary/5 transition-colors">
+              <span class="material-symbols-outlined text-sm">add</span>
+              Variable
+            </button>
+          </div>
+
+          <!-- Actions row -->
+          <div class="flex items-center justify-between">
+            <button @click="showSearch = !showSearch"
+                    class="flex items-center gap-2 text-xs text-tertiary hover:text-tertiary-container transition-colors font-label">
+              <span class="material-symbols-outlined text-sm">search</span>
+              Search MCP Registry
+            </button>
+            <div class="flex items-center gap-3">
+              <button @click="showAddForm = false; resetForm()"
+                      class="text-xs text-on-surface-variant hover:text-on-surface transition-colors font-label uppercase tracking-widest">
+                Cancel
+              </button>
+              <button @click="addConnector()"
+                      :disabled="!newConnector.name.trim() || !newConnector.command.trim() || submitting"
+                      class="btn-primary text-xs">
+                <span x-show="!submitting" class="material-symbols-outlined text-sm">add</span>
+                <span x-show="submitting" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                <span>Add</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- MCP Registry Search (nested inside add form) -->
+          <div x-show="showSearch" x-transition class="mt-6 pt-5" style="border-top: 1px solid rgba(70, 72, 77, 0.2);">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-tertiary text-sm">travel_explore</span>
+              <h3 class="text-[10px] font-label uppercase tracking-widest text-tertiary font-bold">MCP Registry</h3>
+            </div>
+
+            <!-- Search bar -->
+            <div class="flex gap-3 mb-4">
+              <input type="text" x-model="searchQuery"
+                     @keydown.enter="searchMCP()"
+                     class="input-field flex-1" placeholder="Search for MCP servers (e.g. playwright, github, slack)">
+              <button @click="searchMCP()"
+                      :disabled="!searchQuery.trim() || searching"
+                      class="btn-secondary px-4"
+                      :class="(!searchQuery.trim() || searching) && 'opacity-40 cursor-not-allowed'">
+                <span class="material-symbols-outlined text-sm" x-show="!searching">search</span>
+                <span class="material-symbols-outlined text-sm animate-spin" x-show="searching">progress_activity</span>
+                Search
+              </button>
+            </div>
+
+            <!-- Search results -->
+            <div x-show="searchResults.length > 0" class="space-y-2">
+              <template x-for="result in searchResults" :key="result.name">
+                <button @click="selectSearchResult(result)"
+                        class="w-full text-left p-4 rounded-xl bg-surface-container-low hover:bg-surface-container-high transition-colors group"
+                        style="border: 1px solid rgba(70, 72, 77, 0.1);">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="font-headline font-bold text-sm text-on-surface group-hover:text-primary transition-colors"
+                          x-text="result.name"></span>
+                    <span class="text-[10px] font-label text-tertiary opacity-0 group-hover:opacity-100 transition-opacity">Click to use</span>
+                  </div>
+                  <p class="text-xs text-on-surface-variant leading-relaxed line-clamp-2 mb-2" x-text="result.description"></p>
+                  <code class="text-[11px] text-primary/70 bg-primary/5 px-2 py-0.5 rounded font-mono"
+                        x-text="result.command || result.install_command || ''"></code>
+                </button>
+              </template>
+            </div>
+
+            <!-- Search empty state -->
+            <p x-show="searchResults.length === 0 && searchQuery && !searching"
+               class="text-xs text-on-surface-variant/50 text-center py-4 font-label">
+              No results found. Try a different search term.
+            </p>
+          </div>
+        </div>
+
+        <!-- ═══ Setup Wizard (Telegram / Email / Slack) ═══ -->
+        <div x-show="wizard.active" x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 -translate-y-2"
+             x-transition:enter-end="opacity-1 translate-y-0"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-1"
+             x-transition:leave-end="opacity-0 -translate-y-2"
+             class="card mb-8 relative overflow-hidden">
+          <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl"
+               :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : wizard.type === 'email' ? 'bg-primary' : 'bg-[#E01E5A]'"></div>
+
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-5">
+            <div class="flex items-center gap-2.5">
+              <span class="text-2xl" x-text="wizard.type === 'telegram' ? '\uD83D\uDCAC' : wizard.type === 'email' ? '\uD83D\uDCE7' : '\uD83D\uDCE2'"></span>
+              <div>
+                <h2 class="font-headline font-bold text-base text-on-surface"
+                    x-text="wizard.type === 'telegram' ? 'Telegram Setup' : wizard.type === 'email' ? 'Email Setup' : 'Slack Setup'"></h2>
+                <p class="text-xs text-on-surface-variant"
+                   x-text="'Step ' + wizard.step + ' of ' + wizard.totalSteps"></p>
+              </div>
+            </div>
+            <button @click="wizard.active = false"
+                    class="p-1.5 rounded-lg text-on-surface-variant/50 hover:text-on-surface transition-colors">
+              <span class="material-symbols-outlined text-sm">close</span>
+            </button>
+          </div>
+
+          <!-- Progress bar -->
+          <div class="h-1 bg-surface-container-low rounded-full mb-6 overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500"
+                 :class="wizard.type === 'telegram' ? 'bg-[#2AABEE]' : 'bg-primary'"
+                 :style="'width: ' + (wizard.step / wizard.totalSteps * 100) + '%'"></div>
+          </div>
+
+          <!-- ── Telegram Wizard ── -->
+          <template x-if="wizard.type === 'telegram'">
+            <div>
+              <!-- Step 1: Bot Token -->
+              <div x-show="wizard.step === 1">
+                <p class="text-sm text-on-surface-variant mb-4">
+                  Create a Telegram bot, then send it a message before continuing.
+                </p>
+                <ol class="text-sm text-on-surface-variant space-y-2 mb-4 list-decimal list-inside">
+                  <li>Open <a href="https://t.me/BotFather" target="_blank" class="text-primary hover:underline">@BotFather</a> in Telegram</li>
+                  <li>Send <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/newbot</code> and follow the prompts</li>
+                  <li>Copy the <strong>API token</strong> you receive and paste it below</li>
+                  <li><strong>Open your new bot in Telegram and send it any message</strong> (e.g. <code class="bg-surface-container-low px-1.5 py-0.5 rounded text-xs font-mono">/start</code>)</li>
+                </ol>
+                <div class="bg-[#2AABEE]/10 border border-[#2AABEE]/30 rounded-xl p-3 mb-5 text-xs text-on-surface-variant">
+                  <strong class="text-on-surface">Why step 4?</strong> Telegram only reveals your chat ID to a bot once you've messaged it.
+                  Without that first message, Mycelos can't connect to your conversation.
+                </div>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Bot Token</label>
+                <p class="text-xs text-on-surface-variant/60 mb-2">
+                  Paste the BotFather message or just the token — it will be extracted automatically.
+                </p>
+                <textarea x-model="wizard.data.tokenRaw"
+                       @input="wizardExtractToken()"
+                       class="input-field w-full text-sm font-mono mb-1 resize-none"
+                       rows="3"
+                       placeholder="Paste the BotFather message or just the token..."></textarea>
+                <div x-show="wizard.data.token" class="flex items-center gap-1.5 text-xs text-[var(--success)] mb-1">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Token detected: <code class="font-mono" x-text="wizard.data.token.substring(0, 10) + '...'"></code>
+                </div>
+                <div x-show="wizard.data.tokenRaw && !wizard.data.token" class="flex items-center gap-1.5 text-xs text-warning mb-1">
+                  <span class="material-symbols-outlined text-sm">warning</span>
+                  No bot token found in text. Token format: <code class="font-mono">123456789:ABCdef...</code>
+                </div>
+                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50 mb-3">
+                  <span class="material-symbols-outlined text-sm">shield_lock</span>
+                  <span>Encrypted locally — never sent to the AI</span>
+                </div>
+                <p x-show="wizard.error" class="text-sm text-error mt-2 flex items-start gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
+              </div>
+
+              <!-- Step 2: Confirm Chat ID + Verify -->
+              <div x-show="wizard.step === 2">
+                <!-- Bot validated indicator -->
+                <div x-show="wizard.data.botName" class="flex items-center gap-2 text-sm text-[var(--success)] mb-4">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Token valid — bot: <strong x-text="wizard.data.botName"></strong>
+                  <span x-show="wizard.data.botUsername" class="text-on-surface-variant/50">@<span x-text="wizard.data.botUsername"></span></span>
+                </div>
+
+                <!-- Case A: chat ID was auto-detected -->
+                <template x-if="wizard.data.chatId && !wizard.data.noUpdates">
+                  <div>
+                    <p class="text-sm text-on-surface-variant mb-3">
+                      Found your chat with <strong x-text="wizard.data.botName || 'the bot'"></strong>.
+                      Click below — the bot will send a test message to confirm.
+                    </p>
+                    <div class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
+                      <span class="text-on-surface-variant/60">Chat ID:</span>
+                      <code class="font-mono text-on-surface ml-1" x-text="wizard.data.chatId"></code>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Case B: no message detected — prompt the user -->
+                <template x-if="wizard.data.noUpdates && !wizard.data.chatId">
+                  <div class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-4">
+                    <div class="flex items-start gap-2">
+                      <span class="material-symbols-outlined text-warning">chat_bubble</span>
+                      <div class="flex-1">
+                        <p class="text-sm text-on-surface font-medium mb-2">
+                          No message from you to your bot yet.
+                        </p>
+                        <p class="text-xs text-on-surface-variant mb-3">
+                          Open <a x-show="wizard.data.botUsername"
+                                  :href="'https://t.me/' + wizard.data.botUsername"
+                                  target="_blank"
+                                  class="text-primary hover:underline font-mono">@<span x-text="wizard.data.botUsername"></span></a><span x-show="!wizard.data.botUsername">your new bot</span>
+                          in Telegram and send any message (e.g. <code class="font-mono bg-surface-container px-1 rounded">/start</code>).
+                          Then click below.
+                        </p>
+                        <button @click="wizardCheckTelegram()"
+                                :disabled="wizard.checking"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium bg-warning text-on-warning
+                                       hover:bg-warning/80 transition-colors flex items-center gap-1.5
+                                       disabled:opacity-50 disabled:cursor-wait">
+                          <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">refresh</span>
+                          <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                          <span x-text="wizard.checking ? 'Checking...' : 'I sent a message — check again'"></span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Manual fallback (collapsed) -->
+                <details class="mb-4 text-xs text-on-surface-variant">
+                  <summary class="cursor-pointer hover:text-on-surface select-none">Enter Chat ID manually</summary>
+                  <div class="mt-3">
+                    <input type="text" x-model="wizard.data.chatId"
+                           class="input-field w-full text-sm font-mono"
+                           placeholder="e.g. 123456789">
+                  </div>
+                </details>
+
+                <button @click="wizardVerifyTelegram()"
+                        :disabled="wizard.checking || !wizard.data.chatId.trim()"
+                        class="w-full py-2.5 rounded-xl text-sm font-medium bg-[#2AABEE] text-white
+                               hover:bg-[#2AABEE]/80 transition-colors flex items-center justify-center gap-2
+                               disabled:opacity-50 disabled:cursor-wait">
+                  <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">send</span>
+                  <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                  <span x-text="wizard.checking ? 'Sending test message...' : 'Send Test Message'"></span>
+                </button>
+
+                <p x-show="wizard.data.verified" class="text-sm text-[var(--success)] mt-3 flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">check_circle</span>
+                  Test message sent! Check your Telegram.
+                </p>
+
+                <p x-show="wizard.error" class="text-sm text-error mt-3 flex items-start gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
+              </div>
+
+              <!-- Step 3: Done -->
+              <div x-show="wizard.step === 3">
+                <div class="text-center py-4">
+                  <span class="material-symbols-outlined text-4xl text-[var(--success)] mb-3">check_circle</span>
+                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Telegram Connected!</h3>
+                  <p class="text-sm text-on-surface-variant mb-4">
+                    Your bot is ready. Mycelos will respond to messages from Chat ID
+                    <strong x-text="wizard.data.chatId"></strong>.
+                  </p>
+                  <div class="bg-surface-container-low rounded-xl p-4 text-sm text-on-surface-variant text-left">
+                    <strong class="text-on-surface">Try it now:</strong>
+                    <ol class="list-decimal list-inside space-y-1.5 mt-2">
+                      <li>Open <a x-show="wizard.data.botUsername"
+                                  :href="'https://t.me/' + wizard.data.botUsername"
+                                  target="_blank"
+                                  class="text-primary hover:underline font-mono">@<span x-text="wizard.data.botUsername"></span></a><span x-show="!wizard.data.botUsername">your bot</span> in Telegram</li>
+                      <li>Send any message — Mycelos will reply right away.</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- ── Email Wizard ── -->
+          <template x-if="wizard.type === 'email'">
+            <div>
+              <!-- Step 1: Email address -->
+              <div x-show="wizard.step === 1">
+                <p class="text-sm text-on-surface-variant mb-4">
+                  Enter your email address. IMAP/SMTP servers will be auto-detected.
+                </p>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Email Address</label>
+                <input type="email" x-model="wizard.data.email"
+                       @input="wizardAutoDetectEmail()"
+                       class="input-field w-full text-sm mb-3"
+                       placeholder="you@gmail.com">
+                <div x-show="wizard.data.imapServer" class="text-xs text-[var(--success)] flex items-center gap-1.5 mb-1">
+                  <span class="material-symbols-outlined text-sm">check</span>
+                  IMAP: <span x-text="wizard.data.imapServer"></span>
+                </div>
+                <div x-show="wizard.data.smtpServer" class="text-xs text-[var(--success)] flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">check</span>
+                  SMTP: <span x-text="wizard.data.smtpServer"></span>
+                </div>
+              </div>
+
+              <!-- Step 2: Password -->
+              <div x-show="wizard.step === 2">
+                <p class="text-sm text-on-surface-variant mb-2">
+                  Enter your password or app password.
+                </p>
+                <div x-show="wizard.data.isGmail"
+                     class="bg-surface-container-low rounded-xl p-3 mb-4 text-xs text-on-surface-variant">
+                  <strong>Gmail users:</strong> Use an
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" class="text-primary hover:underline">App Password</a>
+                  (not your regular password). 2FA must be enabled.
+                </div>
+                <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2">Password</label>
+                <input type="password" x-model="wizard.data.password"
+                       class="input-field w-full text-sm font-mono mb-1"
+                       placeholder="App password or regular password">
+                <div class="flex items-center gap-1.5 text-xs text-on-surface-variant/50">
+                  <span class="material-symbols-outlined text-sm">shield_lock</span>
+                  <span>Encrypted locally — never sent to the AI</span>
+                </div>
+              </div>
+
+              <!-- Step 3: Test + Done -->
+              <div x-show="wizard.step === 3">
+                <div x-show="!wizard.data.testDone" class="text-center py-4">
+                  <button @click="wizardTestEmail()"
+                          :disabled="wizard.checking"
+                          class="px-6 py-2.5 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                                 hover:bg-primary-dim transition-colors inline-flex items-center gap-2
+                                 disabled:opacity-50 disabled:cursor-wait">
+                    <span x-show="!wizard.checking" class="material-symbols-outlined text-sm">mail</span>
+                    <span x-show="wizard.checking" class="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+                    <span x-text="wizard.checking ? 'Testing connection...' : 'Test Connection'"></span>
+                  </button>
+                </div>
+                <div x-show="wizard.data.testDone" class="text-center py-4">
+                  <span class="material-symbols-outlined text-4xl text-[var(--success)] mb-3">check_circle</span>
+                  <h3 class="font-headline font-bold text-lg text-on-surface mb-2">Email Connected!</h3>
+                  <p class="text-sm text-on-surface-variant">
+                    <strong x-text="wizard.data.email"></strong> is ready.
+                    Mycelos can now read, search, and send emails for you.
+                  </p>
+                </div>
+                <p x-show="wizard.error" class="text-sm text-error mt-3 text-center flex items-center justify-center gap-1.5">
+                  <span class="material-symbols-outlined text-sm">error</span>
+                  <span x-text="wizard.error"></span>
+                </p>
+              </div>
+            </div>
+          </template>
+
+          <!-- Navigation buttons -->
+          <div class="flex items-center justify-between mt-6 pt-4 border-t border-on-surface-variant/10">
+            <button @click="wizardBack()"
+                    x-show="wizard.step > 1 && wizard.step < wizard.totalSteps"
+                    class="text-sm text-on-surface-variant hover:text-on-surface transition-colors">
+              Back
+            </button>
+            <div x-show="wizard.step === 1 || !wizard.step > 1" class="flex-1"></div>
+            <button @click="wizardNext()"
+                    x-show="wizard.step < wizard.totalSteps"
+                    :disabled="!wizardCanProceed()"
+                    class="px-5 py-2 rounded-xl text-sm font-medium bg-primary text-on-primary-fixed
+                           hover:bg-primary-dim transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+              Next
+            </button>
+            <button @click="wizardFinish()"
+                    x-show="wizard.step === wizard.totalSteps"
+                    class="px-5 py-2 rounded-xl text-sm font-medium bg-[var(--success)] text-white
+                           hover:bg-[#48c78e]/80 transition-colors">
+              Done
+            </button>
+          </div>
+        </div>
+
+        <!-- Installed connectors — connector_registry rows -->
+        <section class="installed-connectors mb-8">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="material-symbols-outlined text-primary text-sm">check_circle</span>
+            <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">Installed</h3>
+            <div class="h-[1px] flex-1 mycelium-line"></div>
+          </div>
+
+          <!-- Loading state -->
+          <div x-show="loading" class="flex flex-col items-center justify-center py-24">
+            <div class="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin mb-4"></div>
+            <span class="text-xs text-on-surface-variant font-label" x-text="t('common.loading')">Loading...</span>
+          </div>
+
+          <!-- Empty state -->
+          <div x-show="!loading && connectors.length === 0" class="flex flex-col items-center justify-center py-24 text-center">
+            <div class="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-5">
+              <span class="material-symbols-outlined text-3xl text-on-surface-variant/30">cable</span>
+            </div>
+            <h3 class="font-headline font-bold text-lg text-on-surface-variant mb-2" x-text="t('connectors.no_connectors')">No connectors yet</h3>
+            <p class="text-sm text-on-surface-variant/60 max-w-sm mb-6">
+              Add an MCP connector to give your agents access to external tools and services.
+            </p>
+            <button @click="showAddForm = true" class="btn-primary text-sm">
+              <span class="material-symbols-outlined text-sm">add_circle</span>
+              Add your first connector
+            </button>
+          </div>
+
+          <!-- Connector cards grid -->
+          <div x-show="!loading && connectors.length > 0" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <template x-for="connector in connectors" :key="connector.id || connector.name">
+              <div class="card group relative animate-fade-in transition-shadow"
+                   :id="'connector-card-' + (connector.id || connector.name)"
+                   :class="connector._highlight && 'ring-2 ring-primary ring-offset-2 ring-offset-background'">
+
+                <!-- Edit + Delete buttons (top-right, visible on hover) -->
+                <div class="absolute top-4 right-4 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                  <button @click="openEdit(connector)"
+                          class="p-1.5 rounded-lg text-on-surface-variant/30 hover:text-primary hover:bg-primary/10 transition-all"
+                          title="Edit connector">
+                    <span class="material-symbols-outlined text-sm">edit</span>
+                  </button>
+                  <button @click="confirmDelete(connector)"
+                          class="p-1.5 rounded-lg text-on-surface-variant/30 hover:text-error hover:bg-error/10 transition-all"
+                          title="Remove connector">
+                    <span class="material-symbols-outlined text-sm">delete</span>
+                  </button>
+                </div>
+
+                <!-- Header: name + status -->
+                <div class="flex items-start gap-3 mb-3">
+                  <div class="w-10 h-10 rounded-xl bg-surface-container-low flex items-center justify-center flex-shrink-0"
+                       style="border: 1px solid rgba(70, 72, 77, 0.15);">
+                    <span class="material-symbols-outlined text-primary">extension</span>
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <h3 class="font-headline font-bold text-sm text-on-surface truncate" x-text="connector.name"></h3>
+                    <div class="flex items-center gap-2 mt-1">
+                      <!-- Status dot -->
+                      <div :class="connector.status === 'connected' ? 'dot-connected'
+                                 : connector.status === 'error' ? 'dot-error'
+                                 : 'dot-disconnected'"></div>
+                      <span class="text-[10px] font-label uppercase tracking-widest"
+                            :class="connector.status === 'connected' ? 'text-[var(--success)]'
+                                  : connector.status === 'error' ? 'text-error'
+                                  : 'text-on-surface-variant/50'"
+                            x-text="connector.status || 'disconnected'"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Type badge + tool count + operational state chip -->
+                <div class="flex items-center gap-2 mb-3 flex-wrap">
+                  <span class="status-badge"
+                        :class="connector.type === 'mcp' ? 'status-badge--active'
+                              : connector.type === 'search' ? 'status-badge--proposed'
+                              : connector.type === 'channel' ? 'status-badge--success'
+                              : 'status-badge--paused'"
+                        x-text="connector.type || 'mcp'"></span>
+                  <span x-show="connector.tool_count"
+                        class="text-[10px] font-label font-bold text-on-surface-variant bg-surface-container-low px-2 py-0.5 rounded-full"
+                        x-text="connector.tool_count + ' tools'"></span>
+                  <!-- Derived operational state: setup_incomplete / ready / healthy / failing -->
+                  <span x-show="connector.operational_state"
+                        class="text-[10px] font-label font-bold px-2 py-0.5 rounded-full"
+                        :class="connector.operational_state === 'healthy' ? 'bg-[#48c78e]/15 text-[var(--success)]'
+                              : connector.operational_state === 'failing' ? 'bg-error/15 text-error'
+                              : connector.operational_state === 'setup_incomplete' ? 'bg-warning/15 text-warning'
+                              : 'bg-surface-container-low text-on-surface-variant'"
+                        x-text="connector.operational_state === 'healthy' ? '● healthy'
+                              : connector.operational_state === 'failing' ? '● failing'
+                              : connector.operational_state === 'setup_incomplete' ? '● setup incomplete'
+                              : '○ ready'"></span>
+                </div>
+
+                <!-- Last error (only while failing) -->
+                <div x-show="connector.operational_state === 'failing' && connector.last_error"
+                     class="text-[11px] text-error/80 bg-error/5 border border-error/15 rounded-lg px-2 py-1 mb-2">
+                  <span class="material-symbols-outlined text-xs align-middle">error_outline</span>
+                  <span x-text="connector.last_error"></span>
+                </div>
+
+                <!-- Description -->
+                <p x-show="connector.description"
+                   class="text-xs text-on-surface-variant/70 leading-relaxed mb-3 line-clamp-2"
+                   x-text="connector.description"></p>
+
+                <!-- Actions: test + transparency panel -->
+                <div class="flex items-center gap-3 text-[10px] font-label uppercase tracking-widest">
+                  <button @click="testConnector(connector)"
+                          :disabled="connector._testing"
+                          class="flex items-center gap-1 text-primary/80 hover:text-primary disabled:opacity-50 transition-colors">
+                    <span class="material-symbols-outlined text-xs"
+                          :class="connector._testing && 'animate-spin'"
+                          x-text="connector._testing ? 'progress_activity' : 'network_check'"></span>
+                    <span x-text="connector._testing ? 'Testing…' : 'Test connection'"></span>
+                  </button>
+                  <button @click="toggleDetails(connector)"
+                          class="flex items-center gap-1 text-on-surface-variant hover:text-on-surface transition-colors">
+                    <span class="material-symbols-outlined text-xs transition-transform"
+                          :class="connector._expanded && 'rotate-180'">expand_more</span>
+                    <span x-text="connector._expanded ? 'Hide details' : 'Show details'"></span>
+                  </button>
+                </div>
+
+                <!-- Test result (transient) -->
+                <div x-show="connector._test_result" x-transition
+                     class="text-[11px] rounded-lg px-2 py-1 mt-2"
+                     :class="connector._test_result?.ok === true ? 'bg-[#48c78e]/10 text-[var(--success)]'
+                           : connector._test_result?.ok === false ? 'bg-error/10 text-error'
+                           : 'bg-surface-container-low text-on-surface-variant'"
+                     x-text="connector._test_result?.detail"></div>
+
+                <!-- Tool transparency panel -->
+                <div x-show="connector._expanded" x-transition
+                     class="mt-3 pt-3 border-t border-on-surface/5 space-y-2">
+                  <!-- Last activity line -->
+                  <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70">
+                    Last activity
+                  </div>
+                  <div class="text-xs text-on-surface-variant">
+                    <template x-if="connector.last_success_at">
+                      <span>✓ last success <span x-text="formatRelative(connector.last_success_at)"></span></span>
+                    </template>
+                    <template x-if="!connector.last_success_at && !connector.last_error_at">
+                      <span class="text-on-surface-variant/60">no activity recorded yet</span>
+                    </template>
+                    <template x-if="connector.last_error_at">
+                      <div class="mt-1">✗ last error <span x-text="formatRelative(connector.last_error_at)"></span></div>
+                    </template>
+                  </div>
+
+                  <!-- Tool list (fetched on expand) -->
+                  <template x-if="connector._tools_loading">
+                    <div class="text-[11px] text-on-surface-variant/60">Loading tools…</div>
+                  </template>
+                  <template x-if="connector._tools && connector._tools.length > 0">
+                    <div class="space-y-1">
+                      <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant/70 mt-2">
+                        Tools (<span x-text="connector._tools.length"></span>)
+                      </div>
+                      <template x-for="tool in connector._tools" :key="tool.full_name">
+                        <div class="flex items-start gap-2 px-3 py-1.5 rounded-lg bg-surface-container-low/50 text-xs"
+                             :class="tool.blocked && 'opacity-60'">
+                          <span class="material-symbols-outlined text-xs text-on-surface-variant/40 mt-0.5"
+                                x-text="tool.blocked ? 'block' : 'build'"></span>
+                          <div class="flex-1 min-w-0">
+                            <div class="font-mono text-[11px] text-on-surface-variant" x-text="tool.name"></div>
+                            <div x-show="tool.description" class="text-[11px] text-on-surface-variant/70 mt-0.5" x-text="tool.description"></div>
+                            <div x-show="tool.blocked" class="text-[10px] text-error mt-0.5">blocked by policy</div>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="connector._tools && connector._tools.length === 0 && !connector._tools_loading">
+                    <div class="text-[11px] text-on-surface-variant/60">No tools discovered.</div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <!-- Available connectors: Channels + MCP, populated from /api/connectors/recipes -->
+        <section class="available-connectors" x-show="!loading">
+
+          <!-- Channels section -->
+          <div class="section-block mb-8" id="channels-section"
+               x-show="recipeChannels.length > 0">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary text-sm">forum</span>
+              <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">Channels</h3>
+              <div class="h-[1px] flex-1 mycelium-line"></div>
+            </div>
+            <div id="channels-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <template x-for="recipe in recipeChannels" :key="recipe.id">
+                <div class="usecase-tile group"
+                     :id="'recipe-' + recipe.id"
+                     :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
+                  <div class="flex items-center gap-2.5 mb-1.5">
+                    <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
+                    <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
+                  </div>
+                  <p class="text-xs text-on-surface-variant/70 mb-3" x-text="recipe.description"></p>
+                  <button @click="setupRecipe(recipe)"
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all bg-primary/10 text-primary hover:bg-primary/20">
+                    <span>Set up</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- MCP Connectors section -->
+          <div class="section-block mb-8" id="mcp-section"
+               x-show="recipeMcp.length > 0">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary text-sm">hub</span>
+              <h3 class="section-title text-[10px] font-label uppercase tracking-widest text-primary font-bold">MCP Connectors</h3>
+              <div class="h-[1px] flex-1 mycelium-line"></div>
+            </div>
+            <div id="mcp-container" class="recipe-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <template x-for="recipe in recipeMcp" :key="recipe.id">
+                <div class="usecase-tile group"
+                     :id="'recipe-' + recipe.id"
+                     :data-recipe-id="recipe.id" :data-recipe-kind="recipe.kind">
+                  <div class="flex items-center gap-2.5 mb-1.5">
+                    <span class="text-xl leading-none" x-text="recipeIcon(recipe)"></span>
+                    <span class="font-headline font-bold text-sm text-on-surface" x-text="recipe.name"></span>
+                  </div>
+                  <p class="text-xs text-on-surface-variant/70 mb-3 line-clamp-2" x-text="recipe.description"></p>
+                  <div x-show="(recipe.credentials && recipe.credentials.length > 0) || recipe.setup_flow === 'oauth_http'"
+                       class="flex items-center gap-1 mb-2">
+                    <span class="material-symbols-outlined text-xs text-on-surface-variant/40">key</span>
+                    <span class="text-[10px] font-label text-on-surface-variant/40"
+                          x-text="recipe.setup_flow === 'oauth_http' ? 'OAuth' : 'Requires API key'"></span>
+                  </div>
+                  <button @click="setupRecipe(recipe)"
+                          :disabled="submitting"
+                          class="w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 bg-primary/10 text-primary hover:bg-primary/20">
+                    <span class="material-symbols-outlined text-sm"
+                          x-text="recipe.setup_flow === 'oauth_http' ? 'key'
+                                 : (recipe.credentials && recipe.credentials.length > 0) ? 'tune' : 'add'"></span>
+                    <span x-text="recipe.setup_flow === 'oauth_http' ? 'Connect'
+                                 : (recipe.credentials && recipe.credentials.length > 0) ? 'Setup' : 'Add'"></span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- Toast notification -->
+        <div x-show="toast.show" x-transition
+             class="fixed bottom-8 right-8 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg toast-enter"
+             :class="toast.type === 'success'
+               ? 'bg-[#48c78e]/15 text-[var(--success)] border border-[#48c78e]/30'
+               : 'bg-error/15 text-error border border-error/30'"
+             style="backdrop-filter: blur(12px);">
+          <span class="material-symbols-outlined text-sm"
+                x-text="toast.type === 'success' ? 'check_circle' : 'error'"></span>
+          <span class="text-sm font-medium" x-text="toast.message"></span>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Delete confirmation dialog -->
+    <div x-show="deleteTarget" x-transition class="fixed inset-0 z-50 flex items-center justify-center"
+         @keydown.escape.window="deleteTarget = null">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="deleteTarget = null"></div>
+      <!-- Dialog -->
+      <div class="relative glass-card-strong rounded-2xl p-6 max-w-sm w-full mx-4"
+           style="border: 1px solid rgba(70, 72, 77, 0.3);">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center">
+            <span class="material-symbols-outlined text-error">warning</span>
+          </div>
+          <div>
+            <h3 class="font-headline font-bold text-sm">Remove Connector</h3>
+            <p class="text-xs text-on-surface-variant">This action cannot be undone</p>
+          </div>
+        </div>
+        <p class="text-sm text-on-surface-variant mb-6">
+          Remove <strong class="text-on-surface" x-text="deleteTarget?.name"></strong> and all its discovered tools?
+        </p>
+        <div class="flex justify-end gap-3">
+          <button @click="deleteTarget = null"
+                  class="text-xs font-label uppercase tracking-widest text-on-surface-variant hover:text-on-surface transition-colors px-4 py-2">
+            Cancel
+          </button>
+          <button @click="removeConnector()"
+                  :disabled="deleting"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-error/15 text-error text-xs font-bold hover:bg-error/25 transition-colors">
+            <span class="material-symbols-outlined text-sm" x-show="!deleting">delete</span>
+            <span class="material-symbols-outlined text-sm animate-spin" x-show="deleting">progress_activity</span>
+            <span x-text="deleting ? 'Removing...' : 'Remove'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit connector dialog -->
+    <div x-show="editTarget" x-cloak x-transition class="fixed inset-0 z-50 flex items-center justify-center p-4"
+         @keydown.escape.window="editTarget = null">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="editTarget = null"></div>
+      <!-- Dialog -->
+      <div class="relative glass-card-strong rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+           style="border: 1px solid rgba(70, 72, 77, 0.3);">
+
+        <div class="flex items-center gap-3 mb-5">
+          <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <span class="material-symbols-outlined text-primary">edit</span>
+          </div>
+          <div class="min-w-0">
+            <h3 class="font-headline font-bold text-sm">Edit Connector</h3>
+            <p class="text-xs text-on-surface-variant truncate">
+              ID: <code class="font-mono text-on-surface-variant/70" x-text="editTarget?.id || editTarget?.name"></code>
+              (immutable)
+            </p>
+          </div>
+        </div>
+
+        <!-- Display name -->
+        <div class="mb-4">
+          <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-1.5">
+            Display Name
+          </label>
+          <input type="text" x-model="editForm.name"
+                 class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm
+                        focus:outline-none focus:border-primary"
+                 placeholder="Human-readable label">
+        </div>
+
+        <!-- Command (custom MCPs only) -->
+        <div class="mb-4">
+          <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-1.5">
+            MCP Command
+            <span x-show="editForm.isRecipeBacked" class="text-warning normal-case font-normal tracking-normal ml-2">
+              · locked (recipe-backed)
+            </span>
+          </label>
+          <textarea x-model="editForm.command"
+                    :disabled="editForm.isRecipeBacked"
+                    rows="3"
+                    class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono
+                           focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder='npx -y mcp-remote http://yt-summary:8000/mcp/sse --allow-http --header "Authorization:Bearer ..."'></textarea>
+          <p x-show="!editForm.isRecipeBacked" class="text-[10px] text-on-surface-variant/60 mt-1">
+            Allowed launchers: npx, node, python, python3, uvx, docker, deno, bun.
+          </p>
+        </div>
+
+        <!-- Env vars -->
+        <div class="mb-5">
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-[10px] font-label uppercase tracking-widest text-on-surface-variant">
+              Update Credentials / Env Vars
+            </label>
+            <button @click="addEditEnvVar()"
+                    class="text-[10px] font-label uppercase tracking-widest text-primary hover:text-primary/80 transition-colors">
+              + add row
+            </button>
+          </div>
+          <p class="text-[10px] text-on-surface-variant/60 mb-2">
+            Leave blank to keep existing credentials. Any row you fill in replaces the stored value.
+          </p>
+          <template x-for="(row, idx) in editForm.envVars" :key="idx">
+            <div class="flex items-center gap-2 mb-2">
+              <input type="text" x-model="row.key" placeholder="VAR_NAME"
+                     class="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:border-primary">
+              <input type="text" x-model="row.value" placeholder="value"
+                     class="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1.5 text-xs font-mono
+                            focus:outline-none focus:border-primary">
+              <button @click="removeEditEnvVar(idx)"
+                      class="p-1 rounded text-on-surface-variant/50 hover:text-error transition-colors"
+                      title="Remove row">
+                <span class="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <div class="flex justify-end gap-3">
+          <button @click="editTarget = null"
+                  class="text-xs font-label uppercase tracking-widest text-on-surface-variant hover:text-on-surface transition-colors px-4 py-2">
+            Cancel
+          </button>
+          <button @click="saveEdit()"
+                  :disabled="editing"
+                  class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary/15 text-primary text-xs font-bold hover:bg-primary/25 transition-colors disabled:opacity-50">
+            <span class="material-symbols-outlined text-sm" x-show="!editing">save</span>
+            <span class="material-symbols-outlined text-sm animate-spin" x-show="editing">progress_activity</span>
+            <span x-text="editing ? t('common.saving') : t('connectors.save_changes')"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- OAuth setup dialog — for recipes with setup_flow == 'oauth_http' -->
+    <div x-show="oauthDialog.open" x-cloak
+         class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+         @click.self="closeOAuthDialog()">
+      <div class="bg-[var(--surface)] text-[var(--on-surface)] rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-[var(--outline-variant)]">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-[var(--outline-variant)] flex items-center justify-between">
+          <h2 class="text-lg font-semibold" x-text="'Connect ' + (oauthDialog.recipe?.name || '')"></h2>
+          <button @click="closeOAuthDialog()" class="text-[var(--on-surface-variant)] hover:text-[var(--primary)]">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <!-- Body: guide on left, actions on right -->
+        <div class="flex flex-1 overflow-hidden">
+          <!-- Guide panel -->
+          <div class="w-1/2 border-r border-[var(--outline-variant)] overflow-y-auto p-6"
+               x-show="oauthDialog.recipe?.setup_guide">
+            <h3 class="font-semibold mb-2" x-text="oauthDialog.recipe?.setup_guide?.title"></h3>
+            <p class="text-sm text-[var(--on-surface-variant)] mb-4"
+               x-text="oauthDialog.recipe?.setup_guide?.intro"></p>
+            <ol class="space-y-3">
+              <template x-for="(step, idx) in (oauthDialog.recipe?.setup_guide?.steps || [])" :key="idx">
+                <li class="border border-[var(--outline-variant)] rounded p-3 bg-[var(--surface-container)]">
+                  <div class="flex items-start gap-2">
+                    <span class="text-xs font-mono bg-[var(--surface-container-high)] text-[var(--on-surface)] rounded px-2 py-0.5 mt-0.5"
+                          x-text="idx + 1"></span>
+                    <div class="flex-1">
+                      <div class="font-medium text-sm" x-text="step.title"></div>
+                      <div class="text-sm text-[var(--on-surface-variant)] mt-1"
+                           x-html="(step.body || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')"></div>
+                      <a x-show="step.cta_url" :href="step.cta_url" target="_blank" rel="noopener"
+                         class="inline-flex items-center gap-1 text-sm text-[var(--primary)] hover:underline mt-2">
+                        <span x-text="step.cta_label || 'Open'"></span>
+                        <span class="material-symbols-outlined text-sm">open_in_new</span>
+                      </a>
+                    </div>
+                  </div>
+                </li>
+              </template>
+            </ol>
+          </div>
+
+          <!-- Action panel -->
+          <div class="flex-1 overflow-y-auto p-6 space-y-4">
+            <!-- Stage 1: Upload keys -->
+            <div x-show="!oauthDialog.authUrl && !oauthDialog.done">
+              <h3 class="font-semibold mb-2">Upload your gcp-oauth.keys.json</h3>
+              <p class="text-sm text-[var(--on-surface-variant)] mb-3">
+                After downloading from Google Cloud Console (step 4 on the left), paste the full JSON content here.
+              </p>
+              <textarea x-model="oauthDialog.keysJson"
+                        @input.debounce.500ms="validateOAuthKeys()"
+                        rows="8"
+                        placeholder='{"installed": {"client_id": "..."}}'
+                        class="input-field font-mono text-xs w-full"></textarea>
+              <div x-show="oauthDialog.keysValid && oauthDialog.keysValid.ok"
+                   class="text-sm mt-2 inline-flex items-center gap-1"
+                   style="color: var(--success)">
+                <span class="material-symbols-outlined text-base">check_circle</span>
+                Valid desktop-app credential.
+              </div>
+              <div x-show="oauthDialog.keysValid && !oauthDialog.keysValid.ok"
+                   class="text-sm text-[var(--error)] mt-2"
+                   x-text="oauthDialog.keysValid?.error"></div>
+
+              <button @click="submitOAuthKeysAndStart()"
+                      :disabled="oauthDialog.submitting || !(oauthDialog.keysValid && oauthDialog.keysValid.ok)"
+                      class="btn-primary mt-3 disabled:opacity-50 disabled:cursor-not-allowed">
+                <span x-show="!oauthDialog.submitting">Start OAuth consent</span>
+                <span x-show="oauthDialog.submitting">Starting…</span>
+              </button>
+            </div>
+
+            <!-- Stage 2: Consent -->
+            <div x-show="oauthDialog.authUrl && !oauthDialog.done" class="space-y-3">
+              <h3 class="font-semibold">Complete the consent in your browser</h3>
+              <div class="card border-l-2 border-l-[var(--primary)]">
+                <p class="text-sm mb-2 text-[var(--on-surface)]">
+                  Open this URL, sign in with your Google account, and accept the scopes.
+                  Consent opens in a new tab — this one waits for you to come back.
+                </p>
+                <a :href="oauthDialog.authUrl" target="_blank" rel="noopener"
+                   class="block text-[var(--primary)] hover:underline break-all text-sm font-mono">
+                  <span x-text="oauthDialog.authUrl"></span>
+                </a>
+                <button @click="window.open(oauthDialog.authUrl, '_blank')"
+                        class="btn-primary mt-2">Open in browser</button>
+              </div>
+              <div class="card">
+                <p class="text-xs text-[var(--on-surface-variant)]">
+                  Make sure this exact Redirect URI is registered in Cloud Console:
+                </p>
+                <code class="block mt-1 text-xs font-mono text-[var(--on-surface)] break-all"
+                      x-text="oauthDialog.redirectUri"></code>
+              </div>
+              <div class="card flex items-center gap-3">
+                <span class="inline-block w-2 h-2 rounded-full bg-[var(--primary)] animate-pulse"
+                      x-show="!oauthDialog.checking"></span>
+                <span class="inline-block w-3 h-3 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin"
+                      x-show="oauthDialog.checking"></span>
+                <p class="text-sm text-[var(--on-surface-variant)] flex-1">
+                  <span x-show="!oauthDialog.checking">Waiting for consent to complete…</span>
+                  <span x-show="oauthDialog.checking">Checking…</span>
+                </p>
+                <button @click="checkOAuthConnection()"
+                        class="btn-secondary"
+                        :disabled="oauthDialog.checking">
+                  Check now
+                </button>
+              </div>
+            </div>
+
+            <!-- Stage 3: Done -->
+            <div x-show="oauthDialog.done" class="card border-l-2 border-l-[var(--success)]">
+              <p class="text-sm text-[var(--on-surface)]">
+                <span class="material-symbols-outlined align-middle" style="color: var(--success)">check_circle</span>
+                Connected!
+                <span x-text="oauthDialog.recipe?.name || oauthDialog.recipeId"></span>
+                is ready to use.
+              </p>
+              <button @click="closeOAuthDialog()" class="btn-primary mt-3">Done</button>
+            </div>
+
+            <!-- Error panel (always shown when populated) -->
+            <div x-show="oauthDialog.error"
+                 class="card border-l-2 border-l-[var(--error)] mt-3">
+              <p class="text-sm text-[var(--error)]" x-text="oauthDialog.error"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Mobile navigation container (loaded by layout.js) -->
+  <nav id="mobile-nav"></nav>
+
+  <script>
+    /**
+     * Connectors page Alpine.js component.
+     * Manages connector CRUD, MCP registry search, and UI state.
+     */
+    function connectorsApp() {
+      return {
+        connectors: [],
+        loading: true,
+        showAddForm: false,
+        showSearch: false,
+        submitting: false,
+        newConnector: {
+          name: '',
+          command: '',
+          envVars: [{ key: '', value: '', isSecret: true }],
+          lookupHit: 0,  // 0 = no lookup yet, N = registry suggested N vars
+        },
+        // State for the "Paste config" block. `servers` holds parsed
+        // entries when the JSON contains multiple servers under
+        // mcpServers — the user picks one. `applied=true` shows the
+        // "Applied — review the fields below" hint after a successful
+        // parse so the user knows the form was just rewritten.
+        pasteJson: {
+          open: false,
+          input: '',
+          servers: [],
+          error: '',
+          applied: false,
+        },
+        searchQuery: '',
+        searchResults: [],
+        searching: false,
+        deleteTarget: null,
+        deleting: false,
+        // Edit dialog — open via openEdit(connector). editForm is pre-filled
+        // from the connector row; only changed fields are PATCH'd, so a
+        // user who just opens & closes the dialog sends an empty body.
+        editTarget: null,
+        editForm: {
+          name: '',
+          command: '',
+          envVars: [],            // [{ key, value }]
+          isRecipeBacked: false,  // disables command editing
+        },
+        editing: false,
+        toast: { show: false, message: '', type: 'success' },
+        wizard: {
+          active: false, type: '', step: 1, totalSteps: 3,
+          checking: false, error: '',
+          data: { token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '', noUpdates: false, verified: false, email: '', password: '', imapServer: '', smtpServer: '', isGmail: false, testDone: false },
+        },
+
+        /**
+         * Connector recipes loaded from /api/connectors/recipes, grouped
+         * by `kind`. Channels render chat endpoints (Telegram, Slack, ...);
+         * MCP renders external tool servers (GitHub, Gmail, ...).
+         */
+        allChannels: [],
+        allMcp: [],
+
+        /**
+         * Cosmetic icons for well-known recipes. The backend registry
+         * doesn't carry icons; this keeps the visual language without
+         * forcing icon metadata into MCPRecipe. Recipes without an entry
+         * fall back to a generic plug icon.
+         */
+        recipeIcons: {
+          telegram: '\uD83D\uDCAC',
+          slack: '\uD83D\uDCE2',
+          email: '\uD83D\uDCE7',
+          gmail: '\uD83D\uDCE8',
+          github: '\uD83D\uDCBB',
+          git: '\uD83C\uDF3F',
+          docker: '\uD83D\uDC33',
+          playwright: '\uD83C\uDF10',
+          puppeteer: '\uD83D\uDC15',
+          'chrome-devtools': '\uD83D\uDEE0\uFE0F',
+          'brave-search': '\uD83E\uDD81',
+          fetch: '\uD83D\uDD17',
+          postgres: '\uD83D\uDC18',
+          sqlite: '\uD83D\uDCBE',
+          filesystem: '\uD83D\uDCC1',
+          notion: '\uD83D\uDCDD',
+          linear: '\uD83D\uDCCB',
+          sentry: '\uD83D\uDEA8',
+        },
+
+        // Hide already-installed recipes from the Available sections so each connector appears exactly once on the page.
+        get installedIds() {
+          return new Set(this.connectors.map(c => c.id || c.name));
+        },
+        get recipeChannels() {
+          return this.allChannels.filter(r => !this.installedIds.has(r.id));
+        },
+        get recipeMcp() {
+          return this.allMcp.filter(r => !this.installedIds.has(r.id));
+        },
+
+        recipeIcon(recipe) {
+          return this.recipeIcons[recipe.id] || '\uD83D\uDD0C';
+        },
+
+        /**
+         * Initialize: load connectors and available recipes in parallel.
+         */
+        async init() {
+          await Promise.all([this.loadConnectors(), this.loadRecipes()]);
+          this.detectOAuthReturn();
+        },
+
+        /**
+         * Fetch the recipe catalogue from the gateway. The endpoint
+         * returns {channels: [...], mcp: [...]} — we render each list
+         * into its own section.
+         */
+        async loadRecipes() {
+          try {
+            const resp = await fetch('/api/connectors/recipes');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            this.allChannels = Array.isArray(data.channels) ? data.channels : [];
+            this.allMcp = Array.isArray(data.mcp) ? data.mcp : [];
+          } catch (e) {
+            console.warn('Could not load recipes:', e.message);
+            this.allChannels = [];
+            this.allMcp = [];
+          }
+        },
+
+        /**
+         * Fetch all connectors from the API.
+         */
+        async loadConnectors() {
+          this.loading = true;
+          try {
+            const data = await MycelosAPI.get('/api/connectors');
+            const list = Array.isArray(data) ? data : (data.connectors || []);
+            this.connectors = list.map(c => ({
+              ...c,
+              _expanded: false,
+              _testing: false,
+              _test_result: null,
+              _tools_loading: false,
+              _tools: null,
+              _highlight: false,
+            }));
+          } catch (e) {
+            console.warn('Could not load connectors:', e.message);
+            this.connectors = [];
+          }
+          this.loading = false;
+        },
+
+        /**
+         * Run a live test against the backend's POST /api/connectors/{id}/test.
+         * The backend records the outcome in the connector row, so we refresh
+         * the list after the test to pick up the new operational_state.
+         */
+        async testConnector(connector) {
+          connector._testing = true;
+          connector._test_result = null;
+          try {
+            const res = await MycelosAPI.post('/api/connectors/' + encodeURIComponent(connector.id) + '/test', {});
+            connector._test_result = res;
+            // Merge fresh telemetry back onto the card so the status chip
+            // updates without a full reload.
+            if (res && res.ok !== undefined) {
+              connector.operational_state = res.ok ? 'healthy' : 'failing';
+              if (res.ok) {
+                connector.last_success_at = new Date().toISOString();
+                connector.last_error = null;
+                connector.last_error_at = null;
+              } else {
+                connector.last_error = res.detail;
+                connector.last_error_at = new Date().toISOString();
+              }
+            }
+          } catch (e) {
+            connector._test_result = { ok: false, detail: e.message || 'Test failed' };
+          }
+          connector._testing = false;
+          // Clear the transient result banner after a few seconds.
+          setTimeout(() => { connector._test_result = null; }, 6000);
+        },
+
+        /**
+         * Expand / collapse the transparency panel. On first expand we
+         * lazy-load the tool list for MCP-backed connectors.
+         */
+        async toggleDetails(connector) {
+          connector._expanded = !connector._expanded;
+          if (!connector._expanded || connector._tools !== null) return;
+          if (connector.type !== 'mcp' && connector.type !== 'channel') return;
+
+          connector._tools_loading = true;
+          try {
+            const res = await MycelosAPI.get('/api/connectors/' + encodeURIComponent(connector.id) + '/tools');
+            connector._tools = res.tools || [];
+            if (res.operational_state) connector.operational_state = res.operational_state;
+          } catch (e) {
+            connector._tools = [];
+          }
+          connector._tools_loading = false;
+        },
+
+        /**
+         * Human-readable relative time ('5 min ago', '2 hours ago') for
+         * the transparency panel's 'last activity' line.
+         */
+        formatRelative(isoTimestamp) {
+          if (!isoTimestamp) return '';
+          const then = new Date(isoTimestamp).getTime();
+          const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+          if (secs < 60)        return secs + 's ago';
+          if (secs < 3600)      return Math.round(secs / 60) + ' min ago';
+          if (secs < 86400)     return Math.round(secs / 3600) + ' h ago';
+          return Math.round(secs / 86400) + ' d ago';
+        },
+
+        addEnvVar() {
+          this.newConnector.envVars.push({ key: '', value: '', isSecret: true });
+        },
+
+        removeEnvVar(idx) {
+          this.newConnector.envVars.splice(idx, 1);
+          if (this.newConnector.envVars.length === 0) this.addEnvVar();
+        },
+
+        async onCommandBlur() {
+          const cmd = (this.newConnector.command || '').trim();
+          if (!cmd) return;
+          const parts = cmd.split(/\s+/);
+          // First arg that looks like a package: starts with @scope/ or contains /
+          const pkg = parts.find(p =>
+            p && !p.startsWith('-') && (p.startsWith('@') || p.includes('/'))
+          );
+          if (!pkg) return;
+          try {
+            const resp = await fetch('/api/connectors/lookup-env-vars?package=' + encodeURIComponent(pkg));
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const known = Array.isArray(data?.env_vars) ? data.env_vars : [];
+            if (!known.length) {
+              this.newConnector.lookupHit = 0;
+              return;
+            }
+            this.newConnector.envVars = known.map(v => ({
+              key: v.name,
+              value: '',
+              isSecret: v.secret !== false,
+            }));
+            this.newConnector.lookupHit = known.length;
+          } catch (_) {
+            /* network error → leave the form alone */
+          }
+        },
+
+        /**
+         * Parse a pasted MCP config JSON snippet and fill the form.
+         *
+         * Accepts the shapes documented by Anthropic, Cursor, VS Code,
+         * etc.:
+         *   { "mcpServers": { "name": { "command": ..., "args": [...], "env": {...} } } }
+         *   { "name": { "command": ..., ... } }              // wrapper-less
+         *   { "command": ..., "args": [...], "env": {...} }  // single block
+         *
+         * Multi-server inputs surface a picker — the user clicks the
+         * server they want and `applyPastedServer` finishes the job.
+         *
+         * Remote (url-based SSE/HTTP) transports are rejected for now;
+         * Mycelos's connector path is subprocess-only.
+         */
+        parsePastedJson() {
+          const raw = (this.pasteJson.input || '').trim();
+          this.pasteJson.error = '';
+          this.pasteJson.applied = false;
+          this.pasteJson.servers = [];
+          if (!raw) return;
+
+          let obj;
+          try {
+            obj = JSON.parse(raw);
+          } catch (e) {
+            this.pasteJson.error = 'Not valid JSON: ' + (e.message || e);
+            return;
+          }
+
+          // Locate the server map. Three shapes, narrowing:
+          let serverMap = null;
+          let inferredName = '';
+
+          if (obj && typeof obj === 'object' && obj.mcpServers
+              && typeof obj.mcpServers === 'object') {
+            serverMap = obj.mcpServers;
+          } else if (obj && typeof obj === 'object'
+                     && typeof obj.command === 'string') {
+            // Single-block form, no name in the JSON.
+            serverMap = { '': obj };
+          } else if (obj && typeof obj === 'object') {
+            // Wrapper-less: the keys themselves are server names.
+            // Heuristic: every value must be an object with `command`
+            // or `url`. Otherwise treat as garbage.
+            const entries = Object.entries(obj);
+            const allLookValid = entries.length > 0 && entries.every(
+              ([, v]) => v && typeof v === 'object'
+                && (typeof v.command === 'string' || typeof v.url === 'string')
+            );
+            if (allLookValid) serverMap = obj;
+          }
+
+          if (!serverMap) {
+            this.pasteJson.error =
+              'Could not find an MCP server config. Expected a "mcpServers" object or a "command" field.';
+            return;
+          }
+
+          const servers = Object.entries(serverMap).map(([name, def]) => ({
+            name: name || inferredName || 'mcp-server',
+            def: def || {},
+          }));
+
+          // Single server: apply directly. Multi: store and let the
+          // user pick via the chip row.
+          if (servers.length === 1) {
+            this.applyPastedServer(servers[0]);
+          } else {
+            this.pasteJson.servers = servers;
+          }
+        },
+
+        /**
+         * Apply one parsed server entry to the form fields.
+         *
+         * Splits args back into a single command string (the form's
+         * native shape), copies env vars, and flags placeholder
+         * values like `${API_KEY}` or `<your-token>` so the user
+         * notices them as empty secret fields rather than
+         * accidentally storing the literal placeholder.
+         */
+        applyPastedServer(srv) {
+          const def = srv.def || {};
+
+          // Reject remote transports — connector path is subprocess.
+          if (typeof def.url === 'string' && !def.command) {
+            this.pasteJson.error =
+              'Remote (URL-based) MCP transport is not supported yet — please paste a stdio config (command + args).';
+            this.pasteJson.applied = false;
+            return;
+          }
+
+          if (typeof def.command !== 'string' || !def.command.trim()) {
+            this.pasteJson.error = 'Server config has no "command" field.';
+            this.pasteJson.applied = false;
+            return;
+          }
+
+          // Reassemble command. Args that contain whitespace get
+          // quoted so the round-trip survives our space-split parser.
+          const args = Array.isArray(def.args) ? def.args : [];
+          const quoted = args.map(a => {
+            const s = String(a);
+            return /\s/.test(s) ? JSON.stringify(s) : s;
+          });
+          const fullCommand = [def.command, ...quoted]
+            .filter(p => p && String(p).length)
+            .join(' ');
+
+          // Placeholder regex: matches ${FOO}, $FOO, <FOO>, <YOUR_KEY>, etc.
+          const isPlaceholder = (v) => {
+            if (typeof v !== 'string') return false;
+            const t = v.trim();
+            if (!t) return true;
+            return /^(\$\{[^}]+\}|\$[A-Z_][A-Z0-9_]*|<[^>]+>)$/i.test(t);
+          };
+
+          const env = (def.env && typeof def.env === 'object') ? def.env : {};
+          const envVars = Object.entries(env).map(([k, v]) => ({
+            key: k,
+            value: isPlaceholder(v) ? '' : String(v),
+            isSecret: true,
+          }));
+          if (!envVars.length) {
+            envVars.push({ key: '', value: '', isSecret: true });
+          }
+
+          this.newConnector.name = srv.name || this.newConnector.name || '';
+          this.newConnector.command = fullCommand;
+          this.newConnector.envVars = envVars;
+          this.newConnector.lookupHit = 0;
+
+          this.pasteJson.applied = true;
+          this.pasteJson.error = '';
+          this.pasteJson.servers = [];
+
+          // Trigger the existing registry env-var lookup so any vars
+          // the snippet didn't list still get suggested.
+          this.onCommandBlur();
+        },
+
+        /**
+         * Add a new connector via POST.
+         */
+        async addConnector() {
+          if (!this.newConnector.name.trim() || !this.newConnector.command.trim()) return;
+          this.submitting = true;
+
+          try {
+            const env_vars = {};
+            for (const row of this.newConnector.envVars) {
+              const k = (row.key || '').trim();
+              if (!k) continue;
+              env_vars[k] = (row.value || '').toString();
+            }
+            const payload = {
+              name: this.newConnector.name.trim(),
+              command: this.newConnector.command.trim(),
+            };
+            if (Object.keys(env_vars).length > 0) {
+              payload.env_vars = env_vars;
+            }
+
+            await MycelosAPI.post('/api/connectors', payload);
+            await this.loadConnectors();
+            this.resetForm();
+            this.showAddForm = false;
+            this.showToast('Connector added successfully', 'success');
+          } catch (e) {
+            this.showToast('Failed to add connector: ' + e.message, 'error');
+          }
+
+          this.submitting = false;
+        },
+
+        /**
+         * Open the edit dialog. Pre-fills the form from the connector
+         * row so the user only needs to change what's wrong.
+         *
+         * Recipe-backed connectors get the command field locked —
+         * backend rejects PATCH on that field anyway, and surfacing
+         * it as disabled is friendlier than a 400 on submit.
+         */
+        openEdit(connector) {
+          const isRecipe = this.allMcp.some(r => r.id === (connector.id || connector.name))
+                        || this.allChannels.some(r => r.id === (connector.id || connector.name));
+
+          // Strip "MCP: " prefix off the description for the command field.
+          let command = '';
+          const desc = connector.description || '';
+          if (desc.startsWith('MCP: ')) command = desc.slice(5);
+
+          this.editTarget = connector;
+          this.editForm = {
+            name: connector.name || connector.id || '',
+            command,
+            envVars: [{ key: '', value: '' }],  // empty row; user adds more
+            isRecipeBacked: isRecipe,
+          };
+        },
+
+        /**
+         * Add a fresh empty env-var row to the edit form.
+         */
+        addEditEnvVar() {
+          this.editForm.envVars.push({ key: '', value: '' });
+        },
+
+        /**
+         * Remove an env-var row by index.
+         */
+        removeEditEnvVar(idx) {
+          this.editForm.envVars.splice(idx, 1);
+          if (this.editForm.envVars.length === 0) {
+            this.editForm.envVars.push({ key: '', value: '' });
+          }
+        },
+
+        /**
+         * PATCH the connector. Only sends fields the user actually
+         * changed — keeps the audit trail honest and avoids triggering
+         * an MCP restart when only the display name changed.
+         */
+        async saveEdit() {
+          if (!this.editTarget) return;
+          this.editing = true;
+
+          try {
+            const id = this.editTarget.id || this.editTarget.name;
+            const original = this.editTarget;
+            const originalCommand = (original.description || '').startsWith('MCP: ')
+              ? original.description.slice(5)
+              : '';
+
+            const payload = {};
+
+            const newName = (this.editForm.name || '').trim();
+            if (newName && newName !== (original.name || '')) {
+              payload.name = newName;
+            }
+
+            if (!this.editForm.isRecipeBacked) {
+              const newCommand = (this.editForm.command || '').trim();
+              if (newCommand && newCommand !== originalCommand) {
+                payload.command = newCommand;
+              }
+            }
+
+            const env_vars = {};
+            let envHasContent = false;
+            for (const row of this.editForm.envVars) {
+              const k = (row.key || '').trim();
+              if (!k) continue;
+              env_vars[k] = (row.value || '').toString();
+              envHasContent = true;
+            }
+            if (envHasContent) {
+              payload.env_vars = env_vars;
+            }
+
+            if (Object.keys(payload).length === 0) {
+              this.showToast('Nothing changed', 'success');
+              this.editTarget = null;
+              this.editing = false;
+              return;
+            }
+
+            const res = await MycelosAPI.patch(
+              '/api/connectors/' + encodeURIComponent(id), payload,
+            );
+            await this.loadConnectors();
+            const changed = (res && res.changed) || [];
+            const msg = changed.length
+              ? `Updated: ${changed.join(', ')}`
+              : 'Connector updated';
+            this.showToast(msg, 'success');
+            this.editTarget = null;
+          } catch (e) {
+            this.showToast('Edit failed: ' + e.message, 'error');
+          }
+
+          this.editing = false;
+        },
+
+        /**
+         * Open the delete confirmation dialog.
+         */
+        confirmDelete(connector) {
+          this.deleteTarget = connector;
+        },
+
+        /**
+         * Remove the targeted connector via DELETE.
+         */
+        async removeConnector() {
+          if (!this.deleteTarget) return;
+          this.deleting = true;
+
+          try {
+            const id = this.deleteTarget.id || this.deleteTarget.name;
+            await MycelosAPI.delete('/api/connectors/' + encodeURIComponent(id));
+            await this.loadConnectors();
+            this.showToast('Connector removed', 'success');
+          } catch (e) {
+            this.showToast('Failed to remove connector: ' + e.message, 'error');
+          }
+
+          this.deleteTarget = null;
+          this.deleting = false;
+        },
+
+        /**
+         * Search the MCP registry for available servers.
+         */
+        async searchMCP() {
+          if (!this.searchQuery.trim()) return;
+          this.searching = true;
+          this.searchResults = [];
+
+          try {
+            const resp = await fetch(
+              'https://registry.modelcontextprotocol.io/v0/servers?search='
+              + encodeURIComponent(this.searchQuery.trim())
+              + '&limit=5'
+            );
+
+            if (resp.ok) {
+              const data = await resp.json();
+              // Registry returns { servers: [{ server: {...}, _meta: {...} }, ...] }
+              const entries = (data.servers || data || [])
+                .filter(entry => {
+                  // Only show latest versions (skip older duplicates)
+                  const meta = entry._meta || {};
+                  const official = meta['io.modelcontextprotocol.registry/official'] || {};
+                  return official.isLatest !== false;
+                });
+              this.searchResults = entries.map(entry => {
+                // Each entry wraps { server: { name, packages, ... }, _meta: {...} }
+                const s = entry.server || entry;
+                const fullName = s.name || s.title || '';
+                const shortName = fullName.includes('/') ? fullName.split('/').pop() : fullName;
+                // Build install command from the first npm package
+                const npmPkg = (s.packages || []).find(p => p.registryType === 'npm');
+                const command = npmPkg ? `npx -y ${npmPkg.identifier}` : '';
+                return { name: shortName, description: s.description || '', command };
+              });
+            } else {
+              // Fallback: search via chat API
+              await this.searchMCPviaChatFallback();
+            }
+          } catch (e) {
+            // Network error — try fallback via chat
+            console.warn('MCP registry direct fetch failed:', e.message);
+            await this.searchMCPviaChatFallback();
+          }
+
+          this.searching = false;
+        },
+
+        /**
+         * Fallback: search MCP servers by sending a chat command.
+         */
+        async searchMCPviaChatFallback() {
+          try {
+            const data = await MycelosAPI.post('/api/chat', {
+              message: '/connector search ' + this.searchQuery.trim(),
+            });
+            // Parse results from response if available
+            if (data.results) {
+              this.searchResults = data.results.map(s => ({
+                name: s.name || '',
+                description: s.description || '',
+                command: s.command || '',
+              }));
+            }
+          } catch (e) {
+            console.warn('MCP search fallback failed:', e.message);
+          }
+        },
+
+        /**
+         * Auto-fill the add form from a search result.
+         */
+        selectSearchResult(result) {
+          this.newConnector.name = result.name;
+          this.newConnector.command = result.command;
+          this.showSearch = false;
+          this.searchResults = [];
+          this.searchQuery = '';
+        },
+
+        /**
+         * Check if a connector recipe is already installed.
+         */
+        isConnectorInstalled(recipeId) {
+          return this.connectors.some(c => c.name === recipeId || c.id === recipeId);
+        },
+
+        /**
+         * Dispatch Set-up click based on recipe kind and setup_flow.
+         *
+         *   channel           → step-by-step wizard (Telegram today)
+         *   mcp/oauth_http    → OAuth dialog (Gmail and future Google recipes)
+         *   mcp/secret + creds→ pre-filled Add-form for manual secret input
+         *   mcp/secret no cred→ direct install via POST /api/connectors
+         */
+        async setupRecipe(recipe) {
+          if (this.isConnectorInstalled(recipe.id)) return;
+          const needsCredentials =
+            (recipe.credentials && recipe.credentials.length > 0)
+            || recipe.setup_flow === 'oauth_http';
+
+          if (recipe.kind === 'channel') {
+            this._openChannelWizard(recipe.id);
+            return;
+          }
+          if (recipe.setup_flow === 'oauth_http') {
+            this.openOAuthDialog(recipe.id);
+            return;
+          }
+          if (needsCredentials) {
+            this.newConnector.name = recipe.id;
+            this.newConnector.command = recipe.command || '';
+            this.newConnector.envVars = [{ key: '', value: '', isSecret: true }];
+            this.newConnector.lookupHit = 0;
+            this.showAddForm = true;
+            return;
+          }
+          // No credentials needed — install immediately.
+          this.submitting = true;
+          try {
+            await MycelosAPI.post('/api/connectors', {
+              name: recipe.id,
+              command: recipe.command || '',
+            });
+            await this.loadConnectors();
+            this.showToast(recipe.name + ' added successfully', 'success');
+          } catch (e) {
+            this.showToast('Failed to add ' + recipe.name + ': ' + e.message, 'error');
+          }
+          this.submitting = false;
+        },
+
+        /**
+         * Launch the channel setup wizard. Telegram has a 3-step flow;
+         * other channel types fall back to a 2-step placeholder so the
+         * wizard chrome still renders correctly.
+         */
+        _openChannelWizard(channelId) {
+          this.showAddForm = false;
+          // Mutate the existing wizard object instead of replacing it.
+          // Alpine registers the original object as reactive on init —
+          // assigning a fresh object detaches every existing x-show /
+          // x-model binding and the wizard panel never appears.
+          Object.assign(this.wizard, {
+            active: true, type: channelId, step: 1,
+            totalSteps: channelId === 'telegram' ? 3 : 2,
+            checking: false, error: '',
+          });
+          Object.assign(this.wizard.data, {
+            token: '', tokenRaw: '', chatId: '', botName: '', botUsername: '',
+            noUpdates: false, verified: false, email: '', password: '',
+            imapServer: '', smtpServer: '', isGmail: false, testDone: false,
+          });
+          // Scroll the wizard card into view — it sits below the recipe
+          // grid and would otherwise be off-screen on first open.
+          this.$nextTick(() => {
+            document.querySelector('[x-show="wizard.active"]')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        },
+
+        wizardCanProceed() {
+          const w = this.wizard;
+          if (w.type === 'telegram') {
+            if (w.step === 1) return w.data.token.trim().length > 10;
+            if (w.step === 2) return !!w.data.chatId.trim() && w.data.verified;
+          }
+          if (w.type === 'email') {
+            if (w.step === 1) return w.data.email.includes('@') && w.data.imapServer;
+            if (w.step === 2) return w.data.password.trim().length > 0;
+          }
+          return true;
+        },
+
+        async wizardNext() {
+          if (!this.wizardCanProceed()) return;
+          this.wizard.error = '';
+          // Telegram Step 1 → 2: validate token via getMe and try to
+          // auto-detect the chat ID from getUpdates. If the token is
+          // bad we stay on Step 1 and show the error.
+          if (this.wizard.type === 'telegram' && this.wizard.step === 1) {
+            await this.wizardCheckTelegram();
+            if (this.wizard.error) return;
+          }
+          this.wizard.step++;
+        },
+
+        wizardBack() {
+          this.wizard.error = '';
+          if (this.wizard.step > 1) this.wizard.step--;
+        },
+
+        /** Auto-detect IMAP/SMTP from email domain. */
+        wizardAutoDetectEmail() {
+          const email = this.wizard.data.email;
+          const domain = email.split('@')[1]?.toLowerCase() || '';
+          const providers = {
+            'gmail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com', isGmail: true },
+            'googlemail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com', isGmail: true },
+            'outlook.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com', isGmail: false },
+            'hotmail.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com', isGmail: false },
+            'live.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com', isGmail: false },
+            'yahoo.com': { imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com', isGmail: false },
+            'icloud.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com', isGmail: false },
+            'me.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com', isGmail: false },
+          };
+          const p = providers[domain];
+          if (p) {
+            this.wizard.data.imapServer = p.imap;
+            this.wizard.data.smtpServer = p.smtp;
+            this.wizard.data.isGmail = p.isGmail;
+          } else if (domain) {
+            this.wizard.data.imapServer = 'imap.' + domain;
+            this.wizard.data.smtpServer = 'smtp.' + domain;
+            this.wizard.data.isGmail = false;
+          }
+        },
+
+        /** Extract bot token from pasted BotFather message or raw text. */
+        wizardExtractToken() {
+          const raw = this.wizard.data.tokenRaw || '';
+          // Telegram bot tokens: digits:alphanumeric-with-dashes (e.g. 123456789:ABCdefGHIjkl-MNOpqrSTU)
+          const match = raw.match(/\d{8,}:[A-Za-z0-9_-]{30,}/);
+          this.wizard.data.token = match ? match[0] : '';
+        },
+
+        /** Check Telegram for incoming messages via server proxy. */
+        async wizardCheckTelegram() {
+          this.wizard.checking = true;
+          this.wizard.error = '';
+          this.wizard.data.noUpdates = false;
+          try {
+            const res = await MycelosAPI.post('/api/telegram/check', {
+              token: this.wizard.data.token,
+            });
+            if (res.error) throw new Error(res.error);
+            // Store bot info
+            if (res.bot_name) this.wizard.data.botName = res.bot_name;
+            if (res.bot_username) this.wizard.data.botUsername = res.bot_username;
+            // Chat ID
+            if (res.chat_id) {
+              this.wizard.data.chatId = String(res.chat_id);
+            } else {
+              this.wizard.data.noUpdates = true;
+            }
+          } catch (e) {
+            this.wizard.error = e.message || 'Failed to check Telegram';
+          }
+          this.wizard.checking = false;
+        },
+
+        /** Verify Telegram chat ID by sending a test message. */
+        async wizardVerifyTelegram() {
+          this.wizard.checking = true;
+          this.wizard.error = '';
+          this.wizard.data.verified = false;
+          try {
+            const res = await MycelosAPI.post('/api/telegram/verify', {
+              token: this.wizard.data.token,
+              chat_id: this.wizard.data.chatId.trim(),
+            });
+            if (res.error) throw new Error(res.error);
+            this.wizard.data.verified = true;
+          } catch (e) {
+            this.wizard.error = e.message || 'Failed to send test message';
+          }
+          this.wizard.checking = false;
+        },
+
+        /** Test email IMAP connection. */
+        async wizardTestEmail() {
+          this.wizard.checking = true;
+          this.wizard.error = '';
+          try {
+            const config = JSON.stringify({
+              email: this.wizard.data.email,
+              password: this.wizard.data.password,
+              imap_server: this.wizard.data.imapServer,
+              smtp_server: this.wizard.data.smtpServer,
+            });
+            // Store credential first
+            await MycelosAPI.post('/api/connectors', { name: 'email', command: '', secret: config });
+            // Try reading inbox to verify
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+              body: JSON.stringify({ message: 'Test the email connection — call connector_call with connector_id=email, tool=messages, action=search, returnBody=false, limit=1.', agent_id: 'mycelos' }),
+            });
+            // Just check if the connector was stored successfully
+            this.wizard.data.testDone = true;
+            this.showToast('Email connected successfully', 'success');
+            await this.loadConnectors();
+          } catch (e) {
+            this.wizard.error = e.message || 'Connection test failed';
+          }
+          this.wizard.checking = false;
+        },
+
+        /** Finish wizard — store credentials and close. */
+        async wizardFinish() {
+          const w = this.wizard;
+          try {
+            if (w.type === 'telegram') {
+              // Store telegram bot token as credential
+              await MycelosAPI.post('/api/credentials', {
+                service: 'telegram',
+                secret: w.data.token,
+              });
+              // Store chat ID in memory
+              await MycelosAPI.post('/api/memory', {
+                scope: 'system',
+                key: 'telegram_chat_id',
+                value: w.data.chatId,
+              });
+              // Register channel in channels table + connector registry
+              await MycelosAPI.post('/api/channels', {
+                id: 'telegram',
+                type: 'telegram',
+                mode: 'polling',
+                allowed_users: [w.data.chatId],
+              });
+              this.showToast('Telegram connected — try sending a message to your bot now!', 'success');
+            }
+          } catch (e) {
+            this.showToast('Failed to save: ' + e.message, 'error');
+          }
+          this.wizard.active = false;
+          await this.loadConnectors();
+        },
+
+        /**
+         * Reset the add form fields.
+         */
+        resetForm() {
+          this.newConnector = {
+            name: '',
+            command: '',
+            envVars: [{ key: '', value: '', isSecret: true }],
+            lookupHit: 0,
+          };
+          this.searchQuery = '';
+          this.searchResults = [];
+          this.showSearch = false;
+          this.pasteJson = {
+            open: false, input: '', servers: [], error: '', applied: false,
+          };
+        },
+
+        /**
+         * Show a toast notification that auto-dismisses.
+         */
+        showToast(message, type = 'success') {
+          this.toast = { show: true, message, type };
+          setTimeout(() => {
+            this.toast.show = false;
+          }, 3000);
+        },
+
+        // ── OAuth setup dialog state ──
+        oauthDialog: {
+          open: false,
+          recipeId: '',
+          recipe: null,
+          keysJson: '',
+          keysValid: null,
+          authUrl: '',
+          redirectUri: '',
+          submitting: false,
+          checking: false,
+          pollTimer: null,
+          pollDeadline: 0,
+          done: false,
+          error: '',
+        },
+
+        async openOAuthDialog(recipeId) {
+          const resp = await fetch('/api/connectors/recipes/' + encodeURIComponent(recipeId));
+          if (!resp.ok) {
+            this.showToast('Failed to load recipe', 'error');
+            return;
+          }
+          const recipe = await resp.json();
+          this._stopOAuthPolling();
+          Object.assign(this.oauthDialog, {
+            open: true,
+            recipeId,
+            recipe,
+            keysJson: '',
+            keysValid: null,
+            authUrl: '',
+            redirectUri: '',
+            submitting: false,
+            checking: false,
+            pollTimer: null,
+            pollDeadline: 0,
+            done: false,
+            error: '',
+          });
+        },
+
+        closeOAuthDialog() {
+          this._stopOAuthPolling();
+          this.oauthDialog.open = false;
+        },
+
+        _stopOAuthPolling() {
+          if (this.oauthDialog.pollTimer) {
+            clearInterval(this.oauthDialog.pollTimer);
+            this.oauthDialog.pollTimer = null;
+          }
+        },
+
+        _startOAuthPolling() {
+          this._stopOAuthPolling();
+          const self = this;
+          // Give up after 5 minutes of waiting.
+          self.oauthDialog.pollDeadline = Date.now() + 5 * 60 * 1000;
+          self.oauthDialog.pollTimer = setInterval(() => {
+            if (Date.now() > self.oauthDialog.pollDeadline) {
+              self._stopOAuthPolling();
+              return;
+            }
+            // Silent check — don't touch the 'checking' spinner, that's
+            // reserved for the explicit Check-now button so the user
+            // sees something happen when they click.
+            self._checkOAuthConnectionStatus(false);
+          }, 2500);
+        },
+
+        async _checkOAuthConnectionStatus(showSpinner) {
+          if (this.oauthDialog.done) return;
+          if (showSpinner) this.oauthDialog.checking = true;
+          try {
+            const resp = await fetch(
+              '/api/connectors/' + encodeURIComponent(this.oauthDialog.recipeId),
+            );
+            if (resp.ok) {
+              // Connector registered → OAuth must have completed successfully.
+              this._stopOAuthPolling();
+              this.oauthDialog.done = true;
+              this.showToast('Connected ' + this.oauthDialog.recipeId, 'success');
+              // Refresh the connectors list so the new connector shows up.
+              if (typeof this.loadConnectors === 'function') {
+                this.loadConnectors();
+              }
+            }
+          } catch {
+            // Network blip — ignore, next poll tick will try again.
+          } finally {
+            if (showSpinner) this.oauthDialog.checking = false;
+          }
+        },
+
+        async checkOAuthConnection() {
+          await this._checkOAuthConnectionStatus(true);
+        },
+
+        async validateOAuthKeys() {
+          this.oauthDialog.keysValid = null;
+          const resp = await fetch('/api/credentials/oauth-keys/validate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: this.oauthDialog.keysJson}),
+          });
+          this.oauthDialog.keysValid = await resp.json();
+        },
+
+        async submitOAuthKeysAndStart() {
+          this.oauthDialog.submitting = true;
+          this.oauthDialog.error = '';
+          try {
+            const credService = this.oauthDialog.recipe.oauth_client_credential_service
+                             || (this.oauthDialog.recipeId + '-oauth-client');
+            // Store the client_secret_*.json blob.
+            await fetch('/api/credentials', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                service: credService,
+                secret: this.oauthDialog.keysJson,
+                label: 'default',
+                description: 'OAuth client for ' + this.oauthDialog.recipe.name,
+              }),
+            });
+
+            // Ask the gateway for an auth URL.
+            const resp = await fetch('/api/connectors/oauth/start', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                recipe_id: this.oauthDialog.recipeId,
+                origin: window.location.origin,
+              }),
+            });
+            const body = await resp.json();
+            if (!resp.ok) {
+              this.oauthDialog.error = body.detail || body.error || ('HTTP ' + resp.status);
+              return;
+            }
+            this.oauthDialog.authUrl = body.auth_url;
+            this.oauthDialog.redirectUri = body.redirect_uri;
+            // Start polling /api/connectors/<id> — once the gateway's
+            // callback handler registers the connector we flip to
+            // Stage 3 automatically. User can also click "Check now".
+            this._startOAuthPolling();
+          } catch (e) {
+            this.oauthDialog.error = e.message || String(e);
+          } finally {
+            this.oauthDialog.submitting = false;
+          }
+        },
+
+        detectOAuthReturn() {
+          const { connected, error } = window.MycelosOAuthSetup.readOAuthQueryParams();
+          if (!connected && !error) return;
+          if (connected) {
+            this.showToast('Connected ' + connected, 'success');
+            // Re-open the dialog briefly in success state.
+            this.openOAuthDialog(connected).then(() => {
+              this.oauthDialog.done = true;
+            });
+          } else {
+            this.showToast('OAuth error: ' + error, 'error');
+          }
+          window.MycelosOAuthSetup.clearOAuthQueryParams();
+        },
+      };
+    }
+  </script>
+
+</body>
+</html>

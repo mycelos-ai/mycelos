@@ -386,6 +386,24 @@ CREATE TABLE IF NOT EXISTS background_task_steps (
 );
 
 -- Knowledge Base (NOT NixOS State — user content)
+-- Selected local source instances. Existing source_attachments remain connector scopes.
+CREATE TABLE IF NOT EXISTS local_sources (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('file', 'folder', 'git', 'mercurial', 'codex', 'claude', 'obsidian')),
+    root TEXT NOT NULL,
+    workflow TEXT,
+    import_request_id TEXT,
+    purpose TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL CHECK(mode IN ('analyze', 'direct')),
+    model TEXT,
+    status TEXT NOT NULL DEFAULT 'ready',
+    last_run TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_notes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     path        TEXT NOT NULL UNIQUE,
@@ -422,6 +440,31 @@ CREATE INDEX IF NOT EXISTS idx_kn_due ON knowledge_notes(due) WHERE due IS NOT N
 CREATE INDEX IF NOT EXISTS idx_kn_updated ON knowledge_notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_kn_path ON knowledge_notes(path);
 CREATE INDEX IF NOT EXISTS idx_kn_parent ON knowledge_notes(parent_path) WHERE parent_path IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS local_source_versions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    recipe TEXT NOT NULL,
+    content TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    note_id INTEGER REFERENCES knowledge_notes(id) ON DELETE SET NULL,
+    auto_archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, fingerprint, recipe)
+);
+
+CREATE TABLE IF NOT EXISTS local_source_items (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES local_sources(id),
+    external_id TEXT NOT NULL,
+    version_id TEXT NOT NULL REFERENCES local_source_versions(id),
+    files TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
+    available INTEGER NOT NULL DEFAULT 1,
+    seen_run TEXT NOT NULL,
+    UNIQUE(source_id, external_id)
+);
 
 CREATE TABLE IF NOT EXISTS knowledge_graph_positions (
     user_id     TEXT NOT NULL,
@@ -517,4 +560,65 @@ CREATE TABLE IF NOT EXISTS source_rules (
     rule_text   TEXT NOT NULL DEFAULT '',
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (source_id, user_id)
+);
+
+-- Local source checks contain no model work and keep the last complete scan.
+CREATE TABLE IF NOT EXISTS local_source_checks (
+    source_id TEXT PRIMARY KEY REFERENCES local_sources(id) ON DELETE CASCADE,
+    interval_minutes INTEGER NOT NULL DEFAULT 0 CHECK(interval_minutes IN (0,15,60,360,1440)),
+    status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','queued','running','error')),
+    last_check TEXT,
+    next_check TEXT,
+    lease_until TEXT,
+    request_id TEXT,
+    error TEXT,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    checked_units INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_local_source_checks_due ON local_source_checks(status,next_check);
+
+CREATE TABLE IF NOT EXISTS local_source_check_items (
+    source_id TEXT NOT NULL REFERENCES local_sources(id) ON DELETE CASCADE,
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    content TEXT NOT NULL,
+    files TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
+    change TEXT NOT NULL CHECK(change IN ('new','changed','removed','unchanged')),
+    PRIMARY KEY(source_id,external_id)
+);
+
+-- Structured source articles. Original text stays in local_source_versions.
+CREATE TABLE IF NOT EXISTS source_article_roots (
+    source_id TEXT PRIMARY KEY REFERENCES local_sources(id) ON DELETE CASCADE,
+    note_id INTEGER REFERENCES knowledge_notes(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS source_articles (
+    version_id TEXT NOT NULL REFERENCES local_source_versions(id) ON DELETE CASCADE,
+    article_key TEXT NOT NULL,
+    note_id INTEGER REFERENCES knowledge_notes(id) ON DELETE SET NULL,
+    evidence TEXT NOT NULL,
+    generated_hash TEXT,
+    relation_state TEXT NOT NULL DEFAULT 'pending',
+    auto_archived INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(version_id,article_key)
+);
+CREATE INDEX IF NOT EXISTS idx_source_articles_note ON source_articles(note_id);
+CREATE TABLE IF NOT EXISTS knowledge_relations (
+    from_id INTEGER NOT NULL REFERENCES knowledge_notes(id) ON DELETE CASCADE,
+    to_id INTEGER NOT NULL REFERENCES knowledge_notes(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    from_hash TEXT,
+    to_hash TEXT,
+    created_by TEXT NOT NULL DEFAULT 'source-analysis',
+    PRIMARY KEY(from_id,to_id,kind),
+    CHECK(from_id != to_id)
+);
+
+
+CREATE TABLE IF NOT EXISTS local_source_metadata (
+    item_id TEXT PRIMARY KEY REFERENCES local_source_items(id) ON DELETE CASCADE,
+    metadata TEXT NOT NULL
 );

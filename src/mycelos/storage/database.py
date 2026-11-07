@@ -56,7 +56,7 @@ class SQLiteStorage:
 
         # Check if newest tables exist — if any missing, re-apply full schema
         # (CREATE TABLE IF NOT EXISTS is idempotent, safe to re-run)
-        for check_table in ("llm_usage", "channels", "background_tasks", "users", "knowledge_notes", "session_agents", "tool_usage"):
+        for check_table in ("llm_usage", "channels", "background_tasks", "users", "knowledge_notes", "session_agents", "tool_usage", "local_sources", "local_source_versions", "local_source_items", "local_source_checks", "local_source_check_items", "source_article_roots", "source_articles", "knowledge_relations", "local_source_metadata"):
             try:
                 self._conn.execute(f"SELECT 1 FROM {check_table} LIMIT 0")
             except sqlite3.OperationalError:
@@ -66,6 +66,8 @@ class SQLiteStorage:
 
         # Migrate existing tables: add missing columns (V2 schema changes)
         _MIGRATIONS = [
+            ("local_source_checks", "request_id", "TEXT"),
+            ("local_sources", "workflow", "TEXT"),
             ("agents", "code_hash", "TEXT"),
             ("agents", "tests_hash", "TEXT"),
             ("agents", "prompt_hash", "TEXT"),
@@ -114,6 +116,9 @@ class SQLiteStorage:
             ("knowledge_notes", "placement_confidence", "REAL"),
             # Typed graph edges: wikilink | parent | related | merged_from.
             ("knowledge_links", "kind", "TEXT"),
+            ("local_source_versions", "auto_archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("source_articles", "auto_archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("local_sources", "import_request_id", "TEXT"),
         ]
         # This loop is unconditional and runs on every connect. That matters:
         # re-applying schema.sql only happens when one of the check-tables
@@ -131,6 +136,7 @@ class SQLiteStorage:
                 except sqlite3.OperationalError:
                     pass  # Column might already exist in some edge case
 
+        self._migrate_local_source_kinds()
         self._migrate_workflow_runs_to_routine_runs()
 
         # One-shot migration: earlier schema versions wrote '["chat"]' as
@@ -435,6 +441,33 @@ class SQLiteStorage:
             self._conn.commit()
         except sqlite3.OperationalError:
             pass
+
+    def _migrate_local_source_kinds(self):
+        """Extend source kinds without losing source item foreign keys."""
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='local_sources'").fetchone()
+        if not row or "'obsidian'" in row[0]:
+            return
+        self._conn.commit()
+        enabled = self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            definition = row[0].replace("local_sources", "local_sources_new", 1).replace(
+                "'folder', 'codex', 'claude'", "'file', 'folder', 'git', 'mercurial', 'codex', 'claude'")
+            definition = definition.replace("'claude'", "'claude', 'obsidian'")
+            self._conn.execute(definition)
+            self._conn.execute("INSERT INTO local_sources_new SELECT * FROM local_sources")
+            self._conn.execute("DROP TABLE local_sources")
+            self._conn.execute("ALTER TABLE local_sources_new RENAME TO local_sources")
+            if self._conn.execute("PRAGMA foreign_key_check(local_source_items)").fetchone():
+                raise sqlite3.IntegrityError("Source migration broke an item reference")
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        finally:
+            self._conn.execute(f"PRAGMA foreign_keys={int(enabled)}")
 
     def initialize(self) -> None:
         """Create database and apply schema."""

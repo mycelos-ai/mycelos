@@ -47,6 +47,8 @@ class MockLLMBroker:
         model: str | None = None,
         tools: list[dict[str, object]] | None = None,
         stream: bool = False,
+        fallback_models: list[str] | None = None,
+        purpose: str = "execution",
     ) -> LLMResponse:
         """Match last user message against patterns, return response."""
         self.call_log.append({

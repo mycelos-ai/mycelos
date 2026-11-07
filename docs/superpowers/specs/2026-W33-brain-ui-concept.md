@@ -1,5 +1,10 @@
 # Mycelos UI Concept — The Brain
 
+> **Direction change (2026-W45).** The conversation, not the graph, is now the home surface, and
+> answers render as views from a fixed catalog (timeline, mind map, graph slice, …). The daily
+> briefing becomes the first message of the day. See `2026-W45-generative-ui-design.md`. The rest
+> of this document (inbox, routines, sources, channels, provenance) still applies.
+
 Week 33 (2026). Structure and interaction concept. The visual design (type, colour, form) is Stefan's; this document defines *what* is on screen, in what hierarchy, and how it behaves.
 
 ## Northstar

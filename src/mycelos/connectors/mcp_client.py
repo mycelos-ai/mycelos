@@ -61,7 +61,7 @@ class MycelosMCPClient:
         In two-container deployment (``MYCELOS_PROXY_URL`` set) this
         method refuses to run: the subprocess must live in the proxy
         container, spawned via ``proxy_client.mcp_start``. A direct
-        stdio_client / streamablehttp_client would spawn the MCP
+        stdio_client / streamable_http_client would spawn the MCP
         subprocess inside the gateway container — which has no
         internet route AND no credential plaintext — recreating
         the exact hole that bd2fe42 closed for the startup path.
@@ -76,10 +76,14 @@ class MycelosMCPClient:
                 "subprocess and its credentials stay inside the proxy "
                 "container."
             )
-        if self._transport == "http":
-            await self._connect_http()
-        else:
-            await self._connect_stdio()
+        try:
+            if self._transport == "http":
+                await self._connect_http()
+            else:
+                await self._connect_stdio()
+        except BaseException:
+            await self.disconnect()
+            raise
 
     async def _connect_stdio(self) -> None:
         """Connect via stdio (local subprocess)."""
@@ -115,7 +119,7 @@ class MycelosMCPClient:
     async def _connect_http(self) -> None:
         """Connect via HTTP (hosted MCP endpoint)."""
         from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client import streamable_http
         from mycelos.connectors.mcp_recipes import get_recipe
 
         recipe = get_recipe(self.connector_id)
@@ -130,9 +134,23 @@ class MycelosMCPClient:
         token = self._resolve_token(recipe)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-        self._http_context = streamablehttp_client(url=url, headers=headers)
-        read, write, _ = await self._http_context.__aenter__()
+        modern_client = getattr(streamable_http, "streamable_http_client", None)
+        if modern_client is not None:
+            # SDK 2 uses httpx2; SDK 1 uses httpx. Let the SDK choose its
+            # own HTTP client type and timeout defaults, and own its lifetime.
+            from mcp.shared._httpx_utils import create_mcp_http_client
+
+            http_client = create_mcp_http_client(headers=headers)
+            await http_client.__aenter__()
+            self._context_stack.append(http_client)
+            self._http_context = modern_client(url=url, http_client=http_client)
+        else:
+            # Older SDKs expose only the original name and accept headers.
+            self._http_context = streamable_http.streamablehttp_client(url=url, headers=headers)
+        streams = await self._http_context.__aenter__()
         self._context_stack.append(self._http_context)
+        # SDK 1 also yields a session-id callback; SDK 2 yields two streams.
+        read, write = streams[:2]
         self._session_context = ClientSession(read, write)
         self._session = await self._session_context.__aenter__()
         self._context_stack.append(self._session_context)
@@ -198,7 +216,7 @@ class MycelosMCPClient:
                 "name": f"{self.connector_id}.{tool.name}",
                 "original_name": tool.name,
                 "description": tool.description or "",
-                "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                "input_schema": getattr(tool, "input_schema", getattr(tool, "inputSchema", {})),
             })
 
         logger.info(

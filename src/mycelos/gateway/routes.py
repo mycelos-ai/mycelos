@@ -219,8 +219,27 @@ def setup_routes(api: FastAPI) -> None:
     from mycelos.gateway.routers.sources import router as sources_router
     api.include_router(sources_router)
 
+    from mycelos.gateway.routers.local_sources import router as local_sources_router
+    api.include_router(local_sources_router)
+
+    from mycelos.gateway.routers.collectors import router as collectors_router
+    api.include_router(collectors_router)
+
+    def start_collector_worker():
+        from mycelos.gateway.routers.collectors import service
+        from mycelos.collector.intake import start_worker
+        start_worker(service(api))
+
+    def stop_collector_worker():
+        service = getattr(api.state, 'collector_server', None)
+        if service and getattr(service, 'worker_stop', None):
+            service.worker_stop.set()
+            service.worker.join(timeout=5)
+
+    api.router.add_event_handler("startup", start_collector_worker)
+    api.router.add_event_handler("shutdown", stop_collector_worker)
+
     from mycelos.gateway.routers.inbox import router as inbox_router
     api.include_router(inbox_router)
 
     # ── End of API endpoints ───────────────────────────────────
-

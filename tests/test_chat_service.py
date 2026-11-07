@@ -229,20 +229,20 @@ def test_handle_message_llm_error(service: ChatService, app: App):
     assert "API down" in error.data["message"]
 
 
-def test_handle_system_command(service: ChatService, app: App):
-    """System commands should return system-response event without LLM call."""
+def test_natural_language_config_question_reaches_chat(service: ChatService, app: App):
+    """Natural language is handled by the chat; slash commands belong to the gateway.
+
+    The old assertion passed on an unrelated level greeting, while the model
+    request actually failed. Keep this path deterministic and inspect its result.
+    """
     session_id = service.create_session()
-    # Set user name so orchestrator runs
     app.memory.set("default", "system", "user.name", "Test", created_by="test")
-
-    # Mock orchestrator to return SYSTEM_COMMAND
-    from mycelos.orchestrator import Intent, RouteResult
-    with patch.object(app.orchestrator, "route",
-                      return_value=RouteResult(intent=Intent.SYSTEM_COMMAND)):
+    with patch.object(app.llm, "complete", return_value=_mock_llm_response("Configuration summary")):
         events = service.handle_message("show config", session_id)
-
     types = [e.type for e in events]
-    assert "system-response" in types
+    assert "text" in types
+    assert "done" in types
+    assert "error" not in types
 
 
 def test_done_event_has_token_info(service: ChatService, app: App):

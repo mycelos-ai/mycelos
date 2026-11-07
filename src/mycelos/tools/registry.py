@@ -223,6 +223,7 @@ class ToolRegistry:
         from mycelos.tools import web as _web
         from mycelos.tools import workflow as _workflow
         from mycelos.tools import session as _session
+        from mycelos.tools import local_sources as _local_sources
 
         _web.register(cls)
         _memory.register(cls)
@@ -238,6 +239,9 @@ class ToolRegistry:
         # email_* in-process tools removed — replaced by the
         # @n24q02m/better-email-mcp MCP server, registered as a recipe.
         _session.register(cls)
+        _local_sources.register(cls)
+        from mycelos.tools import settings as _settings
+        _settings.register(cls)
 
     @classmethod
     def get_tools_for_session(

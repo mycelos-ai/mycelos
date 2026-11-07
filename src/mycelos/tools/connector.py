@@ -36,7 +36,10 @@ CONNECTOR_CALL_SCHEMA = {
         "name": "connector_call",
         "description": (
             "Call a tool on a connector. First use connector_tools to see "
-            "available tools and their parameters, then call the specific tool."
+            "available tools and their parameters, then call the specific tool. "
+            "Results stay in the conversation; this does not create a knowledge note. "
+            "Use note_write with source details to save selected useful knowledge "
+            "or a result the user asks to keep."
         ),
         "parameters": {
             "type": "object",
@@ -133,6 +136,7 @@ def execute_connector_tools(args: dict, context: dict) -> Any:
             tools.append({
                 "name": short_name,
                 "description": tool.get("description", ""),
+                "input_schema": schema,
                 "parameters": {
                     k: v.get("description", v.get("type", "?"))
                     for k, v in params.items()

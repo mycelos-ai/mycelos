@@ -26,6 +26,7 @@ class LLMResponse:
     model: str = ""
     tool_calls: list[dict] | None = None
     cost: float = 0.0
+    finish_reason: str | None = None
 
 
 # Map provider prefixes to their environment variable names
@@ -47,9 +48,14 @@ def _resolve_litellm_kwargs(
     Most providers just need ``api_key``; Vertex AI needs three fields
     (``vertex_credentials`` JSON, ``vertex_project``, ``vertex_location``).
 
-    Returns an empty dict if no credential is found or already in env.
+    Returns an empty dict if no credential is found.
     Never touches os.environ — thread-safe, no global mutation.
     """
+    if model.startswith("custom/"):
+        from mycelos.llm.custom import custom_completion_kwargs
+        credential = credential_proxy.get_credential("custom") if credential_proxy else None
+        return custom_completion_kwargs(model, credential)
+
     if credential_proxy is None:
         return {}
 
@@ -73,15 +79,16 @@ def _resolve_litellm_kwargs(
             kw["vertex_location"] = cred["vertex_location"]
         return kw
 
-    # Single-key providers — skip if user already set the env var.
-    env_var = _PROVIDER_ENV_VARS.get(provider)
-    if env_var and os.environ.get(env_var):
-        return {}
+    # Saved settings take precedence; LiteLLM can use the environment only
+    # when the user has not stored a credential.
 
     try:
         cred = credential_proxy.get_credential(provider)
-        if cred and "api_key" in cred:
-            return {"api_key": cred["api_key"]}
+        if cred:
+            result = {"api_key": cred["api_key"]} if cred.get("api_key") else {}
+            if provider == "ollama" and cred.get("api_base"):
+                result["api_base"] = cred["api_base"]
+            return result
     except Exception as exc:
         logger.debug("credential lookup failed for provider=%s: %s", provider, exc)
 
@@ -134,9 +141,11 @@ class LiteLLMBroker:
         fallback_models: list[str] | None = None,
         recorder: "CassetteRecorder | None" = None,
         eu_mode_check: Any | None = None,
+        model_resolver: Any | None = None,
     ):
         self.default_model = default_model
         self.fallback_models = fallback_models or []
+        self._model_resolver = model_resolver
         self.total_cost: float = 0.0
         self.total_tokens: int = 0
         self._credential_proxy = credential_proxy
@@ -161,23 +170,44 @@ class LiteLLMBroker:
         err_str = str(error).lower()
         return any(p in err_str for p in self._RETRIABLE_PATTERNS)
 
+    def _resolve_model_chain(
+        self, model: str | None, fallback_models: list[str] | None = None,
+        purpose: str = "execution",
+    ) -> list[str]:
+        """Resolve one request without carrying choices across requests."""
+        if model:
+            chain = [model, *(fallback_models or [])]
+        elif self._model_resolver is not None:
+            chain = self._model_resolver(purpose)
+            if not chain:
+                raise RuntimeError(f"No models configured for {purpose}")
+            if fallback_models is not None:
+                chain = [chain[0], *fallback_models]
+        else:
+            chain = [self.default_model, *(self.fallback_models if fallback_models is None else fallback_models)]
+        return list(dict.fromkeys(self._ensure_prefix(m) for m in chain))
+
+
     def complete(
         self,
         messages: list[dict],
         model: str | None = None,
         tools: list[dict] | None = None,
         stream: bool = False,
+        fallback_models: list[str] | None = None,
+        purpose: str = "execution",
     ) -> LLMResponse:
         """Send completion request through LiteLLM or SecurityProxy.
 
-        On retriable errors (rate limit, quota), automatically falls back
-        to the next model in fallback_models.
+        Explicit models use only explicit fallbacks. Otherwise resolve the
+        current system chain for this purpose, when a resolver is present.
         """
-        chosen_model = self._ensure_prefix(model or self.default_model)
-        models_to_try = [chosen_model] + [
-            self._ensure_prefix(m) for m in self.fallback_models
-            if self._ensure_prefix(m) != chosen_model
-        ]
+        from mycelos.llm.task_settings import read, options
+        settings = read(self._storage, purpose)
+        generation_options = options(settings)
+        if fallback_models is None and settings['fallbacks']:
+            fallback_models = settings['fallbacks']
+        models_to_try = self._resolve_model_chain(model, fallback_models, purpose)
 
         # EU-mode enforcement: restrict the whole candidate chain (primary +
         # fallbacks) to EU-resident providers. Fail-closed — if nothing
@@ -203,15 +233,17 @@ class LiteLLMBroker:
                         messages=messages,
                         tools=tools,
                         real_call=lambda m=attempt_model: self._complete_single(
-                            m, messages, tools, stream
+                            m, messages, tools, stream, **({'generation_options': generation_options} if generation_options else {})
                         ),
                     )
-                return self._complete_single(attempt_model, messages, tools, stream)
+                return self._complete_single(attempt_model, messages, tools, stream,
+                    **({'generation_options': generation_options} if generation_options else {}))
             except Exception as e:
                 from mycelos.llm.cassette import CassetteMissError
                 if isinstance(e, CassetteMissError):
                     raise
-                if self._is_retriable(e) and attempt_model != models_to_try[-1]:
+                can_fallback = self._record_model_failure(e, attempt_model, purpose, models_to_try, generation_options)
+                if can_fallback:
                     import logging
                     logging.getLogger("mycelos.llm").warning(
                         "Model %s unavailable (%s), falling back...", attempt_model, type(e).__name__
@@ -222,12 +254,30 @@ class LiteLLMBroker:
 
         raise last_error or RuntimeError("No models available")
 
+    def _record_model_failure(self, e, attempt_model, purpose, models_to_try, generation_options):
+        unsupported = ('unsupportedparam' in type(e).__name__.lower()
+            or 'unsupportedparam' in str(e).lower()
+            or (any(p in str(e).lower() for p in ('reasoning', 'max_completion_tokens', 'max_tokens')) and any(w in str(e).lower() for w in ('unsupported', 'not support', 'invalid'))))
+        next_model = models_to_try[models_to_try.index(attempt_model) + 1] if attempt_model != models_to_try[-1] else None
+        can_fallback = bool(next_model and (self._is_retriable(e) or unsupported))
+        logger.warning('LLM request failed: model=%s purpose=%s error=%s fallback=%s',
+                       attempt_model, purpose, type(e).__name__, next_model if can_fallback else None)
+        if self._storage is not None:
+            from mycelos.audit import SQLiteAuditLogger
+            SQLiteAuditLogger(self._storage).log('llm.request_failed', details={
+                'model': attempt_model, 'purpose': purpose,
+                'error_type': type(e).__name__, 'unsupported_settings': unsupported,
+                'generation_options': generation_options,
+                'fallback_model': next_model if can_fallback else None})
+        return can_fallback
+
     def _complete_single(
         self,
         chosen_model: str,
         messages: list[dict],
         tools: list[dict] | None = None,
         stream: bool = False,
+        generation_options: dict | None = None,
     ) -> LLMResponse:
         """Single-model completion (no fallback)."""
 
@@ -237,17 +287,14 @@ class LiteLLMBroker:
                 messages=messages,
                 tools=[t for t in (tools or [])],
                 stream=False,
+                **({'generation_options': generation_options} if generation_options else {}),
             )
             # Handle proxy errors — raise retriable ones for failover
             if "error" in result and "content" not in result:
-                error_msg = result["error"]
+                error_msg = str(result.get('error_type', '')) + ': ' + str(result["error"])
                 if self._is_retriable(RuntimeError(error_msg)):
                     raise RuntimeError(f"LLM proxy error: {error_msg}")
-                return LLMResponse(
-                    content=f"[Error: {error_msg}]",
-                    total_tokens=0,
-                    model=chosen_model,
-                )
+                raise RuntimeError(f"LLM proxy error: {error_msg}")
             content = result.get("content", "")
             usage = result.get("usage", {})
             input_tokens = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
@@ -288,6 +335,7 @@ class LiteLLMBroker:
                 model=result.get("model", chosen_model),
                 tool_calls=result.get("tool_calls"),
                 cost=proxy_cost,
+                finish_reason=result.get("finish_reason"),
             )
 
         import litellm
@@ -306,6 +354,10 @@ class LiteLLMBroker:
         # other providers return {"api_key": ...}.
         cred_kwargs = _resolve_litellm_kwargs(chosen_model, self._credential_proxy)
         kwargs.update(cred_kwargs)
+
+        kwargs.update(generation_options or {})
+        from mycelos.llm.custom import custom_generation_kwargs
+        kwargs.update(custom_generation_kwargs(chosen_model, generation_options))
 
         response = litellm.completion(**kwargs)
 
@@ -368,13 +420,38 @@ class LiteLLMBroker:
             model=chosen_model,
             tool_calls=tool_calls,
             cost=cost,
+            finish_reason=getattr(choice, "finish_reason", None),
         )
 
-    def complete_stream(
+    def complete_stream(self, messages, model=None, tools=None):
+        from mycelos.llm.task_settings import read, options
+        settings = read(self._storage, 'execution')
+        generation_options = options(settings)
+        chain = self._resolve_model_chain(model, settings['fallbacks'] or None)
+        if self._eu_mode_check is not None and self._eu_mode_check():
+            from mycelos.llm.eu_enforcement import filter_eu_models, EUResidencyError
+            chain = filter_eu_models(chain)
+            if not chain:
+                raise EUResidencyError('No EU-resident model configured')
+        for candidate in chain:
+            emitted = False
+            try:
+                for text in self._complete_stream_single(messages, candidate, tools, generation_options):
+                    emitted = True
+                    yield text
+                return
+            except Exception as error:
+                # Never mix partial answers from different models.
+                candidates = [candidate] if emitted else chain
+                if not self._record_model_failure(error, candidate, 'execution', candidates, generation_options):
+                    raise
+
+    def _complete_stream_single(
         self,
         messages: list[dict],
         model: str | None = None,
         tools: list[dict] | None = None,
+        generation_options: dict | None = None,
     ):
         """Stream completion — yields text chunks as they arrive.
 
@@ -384,7 +461,7 @@ class LiteLLMBroker:
         After iteration, self._last_stream_tokens and self._last_stream_model
         are set for the caller to read.
         """
-        chosen_model = self._ensure_prefix(model or self.default_model)
+        chosen_model = self._resolve_model_chain(model)[0]
 
         if self._proxy_client is not None:
             self._last_stream_model = chosen_model
@@ -396,11 +473,14 @@ class LiteLLMBroker:
                 messages=messages,
                 tools=[t for t in (tools or [])],
                 stream=True,
+                **({'generation_options': generation_options} if generation_options else {}),
             )
             # result is an iterator of SSE chunks when stream=True
             # Parse and yield content chunks
             for chunk_data in result:
                 if isinstance(chunk_data, dict):
+                    if chunk_data.get("error"):
+                        raise RuntimeError(str(chunk_data["error"]))
                     content = chunk_data.get("content", "")
                     if content:
                         yield content
@@ -428,6 +508,9 @@ class LiteLLMBroker:
         # Pass credentials directly — thread-safe, no os.environ mutation.
         cred_kwargs = _resolve_litellm_kwargs(chosen_model, self._credential_proxy)
         kwargs.update(cred_kwargs)
+        kwargs.update(generation_options or {})
+        from mycelos.llm.custom import custom_generation_kwargs
+        kwargs.update(custom_generation_kwargs(chosen_model, generation_options))
 
         response = litellm.completion(**kwargs)
         for chunk in response:
@@ -483,7 +566,7 @@ class LiteLLMBroker:
         """Count tokens for messages without making an API call."""
         import litellm
 
-        chosen_model = self._ensure_prefix(model or self.default_model)
+        chosen_model = self._resolve_model_chain(model)[0]
         return litellm.token_counter(model=chosen_model, messages=messages)
 
 

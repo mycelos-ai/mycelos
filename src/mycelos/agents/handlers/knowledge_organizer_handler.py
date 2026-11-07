@@ -26,7 +26,6 @@ from mycelos.knowledge.organizer import (
     DUPLICATE_THRESHOLD,
     DUPLICATE_TOP_K,
     decide_action,
-    is_archived_older_than,
     is_done_task_older_than,
     is_fired_reminder_past,
     should_auto_accept,
@@ -96,36 +95,8 @@ class KnowledgeOrganizerHandler:
         # This creates topics and moves notes without user intervention.
         auto_accepted = self._auto_accept_stale(storage, kb, user_id)
 
-        # Hard-delete archived notes older than 30 days
-        archived_notes = storage.fetchall(
-            "SELECT * FROM knowledge_notes WHERE status='archived' LIMIT 50"
-        )
+        # Archived knowledge is retained until an explicit deletion request.
         hard_deleted = 0
-        for note in archived_notes:
-            if is_archived_older_than(note, days=30):
-                path = note["path"]
-                file_path = kb._knowledge_dir / (path + ".md")
-                if file_path.exists():
-                    try:
-                        file_path.unlink()
-                    except OSError:
-                        pass
-                storage.execute(
-                    "DELETE FROM knowledge_notes WHERE path=?", (path,)
-                )
-                storage.execute(
-                    "DELETE FROM organizer_suggestions WHERE note_path=?", (path,)
-                )
-                # A hard-deleted path may have been a topic with sources
-                # attached to it (archive_note has no type='topic' guard, so
-                # a topic can reach this sweep the same way a note can) —
-                # drop those attachments too, or they'd silently point at a
-                # path that no longer exists.
-                storage.execute(
-                    "DELETE FROM source_attachments WHERE topic_path=?", (path,)
-                )
-                self._audit(user_id, "organizer.hard_delete", {"path": path})
-                hard_deleted += 1
 
         pending = storage.fetchall(
             "SELECT * FROM knowledge_notes WHERE organizer_state='pending' LIMIT ?",
@@ -458,7 +429,7 @@ class KnowledgeOrganizerHandler:
                     {"role": "system", "content": PromptLoader().load("knowledge-organizer")},
                     {"role": "user", "content": prompt},
                 ],
-                model=self._app.resolve_cheapest_model(),
+                purpose="classification",
             )
         except Exception as e:
             logger.warning("organizer LLM classification failed: %s", e)

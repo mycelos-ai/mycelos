@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos — Sign in</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/shared/base.css">
   <style>
     /* Standalone page — no Tailwind CDN, no layout shell. */
@@ -96,24 +95,26 @@
       width: 0.95rem; height: 0.95rem;
       cursor: pointer;
     }
-  </style>
+  .login-card{background:white;box-shadow:none;backdrop-filter:none;border:1px solid #dce6e1;border-radius:14px}.login-mark{background:url(/assets/logo-transparent.svg) center/contain no-repeat;border-radius:0}.login-title{text-shadow:none}.login-input{background:white}.login-card *{font-family:system-ui,sans-serif}
+</style>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1">
 </head>
 <body>
   <div class="login-wrap">
     <form class="login-card" id="login-form" autocomplete="on">
       <div class="login-mark"></div>
       <h1 class="login-title">Mycelos</h1>
-      <p class="login-sub" id="login-sub">Enter your password to continue</p>
+      <p class="login-sub" id="login-sub">Gib dein Passwort ein.</p>
       <!-- Hidden username keeps password managers happy; the gateway only
            checks the password. -->
       <input type="text" name="username" value="mycelos" autocomplete="username" style="display:none">
       <input class="login-input" id="password" name="password" type="password"
-             placeholder="Password" autocomplete="current-password" autofocus required>
+             placeholder="Passwort" aria-label="Passwort" autocomplete="current-password" autofocus required>
       <label class="login-remember">
         <input type="checkbox" id="remember" checked>
-        <span id="remember-label">Remember this device</span>
+        <span id="remember-label">Auf diesem Gerät angemeldet bleiben</span>
       </label>
-      <button class="login-btn" id="submit" type="submit">Sign in</button>
+      <button class="login-btn" id="submit" type="submit">Anmelden</button>
       <p class="login-error" id="error"></p>
     </form>
   </div>

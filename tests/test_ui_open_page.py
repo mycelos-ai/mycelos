@@ -9,34 +9,33 @@ def test_target_connectors_no_anchor() -> None:
     result = execute_open_page({"target": "connectors"}, context={})
     actions = result["__suggested_actions__"]
     assert len(actions) == 1
-    assert actions[0]["url"] == "/pages/connectors.html"
+    assert actions[0]["url"] == "/pages/settings.html#connectors"
     assert actions[0]["kind"] == "link"
-    assert actions[0]["label"] == "Open Connectors page"
+    assert actions[0]["label"] == "MCP-Verbindungen öffnen"
 
 
 def test_target_connectors_with_anchor() -> None:
-    """Connectors page uses id='recipe-<id>' to avoid collisions, so the
-    tool prefixes the anchor automatically."""
+    """An old recipe anchor still reaches the current connector section."""
     result = execute_open_page(
         {"target": "connectors", "anchor": "gmail"}, context={}
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/connectors.html#recipe-gmail"
+    assert actions[0]["url"] == "/pages/settings.html#connectors"
 
 
 def test_target_connectors_anchor_already_prefixed() -> None:
-    """If the caller passed `recipe-gmail` we don't double-prefix."""
+    """A legacy recipe anchor cannot replace the settings section."""
     result = execute_open_page(
         {"target": "connectors", "anchor": "recipe-gmail"}, context={}
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/connectors.html#recipe-gmail"
+    assert actions[0]["url"] == "/pages/settings.html#connectors"
 
 
 def test_target_settings_models_default_anchor() -> None:
     result = execute_open_page({"target": "settings_models"}, context={})
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/ai-providers.html#models"
+    assert actions[0]["url"] == "/pages/settings.html#models"
 
 
 def test_target_settings_models_anchor_overrides_default() -> None:
@@ -45,7 +44,7 @@ def test_target_settings_models_anchor_overrides_default() -> None:
         context={},
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/ai-providers.html#provider-anthropic"
+    assert actions[0]["url"] == "/pages/settings.html#models"
 
 
 def test_unknown_target_returns_error_dict() -> None:
@@ -77,14 +76,13 @@ def test_anchor_strips_leading_hash() -> None:
 
 
 def test_settings_anchor_not_prefixed() -> None:
-    """Only the connectors target gets the recipe- prefix; other pages
-    use whatever anchor the caller passes verbatim."""
+    """Legacy provider anchors keep the canonical model section."""
     result = execute_open_page(
         {"target": "settings_models", "anchor": "provider-anthropic"},
         context={},
     )
     actions = result["__suggested_actions__"]
-    assert actions[0]["url"] == "/pages/ai-providers.html#provider-anthropic"
+    assert actions[0]["url"] == "/pages/settings.html#models"
 
 
 def test_all_four_targets_resolve() -> None:
@@ -103,3 +101,7 @@ def test_result_is_json_serializable() -> None:
     import json
     result = execute_open_page({"target": "connectors", "anchor": "telegram"}, context={})
     json.dumps(result)  # raises if not serializable
+
+
+def test_generations_reach_retained_system_page():
+    assert execute_open_page({"target": "settings_generations"}, {})["url"] == "/pages/system-advanced.html#generations"

@@ -246,7 +246,7 @@ async def oauth_callback_passthrough(
 
     if error:
         return RedirectResponse(
-            url=f"/connectors.html?oauth_error={error}",
+            url=f"/pages/connectors-advanced.html?oauth_error={error}",
             status_code=302,
         )
 
@@ -255,14 +255,14 @@ async def oauth_callback_passthrough(
     entry = states.pop(state, None)
     if entry is None:
         return RedirectResponse(
-            url="/connectors.html?oauth_error=invalid_state",
+            url="/pages/connectors-advanced.html?oauth_error=invalid_state",
             status_code=302,
         )
 
     proxy_client = getattr(mycelos, "proxy_client", None)
     if proxy_client is None:
         return RedirectResponse(
-            url="/connectors.html?oauth_error=proxy_unavailable",
+            url="/pages/connectors-advanced.html?oauth_error=proxy_unavailable",
             status_code=302,
         )
 
@@ -277,14 +277,14 @@ async def oauth_callback_passthrough(
         )
     except Exception as e:
         return RedirectResponse(
-            url=f"/connectors.html?oauth_error={str(e)[:120]}",
+            url=f"/pages/connectors-advanced.html?oauth_error={str(e)[:120]}",
             status_code=302,
         )
 
     if result.get("status") != "connected":
         err = (result.get("error") or "exchange_failed")[:120]
         return RedirectResponse(
-            url=f"/connectors.html?oauth_error={err}",
+            url=f"/pages/connectors-advanced.html?oauth_error={err}",
             status_code=302,
         )
 
@@ -339,7 +339,7 @@ async def oauth_callback_passthrough(
         logger.exception("connector registration failed for %s", entry["recipe_id"])
 
     return RedirectResponse(
-        url=f"/connectors.html?connected={entry['recipe_id']}",
+        url=f"/pages/connectors-advanced.html?connected={entry['recipe_id']}",
         status_code=302,
     )
 

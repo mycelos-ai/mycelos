@@ -253,6 +253,22 @@ def inbox_retry_run(routine_key: str, request: Request) -> Any:
     ``running`` is not that — so the answer is 500, not ``ok: true``. The
     row-is-the-deliverable rule applies to the close as it does to the open.
     """
+    # Local sources have their own persistent queue and run recorder. Resolve
+    # only a source owned by this user; never dispatch an arbitrary URL key.
+    mycelos = request.app.state.mycelos
+    user_id = resolve_user_id(request)
+    local_source = mycelos.storage.fetchone(
+        'SELECT id FROM local_sources WHERE id=? AND user_id=?', (routine_key, user_id))
+    if local_source:
+        from mycelos.knowledge.local_sources import LocalSourceService
+        try:
+            return LocalSourceService(mycelos, user_id).enqueue(local_source['id'])
+        except ValueError:
+            return JSONResponse({'error': 'Der Import kann derzeit nicht starten.'}, status_code=409)
+        except RuntimeError:
+            return JSONResponse({'error': 'Die Hintergrundverarbeitung ist nicht verfügbar.'}, status_code=503)
+
+    # For legacy connector sources, the allowlist runs before dispatch.
     # The allowlist runs first, before storage, dispatch, the recorder and
     # the audit payload — `routine_key` arrives from a URL path, and the
     # recorder documents itself as safe on the assumption that its only

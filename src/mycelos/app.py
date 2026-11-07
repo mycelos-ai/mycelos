@@ -108,19 +108,12 @@ class App:
                 proxy = self.credentials  # Triggers lazy init of EncryptedCredentialProxy
             except RuntimeError:
                 proxy = None  # No master key — credentials unavailable
-            # Build fallback chain from system defaults
-            fallbacks = []
-            try:
-                chain = self.model_registry.resolve_models(None, "execution")
-                fallbacks = [m for m in chain if m != default_model]
-            except Exception:
-                pass
             self._llm = LiteLLMBroker(
                 default_model=default_model,
                 credential_proxy=proxy,
                 storage=self.storage,
                 proxy_client=self._proxy_client,
-                fallback_models=fallbacks,
+                model_resolver=lambda purpose: self.model_registry.resolve_models(None, purpose),
                 eu_mode_check=self._eu_mode_enabled,
             )
         return self._llm

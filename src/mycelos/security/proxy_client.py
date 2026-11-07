@@ -183,7 +183,7 @@ class SecurityProxyClient:
     def llm_complete(self, model: str, messages: list[dict],
                      tools: list[dict] | None = None, stream: bool = False,
                      user_id: str = "default", agent_id: str | None = None,
-                     purpose: str = "chat"):
+                     purpose: str = "chat", generation_options: dict | None = None):
         """Request an LLM completion via the SecurityProxy.
 
         Streaming (stream=True) is reserved for Task 4; currently non-streaming only.
@@ -197,6 +197,7 @@ class SecurityProxyClient:
             "tools": tools,
             "stream": stream,
             "purpose": purpose,
+            "generation_options": generation_options or {},
         }, headers=extra_headers)
         return resp.json()
 

@@ -357,6 +357,13 @@ widgets:
   confirm_yes_no: "[J/n]"
   image_alt: "[Bild: {alt}]"
   progress: "{label}: {bar} {pct}%"
+  view:
+    sources: "Quellen: {sources}"
+    step: "Schritt {n}"
+    supports: "stützt"
+    contradicts: "widerspricht"
+    moved: "„{title}“ von {before} nach {after} verschoben"
+    added: "„{title}“ in {after} abgelegt"
 
 permission:
   title: "Berechtigung erforderlich"
@@ -898,3 +905,6 @@ embeddings:
     counts: "Vektor-Zeilen: {vectors} / Notizen: {notes}"
     present_true: "ja"
     present_false: "nein"
+
+collector:
+  operation_failed: "Der Sammler kann den Auftrag nicht ausführen. Prüfe die Verbindung und den Zugriff auf die lokale Quelle."

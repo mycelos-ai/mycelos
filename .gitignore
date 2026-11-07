@@ -90,3 +90,7 @@ docs/local-notes/
 /WhatsApp*.jpg
 /WhatsApp*.png
 /Screenshot*.png
+
+# Collector desktop build outputs
+/collector-desktop/src-tauri/target/
+/collector-desktop/dist/

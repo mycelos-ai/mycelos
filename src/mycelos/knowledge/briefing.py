@@ -191,7 +191,7 @@ def _build_synthesis_prompt(app: Any, facts: dict, user_id: str) -> str:
 
 
 def synthesize(app: Any, facts: dict, user_id: str = "default") -> str | None:
-    """One LLM call on the cheapest model. Returns None on any failure."""
+    """Use the configured background model chain. Returns None on any failure."""
     llm = getattr(app, "_llm", None) or getattr(app, "llm", None)
     if llm is None:
         return None
@@ -201,7 +201,7 @@ def synthesize(app: Any, facts: dict, user_id: str = "default") -> str | None:
                 {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": _build_synthesis_prompt(app, facts, user_id)},
             ],
-            model=app.resolve_cheapest_model(),
+            purpose="classification",
         )
         content = (getattr(response, "content", None) or "").strip()
         return content or None

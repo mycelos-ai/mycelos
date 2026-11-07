@@ -100,7 +100,7 @@ class KnowledgeIndexer:
         Returns the note's rowid.
         """
         existing = self._storage.fetchone(
-            "SELECT id FROM knowledge_notes WHERE path = ?", (path,)
+            "SELECT id, content_hash FROM knowledge_notes WHERE path = ?", (path,)
         )
         if existing:
             note_id = existing["id"]
@@ -115,6 +115,12 @@ class KnowledgeIndexer:
                  parent_path, reminder, remind_via, source_file,
                  created_by, source, path),
             )
+            if existing.get("content_hash") != content_hash:
+                self._storage.execute(
+                    "UPDATE source_articles SET relation_state='pending' WHERE note_id=? OR note_id IN "
+                    "(SELECT from_id FROM knowledge_relations WHERE to_id=? AND created_by='source-analysis')",
+                    (note_id, note_id),
+                )
             # Sync FTS5
             self._storage.execute(
                 "DELETE FROM knowledge_fts WHERE rowid = ?", (note_id,)
@@ -402,20 +408,34 @@ class KnowledgeIndexer:
         rows = self._storage.fetchall(
             "SELECT from_path FROM knowledge_links WHERE to_path = ?", (path,)
         )
-        return [row["from_path"] for row in rows]
+        return sorted({row["from_path"] for row in rows} | {r["from_path"] for r in self.article_relations(path, incoming=True)})
 
     def get_outgoing_links(self, path: str) -> list[str]:
         """Return all links a note points to."""
         rows = self._storage.fetchall(
             "SELECT to_path FROM knowledge_links WHERE from_path = ?", (path,)
         )
-        return [row["to_path"] for row in rows]
+        return sorted({row["to_path"] for row in rows} | {r["to_path"] for r in self.article_relations(path)})
+
+    def article_relations(self, path=None, incoming=False) -> list[dict]:
+        sql = """SELECT f.path AS from_path,t.path AS to_path,r.kind,r.reason
+                 FROM knowledge_relations r
+                 JOIN knowledge_notes f ON f.id=r.from_id
+                 JOIN knowledge_notes t ON t.id=r.to_id
+                 WHERE f.status='active' AND t.status='active'
+                 AND (r.from_hash IS NULL OR r.from_hash=f.content_hash)
+                 AND (r.to_hash IS NULL OR r.to_hash=t.content_hash)"""
+        args=()
+        if path is not None:
+            sql += ' AND '+('t.path' if incoming else 'f.path')+'=?'
+            args=(path,)
+        return self._storage.fetchall(sql, args)
 
     def list_links(self) -> list[dict]:
         """Return all links for graph rendering."""
         return self._storage.fetchall(
             "SELECT from_path, to_path, kind FROM knowledge_links ORDER BY from_path, to_path"
-        )
+        ) + self.article_relations()
 
 
 def _tags_string(tags_json: str) -> str:

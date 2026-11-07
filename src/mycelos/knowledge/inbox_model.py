@@ -623,12 +623,23 @@ class InboxModel:
                 continue
             outcome = _run_outcome(row.get("error"))
             title = _failed_run_title(routine_key, outcome)
+            why = _failed_run_why(routine_key, outcome, row.get("error"))
+            local_source = self._storage.fetchone(
+                'SELECT name,status FROM local_sources WHERE id=?', (routine_key,))
+            if local_source:
+                title = f"Import von „{local_source['name']}“ fehlgeschlagen"
+                why = 'Der Import konnte die Wissensaufbereitung nicht abschließen. Die Quellenansicht zeigt den aktuellen Fehler.'
+                if local_source['status'] in ('running', 'queued'):
+                    why = 'Ein neuer Import ist vorgemerkt oder läuft bereits. Das Ergebnis steht noch aus.'
+                elif outcome == _OUTCOME_UNKNOWN:
+                    title = f"Import von „{local_source['name']}“ nicht abgeschlossen"
+                    why = 'Der vorherige Import endete ohne bestätigtes Ergebnis. Du kannst ihn erneut starten.'
             entries.append(self._entry(
                 entry_id=f"run:{routine_key}",
                 kind="failed_run",
                 entry_class=CLASS_CONSEQUENCE,
                 title=title,
-                why=_failed_run_why(routine_key, outcome, row.get("error")),
+                why=why,
                 confidence=None,        # a failure is a fact, not a guess
                 actions=_actions_for("failed_run"),
                 source={

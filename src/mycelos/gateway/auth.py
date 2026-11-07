@@ -37,6 +37,7 @@ _DEVICES_KEY = "auth_devices"
 # page needs. Everything else is gated.
 _PUBLIC_PATHS = {"/api/health", "/login", "/api/auth/login", "/api/i18n"}
 _PUBLIC_PREFIXES = ("/shared/", "/assets/")
+_DEVICE_TRANSPORT_PATHS = {"/api/collector-transport/handshake", "/api/collector-transport/exchange"}
 
 _LOGIN_PAGE = Path(__file__).resolve().parent.parent / "frontend" / "pages" / "login.html"
 
@@ -191,7 +192,7 @@ def install_auth(api: FastAPI, password: str) -> None:
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             path = request.url.path
-            if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES):
+            if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES) or (request.method == "POST" and path in _DEVICE_TRANSPORT_PATHS):
                 return await call_next(request)
             token = request.cookies.get(SESSION_COOKIE)
             if sessions.validate(token):

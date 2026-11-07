@@ -608,6 +608,17 @@ def check_update_available(app: "App") -> dict[str, Any]:
     }
 
 
+def check_model_requests(app: "App") -> dict[str, Any]:
+    """Report recent failed model calls without making a model request."""
+    import json
+    rows = app.storage.fetchall("SELECT details FROM audit_events WHERE event_type='llm.request_failed' AND created_at >= datetime('now','-1 day') ORDER BY id DESC LIMIT 100")
+    models = sorted({json.loads(row['details']).get('model', '?') for row in rows})
+    return {'category': 'model_requests', 'status': 'warning' if rows else 'ok',
+            'details': (f"{len(rows)} fehlgeschlagene Modellaufrufe in den letzten 24 Stunden: {', '.join(models)}. "
+                        'Prüfe die Denkschritte und die Ersatzmodelle in den Modelleinstellungen. Das Protokoll zeigt den Modellwechsel.'
+                        if rows else 'Keine fehlgeschlagenen Modellaufrufe in den letzten 24 Stunden.')}
+
+
 def run_health_checks(
     app: "App", gateway_url: str | None = "http://localhost:9100"
 ) -> list[dict[str, Any]]:
@@ -626,6 +637,7 @@ def run_health_checks(
         check_sqlite_vec(app),
         check_embeddings(app),
         check_credentials(app),
+        check_model_requests(app),
         check_telegram(app),
         check_connectors(app),
         check_reminders(app),

@@ -1,12 +1,11 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos - Knowledge Base</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
   <script src="/shared/tailwind-config.js"></script>
@@ -16,7 +15,7 @@
   <script src="/shared/layout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/shared/mermaid.min.js"></script>
-  <script>mermaid.initialize({ startOnLoad: false, theme: 'dark' });</script>
+  <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
   <style>
@@ -131,6 +130,9 @@
       scrollbar-color: rgba(70, 72, 77, 0.4) transparent;
     }
   </style>
+<link rel="stylesheet" href="/shared/product-shell.css?v=1">
+<script defer src="/shared/notifications.js?v=1"></script>
+<style>.knowledge-panels{padding-top:84px}.knowledge-actions{position:relative}.knowledge-actions>summary{cursor:pointer;padding:4px 12px;font-size:22px;list-style:none}.knowledge-action-menu{position:absolute;right:0;top:100%;display:flex;gap:8px;background:white;border:1px solid #dce6e1;border-radius:10px;padding:12px;z-index:40;min-width:240px}@media(max-width:680px){.knowledge-panels{padding-top:72px}}</style>
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
@@ -146,196 +148,6 @@
 
     <!-- Header container (loaded by layout.js) -->
     <div id="header"></div>
-
-    <!-- Organizer Inbox — compact collapsible banner above the two-panel layout -->
-    <div x-data="organizerInbox()" x-init="load()"
-         x-show="hasItems() || busy"
-         x-cloak
-         class="flex-shrink-0 mt-3 md:mt-20 mx-4 md:mx-6">
-      <div class="rounded-lg border text-xs"
-           style="background: var(--surface-container, #1a1d24);
-                  border-color: rgba(106,214,255,0.25);">
-        <!-- Collapsed header — wraps on narrow screens so the action
-             buttons never overflow off the right edge. -->
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-1.5">
-          <button type="button" @click="expanded = !expanded"
-                  class="flex items-center gap-2 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
-            <span class="material-symbols-outlined text-sm"
-                  style="color:#6ad6ff"
-                  x-text="expanded ? 'expand_less' : 'expand_more'"></span>
-            <span class="font-semibold truncate" style="color:#6ad6ff"
-                  x-text="t('organizer.inbox_heading')"></span>
-            <span class="px-1.5 py-0.5 rounded text-[10px] flex-shrink-0"
-                  style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
-                  x-text="totalCount()"></span>
-          </button>
-          <!-- Action buttons only show when expanded — collapsed, the bar is
-               just a compact "N suggestions" badge that doesn't crowd the
-               knowledge view. -->
-          <button type="button" x-show="expanded" @click="acceptAll()" :disabled="busy"
-                  class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
-                  style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
-                  x-text="t('organizer.accept_all')"></button>
-          <button type="button" x-show="expanded" @click="runNow()" :disabled="busy"
-                  class="text-[10px] px-2 py-0.5 rounded flex-shrink-0"
-                  style="background: rgba(255,255,255,0.06); color: #cdd5e0;"
-                  x-text="busy ? '…' : t('organizer.run_now')"></button>
-          <button type="button" x-show="expanded" @click="sweepDuplicates()" :disabled="busy"
-                  class="px-2.5 py-1 rounded-lg text-[11px] font-label font-semibold uppercase tracking-wider flex-shrink-0
-                         bg-tertiary/10 text-tertiary hover:bg-tertiary/20 transition-colors flex items-center gap-1">
-            <span class="material-symbols-outlined text-xs align-middle">find_replace</span>
-            <span x-text="t('organizer.find_duplicates')"></span>
-          </button>
-        </div>
-
-        <!-- Expanded body — grouped by topic, scrollable -->
-        <div x-show="expanded" x-cloak
-             class="border-t overflow-y-auto px-3 py-2 space-y-3"
-             style="border-color: rgba(255,255,255,0.05); max-height: 40vh;">
-
-          <template x-for="group in topicGroups" :key="group.topic || '__links'">
-            <div>
-              <!-- Topic header with breadcrumb path -->
-              <div class="flex items-center gap-1.5 mb-1">
-                <span class="material-symbols-outlined text-xs"
-                      :style="group.is_new ? 'color:#6ad6ff' : 'color:#8b96aa'"
-                      x-text="group.topic ? 'folder' : 'link'"></span>
-                <span class="text-[11px] font-semibold"
-                      :style="group.is_new ? 'color:#6ad6ff' : 'color:#cdd5e0'"
-                      x-text="formatBreadcrumb(group)"></span>
-                <span x-show="group.is_new"
-                      class="text-[9px] px-1.5 py-0.5 rounded"
-                      style="background:rgba(106,214,255,0.15);color:#6ad6ff">new</span>
-                <span class="text-[10px]" style="color:#8b96aa"
-                      x-text="'(' + group.notes.length + ')'"></span>
-              </div>
-              <!-- Notes under this topic -->
-              <template x-for="s in group.notes" :key="s.id + '-' + s.note_path">
-                <div class="flex items-center justify-between py-0.5 gap-2 ml-4">
-                  <!-- Merge suggestion -->
-                  <template x-if="s.kind === 'merge'">
-                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                      <span class="material-symbols-outlined text-xs flex-shrink-0" style="color:#c678dd">merge</span>
-                      <button @click="$dispatch('mycelos:open-note', { path: s.note_path })"
-                              class="text-[11px] text-left hover:text-[var(--primary)] transition-colors truncate"
-                              style="color:#cdd5e0"
-                              :title="s.note_path"
-                              x-text="s.note_title || s.note_path.split('/').pop().replace(/-/g, ' ')"></button>
-                      <span class="text-[10px] flex-shrink-0" style="color:#8b96aa">+</span>
-                      <button @click="$dispatch('mycelos:open-note', { path: s.payload && s.payload.duplicate_path })"
-                              class="text-[11px] text-left hover:text-[var(--primary)] transition-colors truncate"
-                              style="color:#cdd5e0"
-                              :title="s.payload && s.payload.duplicate_path"
-                              x-text="s.payload && (s.payload.duplicate_path || '').split('/').pop().replace(/-/g, ' ')"></button>
-                      <span x-show="s.payload && s.payload.similarity"
-                            class="text-[9px] px-1.5 py-0.5 rounded flex-shrink-0"
-                            style="background:rgba(198,120,221,0.15);color:#c678dd"
-                            x-text="Math.round((s.payload.similarity || 0) * 100) + '%'"></span>
-                    </div>
-                  </template>
-                  <!-- Regular (move/link) suggestion -->
-                  <template x-if="s.kind !== 'merge'">
-                    <button @click="$dispatch('mycelos:open-note', { path: s.note_path })"
-                            class="truncate flex-1 min-w-0 text-[11px] text-left
-                                   hover:text-[var(--primary)] transition-colors"
-                            style="color:#cdd5e0"
-                            :title="s.note_path"
-                            x-text="s.note_title || s.note_path.split('/').pop().replace(/-/g, ' ')"></button>
-                  </template>
-                  <span class="flex gap-1 flex-shrink-0">
-                    <button @click="accept(s)" class="text-[10px] px-2 py-0.5 rounded"
-                            style="background: rgba(106,214,255,0.15); color: #6ad6ff;"
-                            x-text="t('organizer.accept')"></button>
-                    <button @click="dismiss(s)" class="text-[10px] px-2 py-0.5 rounded"
-                            style="background: rgba(255,255,255,0.08); color: #cdd5e0;"
-                            x-text="t('organizer.dismiss')"></button>
-                  </span>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
-
-    <script>
-      function organizerInbox() {
-        return {
-          topicGroups: [],
-          busy: false,
-          expanded: new URLSearchParams(window.location.search).get('inbox') === '1',
-          totalCount() {
-            return this.topicGroups.reduce((sum, g) => sum + g.notes.length, 0);
-          },
-          async load() {
-            try {
-              const resp = await fetch('/api/organizer/suggestions');
-              if (!resp.ok) return;
-              this.topicGroups = await resp.json();
-            } catch (e) { /* ignore */ }
-          },
-          hasItems() {
-            return this.topicGroups.some(g => g.notes && g.notes.length > 0);
-          },
-          formatBreadcrumb(group) {
-            if (!group.topic) return group.topic_name || 'Links';
-            // "topics/diverses/kaffee" → "Diverses / Kaffee"
-            return group.topic.replace(/^topics\//, '')
-              .split('/')
-              .map(s => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' '))
-              .join(' / ');
-          },
-          async accept(s) {
-            try {
-              if (!s._synthetic) {
-                await fetch(`/api/organizer/suggestions/${s.id}/accept`, { method: 'POST' });
-              }
-            } catch (e) { /* ignore */ }
-            await this.load();
-            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
-          },
-          async dismiss(s) {
-            try {
-              if (!s._synthetic) {
-                await fetch(`/api/organizer/suggestions/${s.id}/dismiss`, { method: 'POST' });
-              }
-            } catch (e) { /* ignore */ }
-            await this.load();
-            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
-          },
-          async acceptAll() {
-            this.busy = true;
-            try {
-              await fetch('/api/organizer/accept-all', { method: 'POST' });
-            } catch (e) { /* ignore */ }
-            this.busy = false;
-            await this.load();
-            window.dispatchEvent(new CustomEvent('mycelos:knowledge-changed'));
-          },
-          async runNow() {
-            this.busy = true;
-            try {
-              await fetch('/api/organizer/run', { method: 'POST' });
-            } catch (e) { /* ignore */ }
-            this.busy = false;
-            await this.load();
-          },
-          async loadSuggestions() {
-            await this.load();
-          },
-          async sweepDuplicates() {
-            try {
-              const res = await MycelosAPI.post('/api/organizer/sweep-duplicates');
-              if (res.duplicates_found > 0) {
-                await this.loadSuggestions();
-              }
-            } catch (e) {
-              console.warn('Sweep failed:', e.message);
-            }
-          },
-        };
-      }
-    </script>
 
     <!-- Smart Import: drag-drop overlay + modal -->
     <div x-data="smartImport()" x-init="init()"
@@ -465,7 +277,7 @@
     </script>
 
     <!-- Two-panel layout -->
-    <div class="flex-1 flex overflow-hidden pt-16">
+    <div class="knowledge-panels flex-1 flex overflow-hidden pt-16">
 
       <!-- Left panel: Note list. The right divider is desktop-only —
            on mobile this panel is the whole screen, no divider needed. -->
@@ -1020,7 +832,7 @@
                             :class="(selectedNote.priority || 0) > 0
                               ? (selectedNote.priority >= 3 ? 'bg-error/10 text-error' : (selectedNote.priority >= 2 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'))
                               : 'bg-surface-container text-on-surface-variant/50 hover:text-primary'"
-                            title="Set priority">
+                            title="Priorität festlegen">
                       <span class="material-symbols-outlined" style="font-size: 12px;">flag</span>
                       <span x-text="['none','low','medium','high'][selectedNote.priority || 0]"></span>
                     </button>
@@ -1045,7 +857,7 @@
                                  bg-primary/10 text-primary">
                       <span x-text="tag"></span>
                       <button @click="removeTag(idx)"
-                              class="ml-0.5 hover:text-error transition-colors" title="Remove tag">
+                              class="ml-0.5 hover:text-error transition-colors" title="Schlagwort entfernen">
                         <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
                       </button>
                     </span>
@@ -1054,7 +866,7 @@
                     <button x-show="!adding" @click="adding = true; $nextTick(() => $refs.tagInput.focus())"
                             class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-label
                                    bg-surface-container text-on-surface-variant/50 hover:text-primary transition-colors"
-                            title="Add tag">
+                            title="Schlagwort hinzufügen">
                       <span class="material-symbols-outlined" style="font-size: 10px;">add</span> tag
                     </button>
                     <input x-show="adding" x-ref="tagInput"
@@ -1088,13 +900,13 @@
               </button>
             </template>
 
-            <!-- Move to topic -->
+            <details class="knowledge-actions" x-show="selectedNote && !creatingNew && !editing"><summary aria-label="Weitere Aktionen">···</summary><div class="knowledge-action-menu">            <!-- Verschieben -->
             <template x-if="selectedNote && !creatingNew">
               <div class="relative" x-data="{ moveOpen: false }">
                 <button @click="moveOpen = !moveOpen"
                         class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
                                bg-surface-container text-on-surface-variant hover:text-primary transition-colors"
-                        title="Move to topic">
+                        title="Verschieben">
                   <span class="material-symbols-outlined text-sm">drive_file_move</span>
                 </button>
                 <div x-show="moveOpen" @click.outside="moveOpen = false" x-transition x-cloak
@@ -1119,11 +931,42 @@
               <button @click="reclassifyNote(selectedNote)"
                       class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
                              bg-surface-container text-on-surface-variant hover:text-tertiary transition-colors"
-                      title="Re-classify with AI">
+                      title="Mit Modell neu einordnen">
                 <span class="material-symbols-outlined text-sm">auto_fix_high</span>
               </button>
             </template>
 
+            <!-- Split note -->
+            <template x-if="selectedNote && !creatingNew && !editing">
+              <button @click="splitNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-tertiary hover:bg-tertiary/10 transition-colors"
+                      title="In Untereinträge teilen">
+                <span class="material-symbols-outlined text-lg">call_split</span>
+              </button>
+            </template>
+
+            <!-- Archive button (existing note) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="archiveNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-warning hover:bg-warning/10 transition-colors"
+                      title="Archivieren">
+                <span class="material-symbols-outlined text-lg">archive</span>
+              </button>
+            </template>
+
+            <!-- Delete button (existing note) -->
+            <template x-if="selectedNote && !creatingNew">
+              <button @click="deleteNote()"
+                      class="w-9 h-9 rounded-lg flex items-center justify-center
+                             text-on-surface-variant/40 hover:text-error hover:bg-error/10 transition-colors"
+                      :title="t('common.delete')"
+                      title="Delete note">
+                <span class="material-symbols-outlined text-lg">delete</span>
+              </button>
+            </template>
+</div></details>
             <!-- AI enhance dropdown -->
             <div x-show="editing || creatingNew" class="relative" x-data="{ aiOpen: false }">
               <button @click="aiOpen = !aiOpen"
@@ -1189,36 +1032,6 @@
               </button>
             </template>
 
-            <!-- Split note -->
-            <template x-if="selectedNote && !creatingNew && !editing">
-              <button @click="splitNote()"
-                      class="w-9 h-9 rounded-lg flex items-center justify-center
-                             text-on-surface-variant/40 hover:text-tertiary hover:bg-tertiary/10 transition-colors"
-                      title="Split into sub-notes">
-                <span class="material-symbols-outlined text-lg">call_split</span>
-              </button>
-            </template>
-
-            <!-- Archive button (existing note) -->
-            <template x-if="selectedNote && !creatingNew">
-              <button @click="archiveNote()"
-                      class="w-9 h-9 rounded-lg flex items-center justify-center
-                             text-on-surface-variant/40 hover:text-warning hover:bg-warning/10 transition-colors"
-                      title="Archive note">
-                <span class="material-symbols-outlined text-lg">archive</span>
-              </button>
-            </template>
-
-            <!-- Delete button (existing note) -->
-            <template x-if="selectedNote && !creatingNew">
-              <button @click="deleteNote()"
-                      class="w-9 h-9 rounded-lg flex items-center justify-center
-                             text-on-surface-variant/40 hover:text-error hover:bg-error/10 transition-colors"
-                      :title="t('common.delete')"
-                      title="Delete note">
-                <span class="material-symbols-outlined text-lg">delete</span>
-              </button>
-            </template>
           </div>
         </div>
 
@@ -2276,7 +2089,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Remove tag failed:', e.message);
+            console.warn('Schlagwort entfernen failed:', e.message);
           }
         },
 
@@ -2290,7 +2103,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Add tag failed:', e.message);
+            console.warn('Schlagwort hinzufügen failed:', e.message);
           }
         },
 
@@ -2303,7 +2116,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.priority = level;
           } catch (e) {
-            console.warn('Set priority failed:', e.message);
+            console.warn('Priorität festlegen failed:', e.message);
           }
         },
       };
