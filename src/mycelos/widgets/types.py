@@ -87,7 +87,35 @@ class ImageBlock:
 
 # --- Container ---
 
-Widget = TextBlock | Table | ChoiceBox | StatusCard | ProgressBar | CodeBlock | Confirm | ImageBlock
+@dataclass(frozen=True)
+class Ref:
+    """A note a knowledge view was built from."""
+
+    path: str
+    title: str = ""
+
+
+@dataclass(frozen=True)
+class KnowledgeView:
+    """A view from the Package 8 catalog (timeline, mind map, graph slice, ...).
+
+    Build instances through ``mycelos.widgets.views.make_view`` or
+    ``view_from_payload``: they validate ``data`` against the schema of
+    ``type`` and compute ``fallback_text`` deterministically. Never construct
+    one from model output directly.
+    """
+
+    type: str
+    title: str
+    reason: str
+    data: dict
+    refs: list[Ref] = field(default_factory=list)
+    alternatives: list[str] = field(default_factory=list)
+    fallback_text: str = ""
+    version: int = 1
+
+
+Widget = TextBlock | Table | ChoiceBox | StatusCard | ProgressBar | CodeBlock | Confirm | ImageBlock | KnowledgeView
 
 
 @dataclass(frozen=True)

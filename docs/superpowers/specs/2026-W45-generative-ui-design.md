@@ -51,8 +51,13 @@ The repository already has a channel-independent widget layer: `src/mycelos/widg
 with renderers for CLI, Telegram and JSON, and `ChatEvent(type="widget")` delivery to the web chat.
 **Package 8 extends that layer** instead of starting a second one.
 
-New knowledge views, each a frozen dataclass in `widgets/types.py` with a JSON form in
-`json_serializer.py`:
+New knowledge views. As built in slice 1: one frozen `KnowledgeView` dataclass in
+`widgets/types.py` (type, title, reason, data, refs, alternatives, fallback_text, version), with
+one strict Pydantic schema per view type in `widgets/views.py` (extra fields forbidden, size
+limits, approval actions from a fixed allow-list). `make_view` and `view_from_payload` are the only
+ways to build one; the text fallback is always recomputed from validated data, never taken from a
+payload. `tree_change` and `approval_card` are system views: they are never chosen for an answer
+and never accepted from a model hint.
 
 | View | Shown when | Data | Web rendering | Text fallback |
 |---|---|---|---|---|

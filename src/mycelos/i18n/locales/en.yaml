@@ -369,6 +369,13 @@ widgets:
   confirm_yes_no: "[Y/n]"
   image_alt: "[Image: {alt}]"
   progress: "{label}: {bar} {pct}%"
+  view:
+    sources: "Sources: {sources}"
+    step: "step {n}"
+    supports: "supports"
+    contradicts: "contradicts"
+    moved: 'moved "{title}" from {before} to {after}'
+    added: 'added "{title}" to {after}'
 
 # --- Permissions ---
 permission:

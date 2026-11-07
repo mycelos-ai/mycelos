@@ -12,6 +12,7 @@ from mycelos.widgets.types import (
     Compose,
     Confirm,
     ImageBlock,
+    KnowledgeView,
     ProgressBar,
     StatusCard,
     Table,
@@ -31,6 +32,10 @@ _TYPE_MAP: dict[type, str] = {
     Compose: "compose",
 }
 
+# Knowledge views carry their catalog type ("timeline", ...) on the wire.
+# They are not in _CLASS_MAP: widget_from_dict routes them through
+# views.view_from_payload, which validates and recomputes the fallback.
+
 # Reverse map
 _CLASS_MAP: dict[str, type] = {v: k for k, v in _TYPE_MAP.items()}
 
@@ -38,8 +43,13 @@ _CLASS_MAP: dict[str, type] = {v: k for k, v in _TYPE_MAP.items()}
 def widget_to_dict(widget: Any) -> dict[str, Any]:
     """Serialize a widget to a JSON-compatible dict."""
     type_name = _TYPE_MAP.get(type(widget))
-    if type_name is None:
+    if type_name is None and not isinstance(widget, KnowledgeView):
         raise ValueError(f"Unknown widget class: {type(widget)}")
+
+    if isinstance(widget, KnowledgeView):
+        from mycelos.widgets.views import view_to_dict
+
+        return view_to_dict(widget)
 
     if isinstance(widget, Compose):
         return {
@@ -64,6 +74,11 @@ def widget_from_dict(d: dict[str, Any]) -> Any:
     type_name = d.get("type")
     cls = _CLASS_MAP.get(type_name)  # type: ignore[arg-type]
     if cls is None:
+        from mycelos.widgets.views import VIEW_TYPES, view_from_payload
+
+        if type_name in VIEW_TYPES:
+            fallback = d.get("fallback_text") if isinstance(d.get("fallback_text"), str) else ""
+            return view_from_payload(d, fallback=fallback)
         raise ValueError(f"Unknown widget type: {type_name!r}")
 
     fields = {k: v for k, v in d.items() if k != "type"}
