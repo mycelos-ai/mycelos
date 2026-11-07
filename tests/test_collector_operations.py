@@ -13,6 +13,25 @@ from mycelos.collector.local import LocalCollector
 from tests.test_collector_client import connected, add_documents
 
 
+def _patch_client_sleep(monkeypatch, fake):
+    """Replace time.sleep for this test's thread only.
+
+    The collector client imports the time module, so patching its sleep
+    patches it process-wide. Background threads left by other tests (for
+    example the gateway restart watchdog) must keep sleeping for real and
+    must not show up in the recorded delays.
+    """
+    real_sleep = time.sleep
+    owner = threading.get_ident()
+
+    def sleep(delay):
+        if threading.get_ident() != owner:
+            return real_sleep(delay)
+        return fake(delay)
+
+    monkeypatch.setattr('mycelos.collector.client.time.sleep', sleep)
+
+
 def test_history_waits_for_receiving_ack_without_waiting_for_processing(connected, tmp_path):
     from mycelos.collector.intake import process_pending
     client, server, http, _ = connected
@@ -241,7 +260,7 @@ def test_offline_request_keeps_retry_delay_instead_of_busy_loop(tmp_path, monkey
         no_connection()
     monkeypatch.setattr(client, 'connect_websocket', no_connection)
     monkeypatch.setattr(client, 'connect_http', http_connection)
-    monkeypatch.setattr('mycelos.collector.client.time.sleep', lambda delay: sleeps.append(delay))
+    _patch_client_sleep(monkeypatch, sleeps.append)
     client.run()
     assert sum(sleeps) >= 3
     assert client.local.list_sources()[0]['sync_requested'] is True
@@ -262,7 +281,7 @@ def test_one_request_wakes_waiting_daemon_within_one_second(connected, tmp_path,
         if len(sleeps) == 1:
             client.local.request_sync(source['source_id'])
     monkeypatch.setattr(client, 'cycle', cycle)
-    monkeypatch.setattr('mycelos.collector.client.time.sleep', sleep)
+    _patch_client_sleep(monkeypatch, sleep)
     client.run()
     assert len(cycles) == 2
     assert cycles[1] - cycles[0] <= 1
