@@ -1,5 +1,10 @@
 # Home (Package 4a) — bar, today, tree, shell
 
+> **Direction change (2026-W45).** The conversation, not the graph, is now the home surface, and
+> answers render as views from a fixed catalog (timeline, mind map, graph slice, …). The daily
+> briefing becomes the first message of the day. See `2026-W45-generative-ui-design.md`. The rest
+> of this document (inbox, routines, sources, channels, provenance) still applies.
+
 Week 33 (2026). Spec for Package 4a of the Brain roadmap. Written for an external implementer:
 Stefan builds this with a tool of his choice on a branch in this repo; Claude reviews the branch.
 
