@@ -839,7 +839,13 @@ def create_proxy_app() -> FastAPI:
 
         return JSONResponse({
             "content": content,
-            "finish_reason": getattr(choice, "finish_reason", None),
+            # Only a plain string is safe to serialise; providers and test
+            # doubles may hand back other objects here.
+            "finish_reason": (
+                choice.finish_reason
+                if isinstance(getattr(choice, "finish_reason", None), str)
+                else None
+            ),
             "tool_calls": tool_calls,
             "usage": usage_dict,
             "model": req.model,

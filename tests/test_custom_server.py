@@ -18,7 +18,7 @@ def test_custom_provider_exists() -> None:
     assert "custom" in PROVIDERS
     p = PROVIDERS["custom"]
     assert p.requires_key is False
-    assert p.name == "Custom Server"
+    assert p.name == "Custom (OpenAI-kompatibel)"
 
 
 def test_custom_provider_has_no_env_var() -> None:
