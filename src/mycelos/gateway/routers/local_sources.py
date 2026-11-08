@@ -4,6 +4,7 @@ from pydantic import BaseModel, StrictInt
 
 from mycelos.gateway.routers._helpers import resolve_user_id
 from mycelos.knowledge.local_sources import LocalSourceService
+from mycelos.i18n import t as _t
 
 router = APIRouter(prefix="/api/local-sources")
 
@@ -84,6 +85,12 @@ def get(source_id: str, request: Request):
     return invoke(lambda: service(request).get(source_id))
 
 
+@router.get("/{source_id}/filing")
+def filing(source_id: str, request: Request):
+    """Attachments and rule of this source in the shared source model."""
+    return invoke(lambda: service(request).filing(source_id))
+
+
 @router.put("/{source_id}")
 def update(source_id: str, body: SourceUpdate, request: Request):
     return invoke(lambda: service(request).update(source_id, **body.model_dump()))
@@ -94,7 +101,7 @@ def ingest(source_id: str, request: Request):
     try:
         return invoke(lambda: service(request).enqueue(source_id))
     except RuntimeError as error:
-        raise HTTPException(503, "Die Hintergrundverarbeitung ist nicht verfügbar") from error
+        raise HTTPException(503, _t("sources.background_unavailable")) from error
 
 
 @router.post("/{source_id}/probe")
@@ -137,7 +144,7 @@ def check_source(source_id: str, request: Request):
     try:
         return invoke(lambda: enqueue_source_check(request.app.state.mycelos, source_id, resolve_user_id(request)))
     except RuntimeError as error:
-        raise HTTPException(503, "Die Quellenprüfung ist nicht verfügbar") from error
+        raise HTTPException(503, _t("sources.check_unavailable")) from error
 
 
 @router.get('/{source_id}/articles')

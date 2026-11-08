@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>myCelos · Einstellungen</title>
+<title>myCelos</title>
 <link rel="icon" href="/assets/favicon.png">
+<script src="/shared/i18n.js"></script>
 <script defer src="/shared/local-sources.js?v=source-results-2"></script>
 <script defer src="/shared/model-settings.js"></script>
 <script defer src="/shared/telegram-settings.js"></script>
@@ -14,24 +15,26 @@
 <script defer src="/shared/notifications.js?v=1"></script>
 </head>
 <body>
-<header><a href="/pages/chat.html"><strong>myCelos</strong></a><div style="display:flex;align-items:center;gap:12px"><mycelos-notifications></mycelos-notifications><a href="/pages/chat.html">Zurück zum Gespräch</a></div></header>
-<main><h1>Einstellungen</h1><div class="layout"><nav aria-label="Einstellungsbereiche">
-<a href="#sources">Quellen</a><a href="/pages/collectors.html">Sammler</a><a href="#models">Modelle</a><a href="#telegram">Telegram</a><a href="#connectors">MCP-Verbindungen</a><a href="#more">Weitere</a>
-</nav><div><section class="panel" id="panel" aria-label="Einstellungen"></section><footer><div id="runtime" style="margin-bottom:16px"></div></footer></div></div></main>
+<header><a href="/pages/chat.html"><strong>myCelos</strong></a><div style="display:flex;align-items:center;gap:12px"><mycelos-notifications></mycelos-notifications><a href="/pages/chat.html" data-i18n="settings_page.back_to_chat"></a></div></header>
+<main><h1 data-i18n="settings_page.title"></h1><div class="layout"><nav data-i18n-aria="settings_page.sections">
+<a href="#sources" data-i18n="settings_page.nav_sources"></a><a href="/pages/collectors.html" data-i18n="settings_page.nav_collectors"></a><a href="#models" data-i18n="settings_page.nav_models"></a><a href="#telegram">Telegram</a><a href="#connectors" data-i18n="settings_page.nav_connectors"></a><a href="#more" data-i18n="settings_page.nav_more"></a>
+</nav><div><section class="panel" id="panel" data-i18n-aria="settings_page.title"></section><footer><div id="runtime" style="margin-bottom:16px"></div></footer></div></div></main>
 <script>
+const T=(key,vars)=>(typeof globalThis.t==='function'?globalThis.t('settings_page.'+key,vars):key);
+document.title='myCelos · '+T('title');
 const sections={sources:'mycelos-sources',models:'mycelos-models',telegram:'mycelos-telegram',connectors:'mycelos-connectors',more:'div'};
-function showSection(){const key=location.hash.slice(1) in sections?location.hash.slice(1):'sources';document.querySelectorAll('nav a').forEach(a=>{if(a.hash==='#'+key)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const element=document.createElement(sections[key]);element.setAttribute('embedded','');if(key==='more')element.innerHTML='<h2>Weitere Einstellungen</h2><p><a href="/pages/workflows.html">Routinen</a> – Regelmäßige Abläufe und ihre Ergebnisse.</p><p><a href="/pages/account-settings.html">Sprache</a></p><p><a href="/pages/doctor.html">Systemprüfung</a></p><details><summary>Erweitert</summary><p><a href="/pages/system-advanced.html">System und Konfigurationsverlauf</a></p><p><a href="/pages/agents.html">Agenten verwalten</a></p><p><a href="/pages/connectors-advanced.html">Erweiterte Verbindungsverwaltung</a></p></details><p><a href="/pages/docs.html">Hilfe</a> · <a href="/pages/about.html">Über myCelos</a></p>';document.getElementById('panel').replaceChildren(element);}
+function showSection(){const key=location.hash.slice(1) in sections?location.hash.slice(1):'sources';document.querySelectorAll('nav a').forEach(a=>{if(a.hash==='#'+key)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});const element=document.createElement(sections[key]);element.setAttribute('embedded','');if(key==='more'){element.innerHTML='<h2 data-i18n="settings_page.more_title"></h2><p><a href="/pages/workflows.html" data-i18n="settings_page.routines"></a> – <span data-i18n="settings_page.routines_hint"></span></p><p><a href="/pages/account-settings.html" data-i18n="settings_page.language"></a></p><p><a href="/pages/doctor.html" data-i18n="settings_page.doctor"></a></p><details><summary data-i18n="settings_page.advanced"></summary><p><a href="/pages/system-advanced.html" data-i18n="settings_page.system_history"></a></p><p><a href="/pages/agents.html" data-i18n="settings_page.agents"></a></p><p><a href="/pages/connectors-advanced.html" data-i18n="settings_page.connectors_advanced"></a></p></details><p><a href="/pages/docs.html" data-i18n="settings_page.help"></a> · <a href="/pages/about.html" data-i18n="settings_page.about"></a></p>';if(window.applyTranslations)window.applyTranslations(element);}document.getElementById('panel').replaceChildren(element);}
 window.addEventListener('hashchange',showSection);showSection();
 async function runtimeStatus(){
   try{
     const response=await fetch('/api/health');if(!response.ok)return;
     const health=await response.json();const runtime=document.getElementById('runtime');
-    if(health.scheduler){runtime.textContent='Hintergrundautomatik aktiv';return;}
-    runtime.innerHTML='<details><summary>Hintergrundautomatik pausiert</summary><p>Geplante Routinen verwenden deine gewählten Modelle. Dabei können Kosten entstehen. Die Quellenprüfung läuft getrennt und nutzt kein Sprachmodell.</p><button type="button" id="start-automation">Automatik starten</button><p id="runtime-error" role="alert"></p></details>';
+    if(health.scheduler){runtime.textContent=T('automation_active');return;}
+    runtime.innerHTML='<details><summary data-i18n="settings_page.automation_paused"></summary><p data-i18n="settings_page.automation_hint"></p><button type="button" id="start-automation" data-i18n="settings_page.automation_start"></button><p id="runtime-error" role="alert"></p></details>';if(window.applyTranslations)window.applyTranslations(runtime);
     document.getElementById('start-automation').onclick=async event=>{
-      const button=event.target;button.disabled=true;button.textContent='Startet …';
+      const button=event.target;button.disabled=true;button.textContent=T('automation_starting');
       try{const result=await fetch('/api/system/scheduler/start',{method:'POST'});if(!result.ok)throw new Error();await runtimeStatus();}
-      catch{document.getElementById('runtime-error').textContent='Die Automatik konnte nicht starten. Bitte erneut versuchen.';button.disabled=false;button.textContent='Automatik starten';}
+      catch{document.getElementById('runtime-error').textContent=T('automation_error');button.disabled=false;button.textContent=T('automation_start');}
     };
   }catch{}
 }

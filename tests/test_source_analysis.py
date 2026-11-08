@@ -24,6 +24,6 @@ def test_empty_model_result_is_not_accepted():
     class Broker:
         def complete(self, *args, **kwargs):
             return SimpleNamespace(content="")
-    with pytest.raises(ValueError, match="Leere"):
+    with pytest.raises(ValueError, match="Empty"):
         summarize_unit(SimpleNamespace(llm=Broker()), SourceUnit("s", "X", "text", ()),
                        {"model": "test", "purpose": ""})

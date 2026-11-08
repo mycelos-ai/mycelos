@@ -401,7 +401,7 @@
                 <a x-show="msg.count > msg.entries.length" href="/pages/inbox.html" class="text-xs underline mt-2 inline-block" x-text="t('briefing.open_inbox')"></a>
               </div>
             </template>
-            <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view" @mycelos-view-action="viewAction($event)"></mycelos-view></div></template>
+            <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view; if (msg.state) restoreProposal($el, msg.state)" @mycelos-view-action="viewAction($event)"></mycelos-view></div></template>
             <template x-if="msg.role === 'knowledge'"><div><mycelos-knowledge :view="msg.view || 'tree'"></mycelos-knowledge></div></template>
             <template x-if="msg.role === 'local-sources'">
               <div class="w-full mb-4"><mycelos-sources :view="msg.sourceView || 'list'" :source-id="msg.sourceId || ''"></mycelos-sources></div>
@@ -1293,15 +1293,19 @@
           try {
             const data = await MycelosAPI.get('/api/sessions/' + this.activeSessionId + '/messages');
             const msgs = data.messages || [];
+            // Views and approval cards come back in place (role 'view').
             this.messages = msgs
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .map(m => ({
-                role: m.role,
-                content: m.content || '',
-                agent: m.metadata?.agent || 'Mycelos',
-                citations: Array.isArray(m.metadata?.citations) ? m.metadata.citations : [],
-                type: '',
-              }));
+              .filter(m => m.role === 'user' || m.role === 'assistant'
+                || (m.role === 'view' && m.view && window.MycelosView && window.MycelosView.TYPES.includes(m.view.type)))
+              .map(m => (m.role === 'view'
+                ? { role: 'view', view: m.view, state: m.state || null }
+                : {
+                  role: m.role,
+                  content: m.content || '',
+                  agent: m.metadata?.agent || 'Mycelos',
+                  citations: Array.isArray(m.metadata?.citations) ? m.metadata.citations : [],
+                  type: '',
+                }));
             this.$store.chat.messageCount = this.messages.length;
             this.scrollToBottom();
           } catch (e) {
@@ -1359,6 +1363,32 @@
           this.resolveProposal(event.target, proposal, detail.action);
         },
 
+        /** The outcome line of a resolved approval card. */
+        proposalMessage(data) {
+          const fill = (key, params) => Object.entries(params || {}).reduce(
+            (text, [k, v]) => text.split('{' + k + '}').join(String(v)), t(key));
+          const status = (data && data.status) || '';
+          if (status === 'moved') return fill(data.rule ? 'views.result.moved_rule' : 'views.result.moved', { count: data.moved || 1 });
+          if (status === 'attached') return t(data.import === 'not_started' ? 'views.result.attached_not_started' : 'views.result.attached');
+          return t('views.result.' + status);
+        },
+
+        /**
+         * A reloaded approval card shows where it stands: answered cards stay
+         * locked on their action, expired or unknown ones cannot be pressed.
+         */
+        restoreProposal(el, state) {
+          const apply = () => {
+            if (typeof el.actionResult !== 'function') return;
+            if (state.status === 'resolved') {
+              el.actionResult({ ok: true, action: state.action, message: this.proposalMessage(state.result || {}) });
+            } else if (state.status !== 'pending') {
+              el.actionResult({ ok: false, locked: true, message: t('views.error.expired') });
+            }
+          };
+          if (typeof el.actionResult === 'function') apply(); else customElements.whenDefined('mycelos-view').then(apply);
+        },
+
         async resolveProposal(el, proposal, action) {
           const fill = (key, params) => Object.entries(params || {}).reduce(
             (text, [k, v]) => text.split('{' + k + '}').join(String(v)), t(key));
@@ -1380,11 +1410,7 @@
             return;
           }
           const status = data.status;
-          let message;
-          if (status === 'moved') message = fill(data.rule ? 'views.result.moved_rule' : 'views.result.moved', { count: data.moved || 1 });
-          else if (status === 'attached') message = t(data.import === 'not_started' ? 'views.result.attached_not_started' : 'views.result.attached');
-          else message = t('views.result.' + status);
-          el.actionResult({ ok: true, message });
+          el.actionResult({ ok: true, message: this.proposalMessage(data) });
           if (status === 'ask_where') {
             this.input = fill('views.prefill_elsewhere', { title: data.title || '' });
             this.$nextTick(() => {

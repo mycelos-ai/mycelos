@@ -17,6 +17,64 @@
   the idea of the old home omnibox, which used its own search results as
   stand-in sources (`home.js` is no longer loaded by any page).
 
+### Views and approval cards survive a reload; Telegram gets buttons
+
+- **Reloading a conversation shows its views again.** Timelines,
+  connections, filing previews and approval cards are kept in the session
+  file next to the messages and come back in the same place. The model never
+  sees them when a conversation resumes.
+- **Cards show where they stand.** A reloaded approval card that was already
+  answered stays locked with its outcome ("Moved 1 note(s)."); an expired or
+  foreign card cannot be pressed; an open card still works.
+- **Approval cards on Telegram.** Saving, correcting and attaching show the
+  card with one button per action. A press resolves the same stored proposal
+  as the web chat, only for allowlisted users and only for their own cards,
+  and the message then shows the outcome without buttons. Saving a note on
+  Telegram now shows the "where it went" card too.
+### Collector leftovers: local sources in the shared source model
+
+- **Local sources are part of the config history.** Adding, editing, pausing
+  and resuming a local source is audited (`local_source.*`, without the root
+  path) and creates a config generation. Config snapshots now also carry the
+  folder attachments and rules of every source (connectors, local sources,
+  chat), so a rollback restores where each source files. Older snapshots
+  leave these tables untouched.
+- **One API for every source.** `/api/sources/{key}` accepts `local:<id>`
+  (only for your own local source, refused otherwise) and `chat` next to
+  connector ids. `GET /api/local-sources/{id}/filing` shows a local source's
+  attached folders and rule.
+- **Articles in your language.** Source analysis and relation reasons follow
+  the language preference instead of always writing German; the relation
+  prompt is now English like every other prompt.
+- **Relations versus links documented.** The spec states the split between
+  structural `knowledge_links` and typed evidence `knowledge_relations`.
+- **The source card shows where a source files.** Each local source card
+  lists its attached folders and its rule, so an attachment approved in the
+  chat is visible in the settings too.
+
+### Collector leftovers: German strings through the locale files
+
+- **The web UI speaks your language again.** The source card, Telegram
+  settings, MCP connections, collector page, knowledge map, notifications,
+  settings, help and about pages took hardcoded German from the collector
+  work. Their strings now live in `en.yaml` and `de.yaml` (about 390 keys
+  under `web.*`), and `i18n.js` sets the page language.
+- **`t()` in the browser takes placeholders.** `t('key', {count: 3})` fills
+  `{count}` like the Python `t()`. Static pages use `data-i18n`,
+  `data-i18n-aria` and `data-i18n-title`.
+- **Server messages of local sources are translated.** Errors and status
+  texts of local sources, source checks, readers, the Obsidian import and the
+  inbox entries for failed imports use `t("sources.*")`; validation messages
+  that go back to the model stay English. The `mycelos source` CLI help is
+  English.
+- **Tests.** A test fails on hardcoded German in the converted files and on
+  missing keys in either language; browser tests load the real German
+  translations.
+- **Not yet converted:** the chat page, `<mycelos-view>`, the model settings
+  and the provider endpoints (other changes are in flight there), and the
+  step descriptions of the source workflow templates, which are stored with
+  every source.
+
 ### Capture, attach and correct with approval cards (Package 8, slice 5)
 
 - **Saving something in the chat shows where it went.** When Mycelos saves a
