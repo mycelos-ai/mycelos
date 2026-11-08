@@ -2,6 +2,37 @@
 
 ## Week 45 (2026)
 
+### Knowledge views in the web chat (Package 8, slice 2)
+
+- **Answers can now be shown as views, not just text.** A new
+  `<mycelos-view>` web component renders all nine catalog views: timeline,
+  mind map, graph slice, comparison, flow, counts, evidence, filing change
+  and approval card. Each view shows its title, the reason it was chosen,
+  its sources as chips and a switcher to the other valid views; "Text"
+  always shows the deterministic text fallback.
+- **Works offline.** Mind maps and flows are drawn with the Mermaid copy
+  served from `/shared`; the component loads it itself when a page has not.
+  No view needs a CDN.
+- **Note content stays data.** Every text field is escaped, Mermaid labels
+  are built from entity-encoded text and rendered with `securityLevel:
+  strict`. A browser test checks that markup and Mermaid directives inside
+  note content are shown as text and never run.
+- **Try it with `/demo view`.** It sends one sample of every view to the
+  chat. Widget events with a catalog type render through the new component.
+- Labels are translated (`web.views.*` in English and German).
+
+### Tests no longer hang CI
+
+- **SecurityProxy children are stopped after each test.** With
+  `MYCELOS_MASTER_KEY` set, as in CI, every test that built a gateway forked
+  a SecurityProxy child that was never stopped. A full run kept about 200 of
+  them alive until the runner ran out of memory, and the Tests workflow on
+  `main` hung until GitHub cancelled it after six hours. A test fixture now
+  stops every proxy a test started.
+- **Browser tests run last.** pytest grouped the Playwright tests near the
+  start of the run, and the event loop that Playwright keeps running made
+  every later async test fail. They now run after all other tests.
+
 ### Documentation archive from agentpark
 
 - **Original planning docs preserved.** The design specs, implementation

@@ -1136,13 +1136,23 @@ def _find_task(app: Any, task_id_prefix: str) -> dict | None:
 def _handle_demo(app: Any, args: list[str]) -> str | list:
     """Feature demonstrations."""
     if not args:
-        return "**Usage:** `/demo widget` — Show all widget types"
+        return "**Usage:** `/demo widget` — Show all widget types\n`/demo view` — Show all knowledge views"
 
     sub = args[0].lower()
     if sub == "widget":
         return _demo_widgets()
+    if sub == "view":
+        return _demo_views()
 
-    return f"Unknown demo: `{sub}`. Available: `widget`"
+    return f"Unknown demo: `{sub}`. Available: `widget`, `view`"
+
+
+def _demo_views() -> list:
+    """Demonstrate every knowledge view type, one widget event per view."""
+    from mycelos.chat.events import widget_event
+    from mycelos.widgets.views_demo import demo_views
+
+    return [widget_event(view) for view in demo_views()]
 
 
 def _demo_widgets() -> list:

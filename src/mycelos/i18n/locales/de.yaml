@@ -454,6 +454,30 @@ telegram:
 
 # --- Web UI Uebersetzungen ---
 web:
+  views:
+    why: "Warum diese Ansicht"
+    switch_to: "Anzeigen als"
+    sources: "Quellen"
+    supports: "stützt"
+    contradicts: "widerspricht"
+    neutral: "neutral"
+    new: "neu"
+    confidence: "Sicherheit"
+    diagram_failed: "Das Diagramm konnte nicht gezeichnet werden. Hier ist die Textfassung."
+    loading_diagram: "Diagramm wird gezeichnet …"
+    action_sent: "Gesendet"
+    unknown: "Diese Ansicht kann hier nicht angezeigt werden. Hier ist die Textfassung."
+    type:
+      timeline: "Zeitleiste"
+      mind_map: "Mindmap"
+      graph_slice: "Zusammenhänge"
+      comparison: "Vergleich"
+      flow: "Ablauf"
+      counts: "Mengen"
+      evidence: "Belege"
+      tree_change: "Ablage"
+      approval_card: "Freigabe"
+      text: "Text"
   login:
     subtitle: "Gib dein Passwort ein, um fortzufahren"
     submit: "Anmelden"
