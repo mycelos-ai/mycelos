@@ -90,7 +90,8 @@ def attach_source_check_runtime(api, app):
     def stop_source_checks():
         consumer = getattr(api.state, 'source_check_consumer', None)
         if consumer:
-            consumer.stop()
+            from mycelos.scheduler.huey_app import stop_consumer
+            stop_consumer(consumer, getattr(api.state, 'source_check_thread', None))
         thread = getattr(api.state, 'source_check_thread', None)
         if thread:
             thread.join(timeout=5)
