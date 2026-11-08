@@ -1260,6 +1260,14 @@ class ChatService:
                             "type": widget_type, **result,
                         }}))
 
+                    # Knowledge views (knowledge_view, Package 8 slice 4): the
+                    # view goes to the client as a widget; the model only keeps
+                    # the text summary and sources in its tool result.
+                    if isinstance(result, dict) and "__view__" in result:
+                        view_payload = result.pop("__view__")
+                        if isinstance(view_payload, dict):
+                            events.append(ChatEvent(type="widget", data={"widget": view_payload}))
+
                     # Suggested-actions tools (e.g. ui_open_page) — emit a
                     # suggested-actions event so the frontend renders the
                     # clickable card. Tool result still goes back to the LLM

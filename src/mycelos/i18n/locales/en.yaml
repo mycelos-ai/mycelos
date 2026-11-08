@@ -385,6 +385,46 @@ briefing:
     rediscovered_reason: "An older note from {year} that relates to something that arrived today"
     related: "related"
 
+# --- Ask: answers as knowledge views (Package 8, slice 4) ---
+ask:
+  intent:
+    status: "Question about a status or a course of events"
+    overview: "Question for an overview"
+    relation: "Question about how things relate"
+    compare: "Question comparing options"
+    process: "Question about a process"
+    count: "Question about quantities"
+    verify: "Question whether something holds"
+  reason:
+    timeline: "{dated} of {total} sources carry a date, shown in order"
+    mind_map: "The sources fall into {groups} topics"
+    graph_slice: "{count} notes and topics are linked to each other"
+    counts: "{total} sources counted per {by}"
+    comparison: "{options} options judged by the same criteria"
+    flow: "A sequence of {steps} steps"
+    evidence: "{claims} statements from sources that support or contradict each other"
+  view:
+    no_topic: "No topic"
+    root: "Overview"
+    by:
+      topic: "topic"
+      type: "kind of note"
+      month: "month"
+    type:
+      note: "Notes"
+      task: "Tasks"
+      document: "Documents"
+      reminder: "Reminders"
+    relation:
+      wikilink: "links to"
+      parent: "in"
+      related: "related"
+      supports: "supports"
+      contradicts: "contradicts"
+      extends: "extends"
+      duplicate: "duplicate of"
+      merged_from: "merged from"
+
 widgets:
   confirm_yes_no: "[Y/n]"
   image_alt: "[Image: {alt}]"

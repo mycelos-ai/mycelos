@@ -373,6 +373,46 @@ briefing:
     rediscovered_reason: "Eine ältere Notiz von {year}, die zu etwas Neuem von heute passt"
     related: "verwandt"
 
+# --- Ask: Antworten als Wissensansichten (Paket 8, Scheibe 4) ---
+ask:
+  intent:
+    status: "Frage nach einem Stand oder Verlauf"
+    overview: "Frage nach einem Überblick"
+    relation: "Frage nach Zusammenhängen"
+    compare: "Frage nach einem Vergleich"
+    process: "Frage nach einem Ablauf"
+    count: "Frage nach Mengen"
+    verify: "Frage, ob etwas stimmt"
+  reason:
+    timeline: "{dated} von {total} Quellen haben ein Datum, in zeitlicher Reihenfolge"
+    mind_map: "Die Quellen verteilen sich auf {groups} Themen"
+    graph_slice: "{count} Notizen und Themen sind miteinander verbunden"
+    counts: "{total} Quellen, gezählt nach {by}"
+    comparison: "{options} Optionen nach denselben Kriterien"
+    flow: "Eine Abfolge aus {steps} Schritten"
+    evidence: "{claims} Aussagen aus Quellen, die sich stützen oder widersprechen"
+  view:
+    no_topic: "Ohne Thema"
+    root: "Überblick"
+    by:
+      topic: "Thema"
+      type: "Art der Notiz"
+      month: "Monat"
+    type:
+      note: "Notizen"
+      task: "Aufgaben"
+      document: "Dokumente"
+      reminder: "Erinnerungen"
+    relation:
+      wikilink: "verweist auf"
+      parent: "in"
+      related: "verwandt"
+      supports: "stützt"
+      contradicts: "widerspricht"
+      extends: "ergänzt"
+      duplicate: "Dublette von"
+      merged_from: "zusammengeführt aus"
+
 widgets:
   confirm_yes_no: "[J/n]"
   image_alt: "[Bild: {alt}]"

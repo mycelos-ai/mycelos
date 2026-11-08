@@ -21,6 +21,16 @@ def test_demo_view_emits_every_catalog_type_once():
         assert payload["reason"]
 
 
+def test_demo_views_carry_their_alternatives_as_variants():
+    payloads = {e.data["widget"]["type"]: e.data["widget"] for e in _handle_demo(None, ["view"])}
+    timeline = payloads["timeline"]
+    assert timeline["variants"]["graph_slice"]["type"] == "graph_slice"
+    for payload in payloads.values():
+        for name, variant in payload.get("variants", {}).items():
+            assert name in payload["alternatives"]
+            assert variant["type"] == name and "variants" not in variant
+
+
 def test_demo_usage_and_completion_list_view():
     assert "/demo view" in _handle_demo(None, [])
     assert "view" in _handle_demo(None, ["nope"])

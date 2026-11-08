@@ -1148,11 +1148,25 @@ def _handle_demo(app: Any, args: list[str]) -> str | list:
 
 
 def _demo_views() -> list:
-    """Demonstrate every knowledge view type, one widget event per view."""
+    """Demonstrate every knowledge view type, one widget event per view.
+
+    Each view carries the other demo views named in its alternatives as
+    prebuilt ``variants``, so the switcher works as it does for answers.
+    """
     from mycelos.chat.events import widget_event
+    from mycelos.widgets.views import view_to_dict
     from mycelos.widgets.views_demo import demo_views
 
-    return [widget_event(view) for view in demo_views()]
+    views = demo_views()
+    by_type = {v.type: view_to_dict(v) for v in views}
+    events = []
+    for view in views:
+        event = widget_event(view)
+        variants = {a: by_type[a] for a in view.alternatives if a in by_type}
+        if variants:
+            event.data["widget"]["variants"] = variants
+        events.append(event)
+    return events
 
 
 def _demo_widgets() -> list:

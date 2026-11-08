@@ -250,3 +250,40 @@ def test_unknown_or_broken_views_fall_back_to_text(page, view_server):
     assert json.loads(page.evaluate("JSON.stringify(document.getElementById('v1').view.data)")) == {
         "items": [{"label": "x", "value": 2}],
     }
+
+
+def test_switcher_shows_prebuilt_variants(page, view_server):
+    """Slice 4: an answer carries its alternatives; switching needs no round trip."""
+    from playwright.sync_api import expect
+
+    timeline, graph = demo_views()[0], demo_views()[2]
+    payload = view_to_dict(timeline)
+    payload["variants"] = {"graph_slice": view_to_dict(graph)}
+    _, errors = _open(page, view_server, [])
+    page.evaluate("p => window.show([p])", payload)
+
+    _shadow(page, 0, ".switch button").filter(has_text="Connections").click()
+    expect(_shadow(page, 0, "section.view")).to_have_attribute("data-type", "graph_slice")
+    assert page.evaluate("window.events")[-1]["detail"] == {
+        "from": "timeline", "to": "graph_slice", "view": "timeline",
+    }
+    # The variant's own switcher leads back to the first view and to text.
+    expect(_shadow(page, 0, ".switch button")).to_have_text(["Connections", "Timeline", "Text"])
+    _shadow(page, 0, ".switch button").filter(has_text="Text").click()
+    expect(_shadow(page, 0, "pre.text")).to_contain_text("Müller GmbH")
+    _shadow(page, 0, ".switch button").filter(has_text="Timeline").click()
+    expect(_shadow(page, 0, "ol.timeline")).to_be_visible()
+
+    # A host that handles the switch keeps control.
+    page.evaluate("window.handle = {'mycelos-view-switch': true}")
+    _shadow(page, 0, ".switch button").filter(has_text="Connections").click()
+    expect(_shadow(page, 0, "section.view")).to_have_attribute("data-type", "timeline")
+
+    # Variants with a mismatched type are ignored (text fallback instead).
+    bad = view_to_dict(timeline)
+    bad["variants"] = {"graph_slice": {**view_to_dict(graph), "type": "approval_card"}}
+    page.evaluate("window.handle = {}")
+    page.evaluate("p => window.show([p])", bad)
+    _shadow(page, 0, ".switch button").filter(has_text="Connections").click()
+    expect(_shadow(page, 0, "pre.text")).to_be_visible()
+    assert errors == []
