@@ -23,7 +23,7 @@ def test_sections_produce_separate_articles_with_exact_evidence():
 
 def test_invented_evidence_is_rejected():
     app=SimpleNamespace(llm=SimpleNamespace(complete=lambda *a,**k:SimpleNamespace(content=json.dumps({'articles':[{'title':'X','content':'X','quotes':['invented']}]}))))
-    with pytest.raises(ValueError,match='beleg'):
+    with pytest.raises(ValueError,match='source quote'):
         extract_articles(app,SourceUnit('x','X','actual',()),{'model':'custom/fast','purpose':''})
 
 
@@ -38,7 +38,7 @@ def test_markdown_emphasis_in_quote_keeps_original_evidence():
 
 def test_format_matching_does_not_accept_changed_words():
     app=SimpleNamespace(llm=SimpleNamespace(complete=lambda *a,**k:SimpleNamespace(content=json.dumps({'articles':[{'title':'X','content':'X','quotes':['React Renderer speichert den Status.']}]}))))
-    with pytest.raises(ValueError,match='beleg'):
+    with pytest.raises(ValueError,match='source quote'):
         extract_articles(app,SourceUnit('x','X','**React Renderer** zeigt den Status.',()),{'model':'custom/cheap','purpose':''})
 
 
@@ -64,14 +64,14 @@ def test_mixed_markdown_formatting_keeps_exact_original_evidence(quote):
 ])
 def test_format_tolerance_never_accepts_changed_facts(quote):
     from mycelos.knowledge.source_analysis import locate_quote
-    with pytest.raises(ValueError, match='Quellenbeleg'):
+    with pytest.raises(ValueError, match='source quote'):
         locate_quote('**Der Server** nutzt `127.0.0.1` und `MYCELOS_PASSWORD`.', quote)
 
 
 @pytest.mark.parametrize(('raw', 'finish_reason', 'expected'), [
-    ('', 'stop', 'leere Antwort'),
-    ('{"articles":[]}', 'length', 'Ausgabelimit'),
-    ('not json', 'stop', 'gültiges JSON'),
+    ('', 'stop', 'empty answer'),
+    ('{"articles":[]}', 'length', 'output limit'),
+    ('not json', 'stop', 'valid JSON'),
 ])
 def test_response_failure_has_safe_specific_message(raw, finish_reason, expected):
     from mycelos.knowledge.source_analysis import SourceAnalysisError
@@ -112,7 +112,7 @@ def test_invalid_quote_gets_one_correction_with_original_section():
     assert len(calls) == 2
     assert json.loads(calls[1][1]['content'])['text'] == 'actual source text'
     assert calls[1][-2]['role'] == 'assistant'
-    assert 'Quellenbeleg' in calls[1][-1]['content']
+    assert 'source quote' in calls[1][-1]['content']
     assert result['articles'][0]['evidence'][0]['quote'] == 'actual source text'
 
 
@@ -122,7 +122,7 @@ def test_invalid_quote_correction_is_bounded():
         calls.append(1)
         return SimpleNamespace(content=json.dumps({'articles':[{'title':'X','content':'Finding','quotes':['invented']}]}))
     app = SimpleNamespace(llm=SimpleNamespace(complete=complete))
-    with pytest.raises(ValueError, match='beleg'):
+    with pytest.raises(ValueError, match='source quote'):
         extract_articles(app, SourceUnit('x','X','actual',()), {'model':'custom/cheap','purpose':''})
     assert len(calls) == 2
 
@@ -145,5 +145,5 @@ def test_additional_valid_articles_and_quotes_do_not_abort_import():
 def test_excessive_quote_count_has_accurate_error():
     raw = json.dumps({'articles':[{'title':'X','content':'X','quotes':['actual']*33}]})
     app = SimpleNamespace(llm=SimpleNamespace(complete=lambda *a,**k:SimpleNamespace(content=raw)))
-    with pytest.raises(ValueError, match='höchstens 32'):
+    with pytest.raises(ValueError, match='at most 32'):
         extract_articles(app,SourceUnit('x','X','actual',()),{'model':'custom/cheap','purpose':''})

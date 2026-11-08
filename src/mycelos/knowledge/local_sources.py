@@ -17,6 +17,7 @@ from mycelos.knowledge.source_lock import source_lock
 from mycelos.knowledge import source_articles
 from mycelos.knowledge.source_workflows import resolve_workflow, inspect_source, source_root
 from mycelos.scheduler.run_recorder import CAUSES, RunRecorder
+from mycelos.i18n import t as _t
 
 
 def _hash(text: str) -> str:
@@ -38,28 +39,28 @@ class LocalSourceService:
     @staticmethod
     def _validate_options(name, mode, model):
         if not name.strip():
-            raise ValueError("Ein Name ist erforderlich")
+            raise ValueError(_t("sources.name_required"))
         if mode not in {"analyze", "direct"}:
-            raise ValueError("Unbekannte Verarbeitung")
+            raise ValueError(_t("sources.unknown_mode"))
         if mode == "analyze" and not (model or "").strip():
-            raise ValueError("Für die Analyse ist eine konkrete Modellkennung erforderlich")
+            raise ValueError(_t("sources.model_required"))
 
     @staticmethod
     def _validate_root(kind, root):
         if not root.strip():
-            raise ValueError("Bitte einen Quellenordner angeben")
+            raise ValueError(_t("sources.root_required"))
         raw_path = Path(root).expanduser()
         if raw_path.is_symlink():
-            raise ValueError("Bitte eine Quelle ohne Dateiverknüpfung auswählen")
+            raise ValueError(_t("sources.no_symlink"))
         path = raw_path.resolve()
         if kind not in {"file", "folder", "git", "mercurial", "codex", "claude", "obsidian"}:
-            raise ValueError("Unbekannte Quellenart")
+            raise ValueError(_t("sources.unknown_kind"))
         if kind == "file":
             if not path.is_file():
-                raise ValueError("Bitte eine verfügbare Datei auswählen")
+                raise ValueError(_t("sources.file_unavailable"))
             return source_root(kind, path)
         if not path.is_dir() or path == Path(path.anchor) or path == Path.home():
-            raise ValueError("Bitte einen gezielten verfügbaren Quellenordner auswählen")
+            raise ValueError(_t("sources.folder_too_broad"))
         return source_root(kind, path)
 
     def add(self, name: str, kind: str, root: str, purpose: str = "",
@@ -87,7 +88,7 @@ class LocalSourceService:
                 "WHERE id=? AND user_id=? AND status NOT IN ('running','queued')",
                 (name.strip(), purpose, mode, model, json.dumps(workflow, ensure_ascii=False), source_id, self.user_id))
             if not result.rowcount:
-                raise ValueError("Bitte den laufenden Import abwarten")
+                raise ValueError(_t("sources.wait_for_import"))
         self._changed("local_source.updated", source_id, {"mode": mode},
                       f"Local source {source_id} updated", "local_source_update")
         return self.get(source_id)
@@ -100,7 +101,7 @@ class LocalSourceService:
         result = self.db.fetchone("SELECT * FROM local_sources WHERE id=? AND user_id=?",
                                   (source_id, self.user_id))
         if not result:
-            raise ValueError("Quelle nicht gefunden")
+            raise ValueError(_t("sources.not_found"))
         return self._decode_source(result)
 
     def _decode_source(self, source):
@@ -124,7 +125,7 @@ class LocalSourceService:
         cursor = self.db.execute("UPDATE local_sources SET status=? WHERE id=? AND status!='running'",
                                  ("paused" if paused else "ready", source_id))
         if not cursor.rowcount:
-            raise ValueError("Die Quelle läuft bereits")
+            raise ValueError(_t("sources.already_running"))
         self._changed("local_source.paused" if paused else "local_source.resumed", source_id, {},
                       f"Local source {source_id} {'paused' if paused else 'resumed'}",
                       "local_source_pause")
@@ -161,7 +162,7 @@ class LocalSourceService:
     @staticmethod
     def require_local(source):
         if source['root'].startswith('collector://'):
-            raise ValueError('Diese Quelle benötigt den Sammler')
+            raise ValueError(_t("sources.needs_collector"))
 
     def _preview(self, source, limit):
         self.require_local(source)
@@ -174,7 +175,7 @@ class LocalSourceService:
         self.require_local(source)
         task = getattr(self.app, "local_source_task", None)
         if task is None:
-            raise RuntimeError("Die Hintergrundverarbeitung ist nicht verfügbar")
+            raise RuntimeError(_t("sources.background_unavailable"))
         try:
             with source_lock(self.app.data_dir, source_id):
                 self._recover_locked(source_id)
@@ -186,7 +187,7 @@ class LocalSourceService:
                     "UPDATE local_sources SET status='queued',error=NULL,import_request_id=? WHERE id=? AND status IN ('ready','error')",
                     (request_id, source_id))
                 if not claimed.rowcount:
-                    raise ValueError("Die Quelle ist pausiert")
+                    raise ValueError(_t("sources.paused"))
         except ValueError:
             if self.get(source_id)["status"] == "running":
                 return {"source_id": source_id, "status": "running"}
@@ -195,7 +196,7 @@ class LocalSourceService:
             task(source_id, self.user_id, request_id)
         except Exception:
             self.db.execute("UPDATE local_sources SET status='error',import_request_id=NULL,error=? WHERE id=?",
-                            ("Die Einreihung ist fehlgeschlagen", source_id))
+                            (_t("sources.enqueue_failed"), source_id))
             raise
         return {"source_id": source_id, "status": "queued"}
 
@@ -250,7 +251,7 @@ class LocalSourceService:
                 (source_id,)):
             recorder.fail(run["id"], CAUSES["source_failed"])
         self.db.execute("UPDATE local_sources SET status='error',import_request_id=NULL,error=? WHERE id=?",
-                        ("Vorherige Verarbeitung wurde unterbrochen", source_id))
+                        (_t("sources.interrupted"), source_id))
 
     def _ingest_locked(self, source_id: str, units=None, complete_inventory=True, removed=(), check=None) -> dict:
         source = self.get(source_id)
@@ -258,7 +259,7 @@ class LocalSourceService:
             "UPDATE local_sources SET status='running',error=NULL WHERE id=? AND status IN ('ready','error','queued')",
             (source_id,))
         if not claimed.rowcount:
-            raise ValueError("Die Quelle ist pausiert oder läuft bereits")
+            raise ValueError(_t("sources.paused_or_running"))
         recorder = RunRecorder(self.db)
         run_id = None
         seen_run = uuid4().hex
@@ -276,7 +277,7 @@ class LocalSourceService:
                 if check:
                     check()
                 if unit.external_id in seen_ids:
-                    raise ValueError("Mehrere Protokolle mit derselben Gesprächskennung")
+                    raise ValueError(_t("sources.duplicate_session"))
                 seen_ids.add(unit.external_id)
                 fingerprint = _hash(unit.content)
                 old = self.db.fetchone(
@@ -293,14 +294,14 @@ class LocalSourceService:
                             from .obsidian import persist_metadata
                             persist_metadata(self.db, source_id, unit)
                     continue
-                self.db.execute("UPDATE workflow_runs SET current_step=? WHERE id=?", ("Artikel extrahieren", run_id))
+                self.db.execute("UPDATE workflow_runs SET current_step=? WHERE id=?", (_t("sources.step_extract"), run_id))
                 existing = self._version(fingerprint, recipe)
                 if check:
                     check()
                 summary = existing["summary"] if existing else (
                     unit.content if source["mode"] == "direct" else self.summarize(unit, source))
                 if not isinstance(summary, str) or not summary.strip():
-                    raise ValueError("Die Analyse lieferte keinen Inhalt")
+                    raise ValueError(_t("sources.analysis_empty"))
                 with source_articles.file_changes(), self.db.transaction():
                     # Recheck after analysis: another source may have imported it meanwhile.
                     existing = self._version(fingerprint, recipe)
@@ -370,7 +371,7 @@ class LocalSourceService:
                 from .obsidian import materialize_links
                 counts['relations'] += materialize_links(self.app, source_id)
             # Finish extraction for all units before comparing their articles.
-            self.db.execute("UPDATE workflow_runs SET current_step=? WHERE id=?", ("Querverbindungen prüfen", run_id))
+            self.db.execute("UPDATE workflow_runs SET current_step=? WHERE id=?", (_t("sources.step_relations"), run_id))
             for version in self.db.fetchall("SELECT DISTINCT version_id FROM local_source_items WHERE source_id=? AND available=1", (source_id,)):
                 counts["relations"] += source_articles.link_pending(self.app, version["version_id"], source["model"])
             self.db.execute("UPDATE local_sources SET status='ready',import_request_id=NULL,last_run=CURRENT_TIMESTAMP WHERE id=?",
@@ -379,7 +380,7 @@ class LocalSourceService:
             return {"source_id": source_id, "run_id": run_id, **counts}
         except Exception as error:
             from .source_analysis import SourceAnalysisError
-            message = str(error) if isinstance(error, SourceAnalysisError) else "Import fehlgeschlagen. Quelle und Modell prüfen."
+            message = str(error) if isinstance(error, SourceAnalysisError) else _t("sources.import_failed")
             self.db.execute("UPDATE local_sources SET status='error',import_request_id=NULL,error=? WHERE id=?",
                             (message, source_id))
             if run_id:

@@ -12,6 +12,7 @@ from fnmatch import fnmatchcase
 from functools import lru_cache
 import os
 from pathlib import Path
+from mycelos.i18n import t as _t
 
 KINDS = ('file', 'folder', 'git', 'mercurial', 'codex', 'claude', 'obsidian')
 EXCLUDED = {'.git', '.hg', 'node_modules', 'vendor', '.venv', 'venv', '__pycache__',
@@ -50,48 +51,48 @@ def templates() -> list[dict]:
 
 def resolve_workflow(kind: str, root: Path, workflow=None) -> dict:
     if kind not in KINDS:
-        raise ValueError('Unbekannte Quellenart')
+        raise ValueError(_t("sources.unknown_kind"))
     base = next(item for item in templates() if item['kind'] == kind)
     if workflow is None:
         return base
     if not isinstance(workflow, dict) or set(workflow) - set(base):
-        raise ValueError('Ungültiger Quellenworkflow')
+        raise ValueError(_t("sources.invalid_workflow"))
     result = {**base, **deepcopy(workflow)}
     if result['template_id'] != base['template_id'] or type(result['version']) is not int or result['version'] != 1:
-        raise ValueError('Unbekannte Workflow-Vorlage oder Version')
+        raise ValueError(_t("sources.unknown_template"))
     if result['steps'] != base['steps']:
-        raise ValueError('Die festen Schritte der Workflow-Vorlage dürfen sich nicht ändern')
+        raise ValueError(_t("sources.fixed_steps"))
     if result['kind'] != kind or type(result['project_documents_only']) is not bool:
-        raise ValueError('Workflow passt nicht zur Quellenart')
+        raise ValueError(_t("sources.workflow_kind"))
     if not isinstance(result['description'], str) or len(result['description']) > 2000:
-        raise ValueError('Ungültige Workflow-Beschreibung')
+        raise ValueError(_t("sources.invalid_description"))
     for field in ('include', 'exclude'):
         rules = result[field]
         if not isinstance(rules, list) or len(rules) > 100:
-            raise ValueError('Dateiregeln benötigen eine Liste mit höchstens 100 Mustern')
+            raise ValueError(_t("sources.rules_list"))
         for rule in rules:
             if (not isinstance(rule, str) or not rule.strip() or len(rule) > 256
                     or rule.startswith(('/', '~')) or '\\' in rule or ':' in rule
                     or any(ord(char) < 32 for char in rule)
                     or any(part in {'..', '.'} for part in rule.split('/'))):
-                raise ValueError('Dateiregeln benötigen relative Pfadmuster ohne ..')
+                raise ValueError(_t("sources.rules_relative"))
     return result
 
 
 def source_root(kind: str, root: Path) -> Path:
     root = Path(root).expanduser()
     if root.is_symlink():
-        raise ValueError('Verknüpfungen sind keine zulässige Quelle')
+        raise ValueError(_t("sources.symlink_not_allowed"))
     root = root.resolve()
     if kind == 'file':
         if not root.is_file():
-            raise ValueError('Die Quelldatei ist nicht verfügbar')
+            raise ValueError(_t("sources.source_file_unavailable"))
     elif not root.is_dir():
-        raise ValueError('Der Quellenordner ist nicht verfügbar')
+        raise ValueError(_t("sources.source_folder_unavailable"))
     if kind in {'git', 'mercurial'}:
         marker = root / ('.git' if kind == 'git' else '.hg')
         if marker.is_symlink() or not marker.exists():
-            raise ValueError('Der Projektordner enthält keinen passenden Git- oder Mercurial-Marker')
+            raise ValueError(_t("sources.no_vcs_marker"))
     return root
 
 
@@ -170,7 +171,7 @@ def selected_paths(kind: str, root: Path, workflow: dict, state: dict | None = N
                     or rel.parts[0].lower() in {'docs', 'specs', 'specifications'}):
                 continue
         if check_size and path.stat().st_size > MAX_FILE_BYTES:
-            raise ValueError(f'Datei zu groß: {path}')
+            raise ValueError(_t("sources.file_too_large", path=path))
         yield path, project
 
 

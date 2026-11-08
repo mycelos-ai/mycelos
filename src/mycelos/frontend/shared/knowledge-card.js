@@ -1,9 +1,11 @@
 /* Shared knowledge view. Reads existing knowledge; never starts an LLM call. */
 (() => {
+ // Strings come from web.knowledge_card in the locale files (loaded by i18n.js).
+ const T = (key, vars) => (typeof globalThis.t === 'function' ? globalThis.t('knowledge_card.' + key, vars) : key);
  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  async function request(path, method='GET', body) {
   const response = await fetch('/api/knowledge/'+path,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
-  if (!response.ok) throw new Error('Die Aktion ist fehlgeschlagen. Bitte erneut versuchen.');
+  if (!response.ok) throw new Error(T('error_action'));
   return response.json();
  }
  class KnowledgeCard extends HTMLElement {
@@ -76,20 +78,20 @@
     .tools{display:flex;gap:8px;align-items:center}details{margin-top:16px}summary{cursor:pointer;color:#176366}
     select{display:block;max-width:100%;margin:12px 0;padding:8px;border:1px solid #9ab9ad;border-radius:6px}
     @media(max-width:600px){.view{padding:16px}.expanded{inset:8px}.items{grid-template-columns:1fr 1fr}.node{padding:8px;font-size:14px}}
-   </style><section class="view ${this.expanded?'expanded':''}" aria-label="Wissensstruktur" ${this.expanded?'role="dialog" aria-modal="true"':''}>
-    <header><h3>${esc(this.current?.title || (recent?'Zuletzt geändert':'Mein Wissen'))}</h3><div class="tools">
-     <button data-action="zoom" aria-label="${this.expanded?'Verkleinerte Ansicht':'Vergrößerte Ansicht'}" title="${this.expanded?'Verkleinern':'Vergrößern'}">${this.expanded?'↙':'⤢'}</button>
+   </style><section class="view ${this.expanded?'expanded':''}" aria-label="${esc(T('label'))}" ${this.expanded?'role="dialog" aria-modal="true"':''}>
+    <header><h3>${esc(this.current?.title || (recent?T('recent'):T('my_knowledge')))}</h3><div class="tools">
+     <button data-action="zoom" aria-label="${esc(this.expanded?T('view_small'):T('view_large'))}" title="${esc(this.expanded?T('shrink'):T('enlarge'))}">${this.expanded?'↙':'⤢'}</button>
     </div></header>
-    ${this.error?'<p class="error" role="alert">'+esc(this.error)+'</p><button data-action="reload">Erneut versuchen</button>':''}
-    ${this.loading?'<p role="status">Wissen wird geladen …</p>':`
-      ${this.current?`<div class="up"><button data-select="${esc(parent?.id||'')}">↑ ${esc(parent?.title||'Mein Wissen')}</button><span class="depth" aria-label="Ebene ${path.length}">${path.map(()=>'<i></i>').join('')}</span></div>`:''}
+    ${this.error?'<p class="error" role="alert">'+esc(this.error)+'</p><button data-action="reload">'+esc(T('retry'))+'</button>':''}
+    ${this.loading?`<p role="status">${T('loading')}</p>`:`
+      ${this.current?`<div class="up"><button data-select="${esc(parent?.id||'')}">↑ ${esc(parent?.title||T('my_knowledge'))}</button><span class="depth" aria-label="${esc(T('level', {level: path.length}))}">${path.map(()=>'<i></i>').join('')}</span></div>`:''}
       <div class="items">${items.map(n=>this.item(n)).join('')}</div>
-      ${!items.length&&!this.current?'<p class="hint">Hier erscheint dein Wissen nach dem ersten Import.</p>':''}
-      ${content?(this.current?.type==='topic'?'<details><summary>Inhalt</summary><div class="preview">'+esc(content)+'</div></details>':'<div class="preview">'+esc(content)+'</div>'):''}
-      ${this.current?`<details><summary>Aktionen</summary><p><a href="/pages/knowledge.html?note=${encodeURIComponent(this.current.id)}">Bearbeiten</a></p><button data-action="move">Verschieben</button></details>`:''}
-      ${this.moving?`<label>Unterordnen unter<select aria-label="Zielthema"><option value="">Mein Wissen</option>${this.nodes.filter(n=>n.type==='topic'&&n.id!==this.current.id&&!this.isDescendant(n,this.current.id)).map(n=>'<option value="'+esc(n.id)+'" '+(n.id===this.current.parent_path?'selected':'')+'>'+esc(n.title)+' · '+esc(n.id)+'</option>').join('')}</select></label><button data-action="save-move">Verschieben bestätigen</button>`:''}
-      ${connections.length?`<details><summary>${connections.length} Querverbindungen</summary><div class="items">${connections.map(e=>{const n=this.node(e.source===this.current.id?e.target:e.source);return n?this.item(n):'';}).join('')}</div></details>`:''}
-      ${this.nodes.length>=5000?'<p class="hint">Die Karte zeigt bis zu 5.000 Einträge.</p>':''}
+      ${!items.length&&!this.current?`<p class="hint">${T('empty')}</p>`:''}
+      ${content?(this.current?.type==='topic'?'<details><summary>'+esc(T('content'))+'</summary><div class="preview">'+esc(content)+'</div></details>':'<div class="preview">'+esc(content)+'</div>'):''}
+      ${this.current?`<details><summary>${T('actions')}</summary><p><a href="/pages/knowledge.html?note=${encodeURIComponent(this.current.id)}">${T('edit')}</a></p><button data-action="move">${T('move')}</button></details>`:''}
+      ${this.moving?`<label>${T('move_under')}<select aria-label="${esc(T('target_topic'))}"><option value="">${T('my_knowledge')}</option>${this.nodes.filter(n=>n.type==='topic'&&n.id!==this.current.id&&!this.isDescendant(n,this.current.id)).map(n=>'<option value="'+esc(n.id)+'" '+(n.id===this.current.parent_path?'selected':'')+'>'+esc(n.title)+' · '+esc(n.id)+'</option>').join('')}</select></label><button data-action="save-move">${T('confirm_move')}</button>`:''}
+      ${connections.length?`<details><summary>${esc(T('connections', {count: connections.length}))}</summary><div class="items">${connections.map(e=>{const n=this.node(e.source===this.current.id?e.target:e.source);return n?this.item(n):'';}).join('')}</div></details>`:''}
+      ${this.nodes.length>=5000?`<p class="hint">${T('limit')}</p>`:''}
     `}
    </section>`;
   }

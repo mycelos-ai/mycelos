@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -832,7 +832,7 @@
                             :class="(selectedNote.priority || 0) > 0
                               ? (selectedNote.priority >= 3 ? 'bg-error/10 text-error' : (selectedNote.priority >= 2 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'))
                               : 'bg-surface-container text-on-surface-variant/50 hover:text-primary'"
-                            title="Priorität festlegen">
+                            :title="t('knowledge_page.set_priority')">
                       <span class="material-symbols-outlined" style="font-size: 12px;">flag</span>
                       <span x-text="['none','low','medium','high'][selectedNote.priority || 0]"></span>
                     </button>
@@ -857,7 +857,7 @@
                                  bg-primary/10 text-primary">
                       <span x-text="tag"></span>
                       <button @click="removeTag(idx)"
-                              class="ml-0.5 hover:text-error transition-colors" title="Schlagwort entfernen">
+                              class="ml-0.5 hover:text-error transition-colors" :title="t('knowledge_page.remove_tag')">
                         <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
                       </button>
                     </span>
@@ -866,7 +866,7 @@
                     <button x-show="!adding" @click="adding = true; $nextTick(() => $refs.tagInput.focus())"
                             class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-label
                                    bg-surface-container text-on-surface-variant/50 hover:text-primary transition-colors"
-                            title="Schlagwort hinzufügen">
+                            :title="t('knowledge_page.add_tag')">
                       <span class="material-symbols-outlined" style="font-size: 10px;">add</span> tag
                     </button>
                     <input x-show="adding" x-ref="tagInput"
@@ -931,7 +931,7 @@
               <button @click="reclassifyNote(selectedNote)"
                       class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
                              bg-surface-container text-on-surface-variant hover:text-tertiary transition-colors"
-                      title="Mit Modell neu einordnen">
+                      :title="t('knowledge_page.reclassify')">
                 <span class="material-symbols-outlined text-sm">auto_fix_high</span>
               </button>
             </template>
@@ -941,7 +941,7 @@
               <button @click="splitNote()"
                       class="w-9 h-9 rounded-lg flex items-center justify-center
                              text-on-surface-variant/40 hover:text-tertiary hover:bg-tertiary/10 transition-colors"
-                      title="In Untereinträge teilen">
+                      :title="t('knowledge_page.split')">
                 <span class="material-symbols-outlined text-lg">call_split</span>
               </button>
             </template>
@@ -2089,7 +2089,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Schlagwort entfernen failed:', e.message);
+            console.warn('Remove tag failed:', e.message);
           }
         },
 
@@ -2103,7 +2103,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Schlagwort hinzufügen failed:', e.message);
+            console.warn('Add tag failed:', e.message);
           }
         },
 
@@ -2116,7 +2116,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.priority = level;
           } catch (e) {
-            console.warn('Priorität festlegen failed:', e.message);
+            console.warn('Set priority failed:', e.message);
           }
         },
       };
