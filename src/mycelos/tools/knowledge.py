@@ -258,6 +258,27 @@ def execute_note_write(args: dict, context: dict) -> Any:
 
     result = {"path": path, "status": "created"}
 
+    # Package 8, slice 5: a capture in the chat shows where the note went,
+    # with accept / elsewhere / make a task. Imports and workflows (no chat
+    # service in the context, or an explicit source) stay silent.
+    # Telegram has no buttons for the card, so it stays a plain confirmation.
+    if (context.get("chat_service") is not None and "source" not in args
+            and context.get("channel") != "telegram"):
+        try:
+            from mycelos.knowledge.proposals import capture_card
+            card = capture_card(app, path, user_id=context.get("user_id") or "default",
+                                session_id=context.get("session_id"))
+        except Exception:
+            card = None
+        if card:
+            result["__view__"] = card
+            result["filed_in"] = card["data"]["changes"][0]["after"]
+            result["message"] = (
+                "The user sees a card with where the note went and buttons to "
+                "accept, file it elsewhere or make it a task. Confirm in one short "
+                "sentence; do not repeat the card."
+            )
+
     # Absolute remind_at wins when set — the LLM has already done the
     # timezone math using the user's zone from System Environment.
     if remind_at_arg:

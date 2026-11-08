@@ -19,7 +19,7 @@ from mycelos.knowledge.source_attachment import (
     needs_confirmation,
     permitted_paths,
 )
-from mycelos.knowledge.source_attachment import SourceAttachmentService
+from mycelos.knowledge.source_attachment import SourceAttachmentService, source_key
 from mycelos.prompts import PromptLoader
 from mycelos.knowledge.organizer import (
     Classification,
@@ -135,14 +135,9 @@ class KnowledgeOrganizerHandler:
         # chat capture) keep the full tree, and a source with no
         # attachments configured is unscoped rather than blocked.
         def _source_of(note: dict) -> str | None:
-            raw = note.get("source")
-            if not raw:
-                return None
-            try:
-                data = json.loads(raw) if isinstance(raw, str) else raw
-            except Exception:
-                return None
-            return data.get("connector") if isinstance(data, dict) else None
+            # Connector id, ``local:<id>`` for local sources, ``chat`` for
+            # chat captures (knowledge.source_attachment.source_key).
+            return source_key(note.get("source"))
 
         groups: dict[str | None, list[dict]] = {}
         for note in to_classify:
@@ -155,12 +150,12 @@ class KnowledgeOrganizerHandler:
                 self._attachments.list_attachments(source_id, user_id)
                 if source_id else []
             )
-            if attachments:
-                scoped_topics = permitted_paths(attachments, topics)
-                rule = self._attachments.get_rule(source_id, user_id)
-            else:
-                scoped_topics = topics
-                rule = ""
+            scoped_topics = (
+                permitted_paths(attachments, topics) if attachments else topics
+            )
+            # A rule applies with or without attachments: corrections taught
+            # from the chat (slice 5) write rules for unscoped sources too.
+            rule = self._attachments.get_rule(source_id, user_id) if source_id else ""
             for note in notes:
                 scope_by_note[note["path"]] = attachments
             for start in range(0, len(notes), CLASSIFY_BATCH_SIZE):

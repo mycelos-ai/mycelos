@@ -413,6 +413,43 @@ ask:
       duplicate: "Dublette von"
       merged_from: "zusammengeführt aus"
 
+# --- Ablage-Änderungen als Freigabekarten (Paket 8, Scheibe 5) ---
+filing:
+  inbox: "Eingang (wird später einsortiert)"
+  action:
+    accept: "Passt so"
+    elsewhere: "Woanders ablegen"
+    make_task: "Als Aufgabe"
+    approve: "Anbinden und importieren"
+    cancel: "Abbrechen"
+    teach_rule: "Verschieben und Regel merken"
+  capture:
+    title: "Abgelegt"
+    reason: "Du wolltest dir das merken; hier ist es gelandet"
+    summary: '„{title}“ gespeichert.'
+    inbox_effect: "Der Organizer sortiert es in einen Ordner ein; du kannst jetzt schon einen wählen."
+  correct:
+    title: "In einen anderen Ordner"
+    reason: "Du hast gesagt, die Notiz liegt im falschen Ordner"
+    summary: '„{title}“ nach {after} verschieben?'
+    effect_accept: "„Passt so“ verschiebt nur diese Notiz."
+    effect_teach: "„Regel merken“ verschiebt auch {count} ähnliche Notizen:"
+    also_moves: '„{title}“'
+    effect_rule: "Die Regel wird gemerkt, damit neue Notizen dieser Art auch dort landen."
+  attach:
+    title: "{name} anbinden"
+    reason: "Eine neue Quelle verändert, wo Wissen abgelegt wird"
+    summary: "{name} an {where} anbinden und importieren?"
+    where: "Wohin: alles aus dieser Quelle bleibt innerhalb von {where}."
+    rule: "Regel: {rule}"
+    no_rule: "Keine eigene Regel: Mycelos sortiert innerhalb des Ordners nach Inhalt."
+    import_after: "Der Import startet erst nach deiner Freigabe."
+    preview_title: "{name}: was importiert würde"
+    preview_reason: "Aus den Dateien gezählt, ohne sie mit einem Modell zu lesen"
+    estimated: "geschätzt"
+    files: "Dateien"
+    units: "Notizen"
+
 widgets:
   confirm_yes_no: "[J/n]"
   image_alt: "[Bild: {alt}]"
@@ -530,6 +567,20 @@ web:
     diagram_failed: "Das Diagramm konnte nicht gezeichnet werden. Hier ist die Textfassung."
     loading_diagram: "Diagramm wird gezeichnet …"
     action_sent: "Gesendet"
+    result:
+      accepted: "Bleibt, wo es ist."
+      task: "Ist jetzt eine Aufgabe."
+      ask_where: "Sag, wohin es gehört."
+      moved: "{count} Notiz(en) verschoben."
+      moved_rule: "{count} Notiz(en) verschoben und Regel gemerkt."
+      attached: "Angebunden. Der Import läuft."
+      attached_not_started: "Angebunden. Der Import ist nicht gestartet; starte ihn unter Quellen."
+      cancelled: "Abgebrochen. Nichts geändert."
+    error:
+      expired: "Diese Karte ist abgelaufen. Frag einfach noch einmal."
+      already_resolved: "Diese Karte wurde schon beantwortet."
+      failed: "Das hat nicht geklappt. Nichts wurde geändert; versuch es noch einmal."
+    prefill_elsewhere: '„{title}“ gehört nach '
     unknown: "Diese Ansicht kann hier nicht angezeigt werden. Hier ist die Textfassung."
     type:
       timeline: "Zeitleiste"

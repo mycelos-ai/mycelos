@@ -287,3 +287,33 @@ def test_switcher_shows_prebuilt_variants(page, view_server):
     _shadow(page, 0, ".switch button").filter(has_text="Connections").click()
     expect(_shadow(page, 0, "pre.text")).to_be_visible()
     assert errors == []
+
+
+def test_approval_card_shows_changes_and_the_host_result(page, view_server):
+    """Slice 5: the card shows its filing change; the host reports the outcome."""
+    from playwright.sync_api import expect
+
+    card = make_view("approval_card", title="Move to another folder", reason="Misfiled", data={
+        "summary": "Move it?",
+        "changes": [{"title": "Q3 receipts", "before": "Projects", "after": "Müller GmbH"}],
+        "actions": [{"id": "accept", "label": "Keep it"}, {"id": "cancel", "label": "Cancel"}],
+        "proposal": "a" * 32,
+    })
+    _open(page, view_server, [card])
+    expect(_shadow(page, 0, ".tree .path.before")).to_have_text("Projects")
+    expect(_shadow(page, 0, ".tree .path.after")).to_have_text("Müller GmbH")
+    page.evaluate("window.handle = {'mycelos-view-action': true}")
+    buttons = _shadow(page, 0, ".actions button")
+
+    # A failure unlocks the card and shows the error.
+    buttons.first.click()
+    page.evaluate("document.getElementById('v0').actionResult({ok: false, message: 'Nope'})")
+    expect(_shadow(page, 0, ".sent.error")).to_have_text("Nope")
+    expect(buttons.first).to_be_enabled()
+
+    # Success keeps it locked with the result.
+    buttons.first.click()
+    page.evaluate("document.getElementById('v0').actionResult({ok: true, message: 'Moved 1 note(s).'})")
+    expect(_shadow(page, 0, ".sent")).to_have_text("Moved 1 note(s).")
+    for i in range(2):
+        expect(buttons.nth(i)).to_be_disabled()

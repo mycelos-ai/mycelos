@@ -692,6 +692,7 @@ class ChatService:
         events: list[ChatEvent] = []
         self._current_session_id = session_id  # for request_action
         self._current_user_id = user_id
+        self._current_channel = channel  # tools adapt cards to the channel
         self._pending_events = []
 
         # Proactive notification: check for completed background tasks
@@ -1265,8 +1266,11 @@ class ChatService:
                     # the text summary and sources in its tool result.
                     if isinstance(result, dict) and "__view__" in result:
                         view_payload = result.pop("__view__")
-                        if isinstance(view_payload, dict):
-                            events.append(ChatEvent(type="widget", data={"widget": view_payload}))
+                        # Slice 5: a tool may hand over several views (an
+                        # approval card plus its import preview).
+                        for one_view in (view_payload if isinstance(view_payload, list) else [view_payload]):
+                            if isinstance(one_view, dict):
+                                events.append(ChatEvent(type="widget", data={"widget": one_view}))
 
                     # Suggested-actions tools (e.g. ui_open_page) — emit a
                     # suggested-actions event so the frontend renders the
@@ -1975,6 +1979,7 @@ class ChatService:
                 "user_id": self._current_user_id,
                 "session_id": session_id or self._current_session_id,
                 "agent_id": active_agent,
+                "channel": getattr(self, "_current_channel", "api"),
             }
 
             # Provide a progress callback so long-running tools

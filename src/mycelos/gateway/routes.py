@@ -206,6 +206,8 @@ def setup_routes(api: FastAPI) -> None:
 
     from mycelos.gateway.routers.briefing import router as briefing_router
     api.include_router(briefing_router)
+    from mycelos.gateway.routers.proposals import router as proposals_router
+    api.include_router(proposals_router)
 
     from mycelos.gateway.routers.models import router as models_router
     api.include_router(models_router)

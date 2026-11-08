@@ -1,6 +1,6 @@
 # Package 8: Generative UI in the conversation
 
-Week 45 (2026). Status: direction decided by Stefan on 2026-11-07, spec pending review.
+Week 45 (2026). Status: direction decided by Stefan on 2026-11-07; slices 1 to 5 built.
 Supersedes the "graph is the home" part of `2026-W33-brain-ui-concept.md` (see "Direction change"
 below). Builds on the conversation-first shell from the `codex/collector` work.
 
@@ -115,7 +115,9 @@ no Tailwind, no CDN). Later slices rely on this contract:
     every valid alternative, so switching needs no round trip), and the text fallback when not.
     A variant is used only when its own `type` equals its key and is a catalog type.
   - `mycelos-view-action` `{action, view}`: an approval card button. Cancelable; the card locks
-    only when the host handled it (`preventDefault`). Slice 5 wires this to the resolve paths.
+    only when the host handled it (`preventDefault`). The host reports the outcome with
+    `el.actionResult({ok, message})`: `ok` keeps the card locked with the message, otherwise the
+    card unlocks and shows the message as an error (slice 5).
 - **Chat.** `chat.html` renders a message `{role: 'view', view}` with the element, and widget
   events whose `type` is a catalog type are turned into such messages.
 - **Mermaid.** `mind_map` and `flow` are drawn with `/shared/mermaid.min.js` (loaded on demand,
@@ -229,6 +231,36 @@ The same five scenarios as the click prototypes (artifact "Mycelos Richtungsverg
    and `source_rules` (see "Prerequisites").
 5. **Correct a misfiling**: `TreeChange` before/after, with "teach the rule" showing which other
    notes the rule change would move.
+
+As built in slice 5 (`knowledge/proposals.py`, tools in `tools/filing.py`, endpoint
+`POST /api/proposals/{id}/resolve`):
+
+- **Proposals.** Every card stores a proposal (`view_proposals`: kind, server-side payload,
+  status). The `approval_card` data carries only its id (`proposal`, 32 hex characters) and the
+  filing change as `changes` (same items as `TreeChange`, drawn inside the card). The client
+  posts the id and one action; the body cannot name a note, folder or source. Actions per kind:
+  capture `accept`/`elsewhere`/`make_task`, attach_source `approve`/`cancel`, correct
+  `accept`/`teach_rule`/`cancel`. Refused without change: unknown id, another user's id, an
+  action outside the kind, a resolved card (409), a card older than seven days (410). A proposal
+  is claimed atomically; a failed action sets it back to pending.
+- **Capture.** `note_write` in the chat (a chat service in the context and no connector
+  `source`) returns the card as `__view__`. The note exists, because the user asked to remember
+  it; `accept` clears the placement marker, `make_task` turns it into an open task, `elsewhere`
+  changes nothing and the web chat puts "„title“ belongs in " into the composer.
+- **Correct.** `filing_correct(path, topic)` builds before/after. "Teach the rule" lists up to
+  five notes in the same folder with the same source key that share at least half of the title's
+  significant words (per-word search, deterministic). Approving moves them only if they are
+  still in that folder, and appends one English rule line to the source's rule
+  (`source_rules`, config generation). Notes without a source key get no rule line.
+- **Attach.** `source_attach(source_id, topic, rule)` builds the card and a `Counts` preview from
+  `local_sources` preview (files and notes, no model call); sample titles appear as new entries
+  in the card's tree. Approving attaches `local:<id>` to the folder, saves the rule, moves an
+  existing article root into the folder and enqueues the import.
+- **One source model.** `source_key()` maps provenance to the attachment/rule key: connector
+  id, `local:<source_id>` for local sources, `chat` for chat captures. The organizer scopes by
+  that key and applies a rule with or without attachments; `source_articles.source_root` creates
+  a local source's root inside its first attachment.
+- **Delivery.** A tool's `__view__` may be a list; each view is one widget event.
 
 ## Prerequisites
 
