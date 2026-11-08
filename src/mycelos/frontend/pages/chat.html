@@ -289,6 +289,7 @@
 <link rel="stylesheet" href="/shared/chat-surface.css?v=1">
 <script defer src="/shared/knowledge-card.js?v=1"></script>
 <script defer src="/shared/mycelos-view.js?v=1"></script>
+<script src="/shared/inbox.js"></script>
 <script defer src="/shared/notifications.js?v=1"></script>
 </head>
 
@@ -380,6 +381,26 @@
         <!-- Messages loop -->
         <template x-for="(msg, index) in messages" :key="index">
           <div class="animate-fade-in">
+            <template x-if="msg.role === 'briefing-cards'">
+              <div class="w-full mb-4 rounded-xl p-4" style="background:white" data-testid="briefing-cards">
+                <p class="text-sm font-medium mb-2" x-text="t('briefing.needs_you').replace('{count}', msg.count)"></p>
+                <p x-show="msg.entries.length === 0" class="text-sm text-on-surface-variant" x-text="t('briefing.all_clear')"></p>
+                <template x-for="entry in msg.entries" :key="entry.id">
+                  <div class="py-2 border-t" style="border-color:var(--outline-variant)">
+                    <p class="text-sm font-medium" x-text="entry.title"></p>
+                    <p class="text-xs text-on-surface-variant" x-text="entry.why"></p>
+                    <div class="flex gap-2 mt-1">
+                      <template x-for="action in entry.actions" :key="action.id">
+                        <button type="button" class="text-xs underline" :disabled="msg.busyId === entry.id"
+                                @click="briefingAction(msg, entry, action.id)" x-text="t('inbox.action_' + action.id)"></button>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <p x-show="msg.error" class="text-xs mt-2" style="color:var(--error)" x-text="msg.error"></p>
+                <a x-show="msg.count > msg.entries.length" href="/pages/inbox.html" class="text-xs underline mt-2 inline-block" x-text="t('briefing.open_inbox')"></a>
+              </div>
+            </template>
             <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view"></mycelos-view></div></template>
             <template x-if="msg.role === 'knowledge'"><div><mycelos-knowledge :view="msg.view || 'tree'"></mycelos-knowledge></div></template>
             <template x-if="msg.role === 'local-sources'">
@@ -1150,6 +1171,9 @@
             window.history.replaceState({}, '', '/pages/chat.html');
           }
 
+          // First visit of the day: the daily briefing is the first message.
+          await this.showBriefingIfDue();
+
           // Sidebar CustomEvents (same-page navigation from sidebar buttons)
           window.addEventListener('mycelos:new-chat', async (ev) => {
             await this.newSession();
@@ -1269,6 +1293,59 @@
         /**
          * Create a new chat session.
          */
+        /**
+         * Daily briefing as the first message of the day (Package 8, slice 3).
+         * The server says whether it is due; it is confirmed as shown only
+         * after it was put on screen, so a failed render shows it again.
+         */
+        async showBriefingIfDue() {
+          let data;
+          try {
+            data = await MycelosAPI.get('/api/briefing/first-message');
+          } catch (e) {
+            return;  // no briefing is a valid outcome
+          }
+          if (!data || !data.show || !data.briefing) return;
+          const b = data.briefing;
+          if (b.lead) this.messages.push({ role: 'assistant', content: b.lead, agent: this.activeAgent });
+          const views = Array.isArray(b.views) ? b.views : [];
+          const [first, ...rest] = views;
+          if (first && first.type === 'counts') this.messages.push({ role: 'view', view: first });
+          const needs = b.needs_you || {};
+          if (needs.available !== false) {
+            this.messages.push({
+              role: 'briefing-cards', count: needs.count || 0,
+              entries: Array.isArray(needs.entries) ? needs.entries : [], busyId: null, error: '',
+            });
+          }
+          for (const view of (first && first.type === 'counts') ? rest : views) {
+            this.messages.push({ role: 'view', view });
+          }
+          try { await MycelosAPI.post('/api/briefing/first-message/shown', {}); } catch (_) {}
+          this.$nextTick(() => this.scrollToBottom && this.scrollToBottom());
+        },
+
+        async briefingAction(msg, entry, actionId) {
+          if (actionId === 'open') {
+            window.location.href = '/pages/knowledge.html?note=' + encodeURIComponent(entry.source?.path || '');
+            return;
+          }
+          if (msg.busyId) return;
+          msg.busyId = entry.id;
+          msg.error = '';
+          try {
+            await window.MycelosInbox.resolve(entry, actionId);
+            const fresh = await MycelosAPI.get('/api/inbox');
+            const entries = (fresh && fresh.entries) || [];
+            msg.count = entries.length;
+            msg.entries = entries.slice(0, msg.entries.length || 10);
+          } catch (_) {
+            msg.error = t('inbox.action_error');
+          } finally {
+            msg.busyId = null;
+          }
+        },
+
         async newSession() {
           if (this.sending) return;
           this.focusItem = null;

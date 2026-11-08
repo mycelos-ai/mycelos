@@ -487,6 +487,10 @@ telegram:
 
 # --- Web UI translations ---
 web:
+  briefing:
+    needs_you: "Needs you ({count})"
+    all_clear: "Nothing needs you right now."
+    open_inbox: "Open the full inbox"
   views:
     why: "Why this view"
     switch_to: "Show as"

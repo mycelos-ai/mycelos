@@ -1,6 +1,39 @@
 /** Unified Inbox surface — a thin client over Package 2's trusted read model. */
 
 (function () {
+  function tomorrowDate() {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const day = String(tomorrow.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  // One resolve path for an inbox entry, shared by the inbox page and the
+  // daily briefing in the chat, so both run the same routes for an action.
+  // 'open' is navigation, not a resolve; callers handle it themselves.
+  window.MycelosInbox = {
+    tomorrowDate,
+    async resolve(entry, actionId) {
+      if (actionId === 'accept' || actionId === 'dismiss') {
+        const suggestionId = String(entry.id || '').split(':')[1];
+        await MycelosAPI.post('/api/organizer/suggestions/' + encodeURIComponent(suggestionId) + '/' + actionId);
+      } else if (actionId === 'done') {
+        await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(entry.source?.path || '') + '/done');
+      } else if (actionId === 'snooze') {
+        await MycelosAPI.post(
+          '/api/knowledge/notes/' + encodeURIComponent(entry.source?.path || '') + '/remind',
+          { when: tomorrowDate() }
+        );
+      } else if (actionId === 'retry' && entry.kind === 'failed_run') {
+        await MycelosAPI.post('/api/inbox/runs/' + encodeURIComponent(entry.source?.routine_key || '') + '/retry');
+      } else if (actionId === 'retry') {
+        await MycelosAPI.post('/api/inbox/notes/' + encodeURIComponent(entry.source?.path || '') + '/retry');
+      }
+    },
+  };
+
   window.inboxApp = function () {
     return {
       loading: true,
@@ -56,12 +89,7 @@
       },
 
       tomorrowDate() {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const year = tomorrow.getFullYear();
-        const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
-        const day = String(tomorrow.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
+        return tomorrowDate();
       },
 
       async runAction(entry, actionId) {
@@ -69,21 +97,7 @@
         this.busyId = entry.id;
         this.error = '';
         try {
-          if (actionId === 'accept' || actionId === 'dismiss') {
-            const suggestionId = String(entry.id || '').split(':')[1];
-            await MycelosAPI.post('/api/organizer/suggestions/' + encodeURIComponent(suggestionId) + '/' + actionId);
-          } else if (actionId === 'done') {
-            await MycelosAPI.post('/api/knowledge/notes/' + encodeURIComponent(entry.source?.path || '') + '/done');
-          } else if (actionId === 'snooze') {
-            await MycelosAPI.post(
-              '/api/knowledge/notes/' + encodeURIComponent(entry.source?.path || '') + '/remind',
-              { when: this.tomorrowDate() }
-            );
-          } else if (actionId === 'retry' && entry.kind === 'failed_run') {
-            await MycelosAPI.post('/api/inbox/runs/' + encodeURIComponent(entry.source?.routine_key || '') + '/retry');
-          } else if (actionId === 'retry') {
-            await MycelosAPI.post('/api/inbox/notes/' + encodeURIComponent(entry.source?.path || '') + '/retry');
-          }
+          await window.MycelosInbox.resolve(entry, actionId);
           await this.loadInbox();
         } catch (_error) {
           this.error = t('inbox.action_error');

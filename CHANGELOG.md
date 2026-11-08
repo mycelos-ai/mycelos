@@ -62,6 +62,12 @@
   `t()` in English and German.
 - Security test: imported note titles, provenance labels and relation
   reasons cannot change the view types or add actions.
+- **The web chat opens the day with the briefing.** On the first visit of
+  the day the chat shows the lead text, the arrivals view, the cards that
+  need you (with their Done / Snooze / Accept / Retry actions working in
+  place) and the contradiction and rediscovery views, then confirms it as
+  shown. The inbox page and the briefing cards share one resolve path
+  (`window.MycelosInbox.resolve` in `inbox.js`).
 
 ### Documentation archive from agentpark
 

@@ -389,3 +389,130 @@ class TestFirstMessageAPI:
         self._no_llm(client)
         body = client.get("/api/briefing/today").json()
         assert "views" in body and "needs_you" in body and "lead" in body
+
+
+# ---- web chat wiring -------------------------------------------------------
+
+FRONTEND = Path(__file__).resolve().parents[1] / "src/mycelos/frontend"
+
+
+def _chat_briefing_methods() -> str:
+    html = (FRONTEND / "pages/chat.html").read_text(encoding="utf-8")
+    start = html.index("async showBriefingIfDue() {")
+    end = html.index("async newSession() {")
+    return html[start:end]
+
+
+def _node(script: str, *args: str) -> None:
+    import shutil
+    import subprocess
+
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    result = subprocess.run(["node", "-e", script, *args],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+_HARNESS = """
+const assert = require('node:assert/strict');
+const methods = process.argv[1];
+global.t = (k) => k;
+global.window = { location: { href: '' } };
+function chat(api) {
+  global.MycelosAPI = api;
+  return eval('({ messages: [], activeAgent: "Mycelos", $nextTick(f) { f(); }, scrollToBottom() {}, '
+              + methods + '})');
+}
+"""
+
+
+def test_chat_shows_briefing_in_order_and_confirms():
+    script = _HARNESS + """
+(async () => {
+  const posts = [];
+  const briefing = {
+    lead: 'Good morning', needs_you: {count: 3, entries: [{id: 'e1', title: 'Pay', actions: []}], available: true},
+    views: [{type: 'counts'}, {type: 'evidence'}, {type: 'graph_slice'}],
+  };
+  const c = chat({
+    get: async (url) => { assert.equal(url, '/api/briefing/first-message'); return {show: true, briefing}; },
+    post: async (url) => { posts.push(url); },
+  });
+  await c.showBriefingIfDue();
+  assert.deepEqual(c.messages.map(m => m.role === 'view' ? m.view.type : m.role),
+                   ['assistant', 'counts', 'briefing-cards', 'evidence', 'graph_slice']);
+  assert.equal(c.messages[2].count, 3);
+  assert.deepEqual(posts, ['/api/briefing/first-message/shown']);
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    _node(script, _chat_briefing_methods())
+
+
+def test_chat_skips_briefing_when_already_shown_or_unreachable():
+    script = _HARNESS + """
+(async () => {
+  const posts = [];
+  const shown = chat({get: async () => ({show: false, briefing: {lead: 'x'}}), post: async (u) => posts.push(u)});
+  await shown.showBriefingIfDue();
+  assert.equal(shown.messages.length, 0);
+  const down = chat({get: async () => { throw new Error('offline'); }, post: async (u) => posts.push(u)});
+  await down.showBriefingIfDue();
+  assert.equal(down.messages.length, 0);
+  assert.deepEqual(posts, []);
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    _node(script, _chat_briefing_methods())
+
+
+def test_chat_briefing_card_action_resolves_and_refreshes():
+    script = _HARNESS + """
+(async () => {
+  const resolved = [];
+  window.MycelosInbox = { resolve: async (entry, action) => resolved.push([entry.id, action]) };
+  const c = chat({ get: async (url) => { assert.equal(url, '/api/inbox'); return {entries: [{id: 'e2'}]}; } });
+  const msg = {count: 2, entries: [{id: 'e1'}, {id: 'e2'}], busyId: null, error: ''};
+  await c.briefingAction(msg, {id: 'e1'}, 'done');
+  assert.deepEqual(resolved, [['e1', 'done']]);
+  assert.equal(msg.count, 1);
+  assert.deepEqual(msg.entries.map(e => e.id), ['e2']);
+  await c.briefingAction(msg, {id: 'e2', source: {path: 'notes/a b'}}, 'open');
+  assert.equal(window.location.href, '/pages/knowledge.html?note=notes%2Fa%20b');
+  assert.equal(resolved.length, 1);
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    _node(script, _chat_briefing_methods())
+
+
+def test_inbox_resolve_routes_are_shared():
+    """The briefing cards and the inbox page resolve through the same routes."""
+    script = """
+const assert = require('node:assert/strict');
+global.window = {};
+const posts = [];
+global.MycelosAPI = { post: async (url, body) => posts.push([url, body]) };
+require(process.argv[1]);
+(async () => {
+  const r = window.MycelosInbox.resolve;
+  await r({id: 'suggestion:7'}, 'accept');
+  await r({source: {path: 'tasks/pay'}}, 'done');
+  await r({kind: 'failed_run', source: {routine_key: 'gmail'}}, 'retry');
+  await r({kind: 'unclassifiable', source: {path: 'n/x'}}, 'retry');
+  assert.deepEqual(posts.map(p => p[0]), [
+    '/api/organizer/suggestions/7/accept', '/api/knowledge/notes/tasks%2Fpay/done',
+    '/api/inbox/runs/gmail/retry', '/api/inbox/notes/n%2Fx/retry']);
+  assert.equal(typeof window.inboxApp, 'function');
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+    _node(script, str(FRONTEND / "shared/inbox.js"))
+
+
+def test_chat_briefing_strings_exist_in_both_languages():
+    from mycelos.i18n import get_web_translations
+
+    html = (FRONTEND / "pages/chat.html").read_text(encoding="utf-8")
+    assert '<script src="/shared/inbox.js"></script>' in html
+    for lang in ("en", "de"):
+        web = get_web_translations(lang)
+        assert set(web["briefing"]) == {"needs_you", "all_clear", "open_inbox"}
+        assert "{count}" in web["briefing"]["needs_you"]

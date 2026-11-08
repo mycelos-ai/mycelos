@@ -474,6 +474,10 @@ telegram:
 
 # --- Web UI Uebersetzungen ---
 web:
+  briefing:
+    needs_you: "Braucht dich ({count})"
+    all_clear: "Gerade braucht nichts deine Entscheidung."
+    open_inbox: "Ganze Inbox öffnen"
   views:
     why: "Warum diese Ansicht"
     switch_to: "Anzeigen als"
