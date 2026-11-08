@@ -52,6 +52,28 @@ class SessionStore:
         with open(self._session_path(session_id), "a") as f:
             f.write(json.dumps(record) + "\n")
 
+    def append_view(self, session_id: str, view: dict[str, Any]) -> None:
+        """Record a view (Package 8 catalog) shown in the chat.
+
+        Views are not chat messages: the model never sees them on resume
+        (``load_messages`` skips them). They exist so a reloaded conversation
+        shows the same views and approval cards in the same place.
+        """
+        record = {
+            "type": "view",
+            "session_id": session_id,
+            "view": view,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            with open(self._session_path(session_id), "a") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to append view for session %s: %s", session_id, exc
+            )
+
     def append_llm_round(
         self,
         session_id: str,
@@ -188,6 +210,17 @@ class SessionStore:
             if record.get("type") == "message":
                 messages.append(record)
         return messages
+
+    def load_transcript(self, session_id: str) -> list[dict]:
+        """Messages and views in the order they were shown, for a client reload."""
+        out: list[dict] = []
+        for record in self.load_all_events(session_id):
+            kind = record.get("type")
+            if kind == "message":
+                out.append(record)
+            elif kind == "view" and isinstance(record.get("view"), dict):
+                out.append(record)
+        return out
 
     def update_session(self, session_id: str, title: str | None = None, topic: str | None = None) -> bool:
         """Update session metadata (title, topic). Appends a metadata record."""

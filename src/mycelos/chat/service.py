@@ -1271,6 +1271,8 @@ class ChatService:
                         for one_view in (view_payload if isinstance(view_payload, list) else [view_payload]):
                             if isinstance(one_view, dict):
                                 events.append(ChatEvent(type="widget", data={"widget": one_view}))
+                                # Kept in the session so a reload shows it again.
+                                self._app.session_store.append_view(session_id, one_view)
 
                     # Suggested-actions tools (e.g. ui_open_page) — emit a
                     # suggested-actions event so the frontend renders the

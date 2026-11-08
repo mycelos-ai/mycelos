@@ -447,11 +447,12 @@ class TestAPI:
         assert client.post(f"/api/proposals/{pid}/resolve", content=b"nope").status_code == 400
 
 
-def test_no_capture_card_on_telegram(app):
+def test_capture_card_on_telegram_too(app):
+    # Telegram shows the card with inline buttons (see test_view_reload.py).
     from mycelos.tools.knowledge import execute_note_write
     result = execute_note_write({"title": "Per Telegram", "content": "x"},
                                 {"app": app, "chat_service": object(), "channel": "telegram"})
-    assert "__view__" not in result
+    assert result["__view__"]["type"] == "approval_card"
 
 
 def _llm(content=None, tool=None):
@@ -468,7 +469,7 @@ def _llm(content=None, tool=None):
     return mock
 
 
-@pytest.mark.parametrize("channel,cards", [("api", 1), ("telegram", 0)])
+@pytest.mark.parametrize("channel,cards", [("api", 1), ("telegram", 1)])
 def test_chat_capture_emits_the_card(app, channel, cards):
     from unittest.mock import patch
     from mycelos.chat.service import ChatService
