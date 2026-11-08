@@ -739,6 +739,7 @@ web:
     status_local: "Local"
     no_session: "No Session"
     session_prefix: "Session "
+    answer_sources: "Sources of this answer"
   knowledge:
     title: "Knowledge"
     create: "Create"
