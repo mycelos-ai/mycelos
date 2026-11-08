@@ -32,6 +32,10 @@
 - **Browser tests run last.** pytest grouped the Playwright tests near the
   start of the run, and the event loop that Playwright keeps running made
   every later async test fail. They now run after all other tests.
+- **Schema comments moved above the last `knowledge_notes` column.** The
+  SQLite on the CI runners could not drop `placement_confidence` (the
+  migration test does) while comments followed it, and failed with
+  "incomplete input".
 
 ### Documentation archive from agentpark
 
