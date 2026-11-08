@@ -467,6 +467,30 @@ telegram:
 
 # --- Web UI translations ---
 web:
+  views:
+    why: "Why this view"
+    switch_to: "Show as"
+    sources: "Sources"
+    supports: "supports"
+    contradicts: "contradicts"
+    neutral: "neutral"
+    new: "new"
+    confidence: "confidence"
+    diagram_failed: "The diagram could not be drawn. Showing the text version."
+    loading_diagram: "Drawing diagram…"
+    action_sent: "Sent"
+    unknown: "This view cannot be shown here. Showing the text version."
+    type:
+      timeline: "Timeline"
+      mind_map: "Mind map"
+      graph_slice: "Connections"
+      comparison: "Comparison"
+      flow: "Flow"
+      counts: "Counts"
+      evidence: "Evidence"
+      tree_change: "Filing"
+      approval_card: "Approval"
+      text: "Text"
   login:
     subtitle: "Enter your password to continue"
     submit: "Sign in"
