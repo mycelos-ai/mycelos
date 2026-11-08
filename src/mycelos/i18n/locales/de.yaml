@@ -353,6 +353,26 @@ interview:
   cap_calendar_read: "Kalender lesen"
   cap_sandbox_execute: "Code ausführen"
 
+# --- Daily briefing (Package 8) ---
+briefing:
+  lead_fallback: "Morgenbriefing für {date}"
+  rediscovered_line: '„{title}“ (passt zu „{because}“)'
+  section:
+    arrivals: "Seit dem letzten Briefing angekommen"
+    contradictions: "Neue Widersprüche"
+    rediscovered: "Wiederentdeckt"
+  view:
+    arrivals_title: "Was angekommen ist"
+    arrivals_reason: "Anzahl je Quelle seit dem letzten Briefing"
+    notes_unit: "Notizen"
+    other_sources: "weitere Quellen"
+    contradictions_title: "Quellen, die sich widersprechen"
+    contradictions_reason: "Neue Widerspruchs-Beziehungen zwischen Notizen seit dem letzten Briefing"
+    no_reason: "Keine Begründung hinterlegt"
+    rediscovered_title: "Wiederentdeckt: „{title}“"
+    rediscovered_reason: "Eine ältere Notiz von {year}, die zu etwas Neuem von heute passt"
+    related: "verwandt"
+
 widgets:
   confirm_yes_no: "[J/n]"
   image_alt: "[Bild: {alt}]"

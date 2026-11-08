@@ -30,6 +30,29 @@ async def briefing_today(request: Request) -> dict[str, Any]:
     return get_or_build_briefing(mycelos, resolve_user_id(request))
 
 
+@router.get("/api/briefing/first-message")
+async def briefing_first_message(request: Request) -> dict[str, Any]:
+    """The briefing as the first web-chat message of the day.
+
+    ``show`` is true until the client confirms it showed the briefing
+    (``POST /api/briefing/first-message/shown``). Read-only, so a badge
+    poll or a reload never consumes the day's briefing.
+    """
+    from mycelos.knowledge.briefing import first_message
+
+    mycelos = request.app.state.mycelos
+    return first_message(mycelos, resolve_user_id(request))
+
+
+@router.post("/api/briefing/first-message/shown")
+async def briefing_first_message_shown(request: Request) -> dict[str, Any]:
+    """Mark today's briefing as shown in the web chat. Audited."""
+    from mycelos.knowledge.briefing import mark_first_message_shown
+
+    mycelos = request.app.state.mycelos
+    return {"shown": mark_first_message_shown(mycelos, resolve_user_id(request))}
+
+
 @router.get("/api/briefing/settings")
 async def briefing_get_settings(request: Request) -> dict[str, Any]:
     from mycelos.knowledge.briefing import DEFAULT_BRIEFING_TIME

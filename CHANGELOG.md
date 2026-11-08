@@ -2,6 +2,36 @@
 
 ## Week 45 (2026)
 
+### Daily briefing as views (generative UI, slice 3)
+
+- **The briefing carries catalog views.** Next to the markdown it now
+  returns a lead text and validated views from the knowledge view catalog:
+  `counts` for what arrived per source since the last briefing (gmail,
+  yt-summary, local sources, quick capture, ...), `evidence` for new
+  contradicting relations between notes, and a `graph_slice` for one older
+  note rediscovered through something that arrived today. A fact group
+  without data gives no view; data that does not validate is dropped, never
+  shown half-built.
+- **Cards that need you are live.** `needs_you` is read from the unified
+  inbox on every request instead of being cached with the day's briefing,
+  so its number always equals `GET /api/inbox/count` and every card keeps
+  its own resolve actions.
+- **Since the last briefing.** Arrivals and contradictions are counted from
+  when the previous briefing was built (at most seven days back), not from a
+  fixed 24 hours.
+- **Rediscovered notes do not repeat.** A rediscovered note must be at least
+  30 days old and untouched, and the same note is not resurfaced again
+  within 30 days.
+- **First message of the day.** `GET /api/briefing/first-message` says
+  whether the web chat should open with the briefing today;
+  `POST /api/briefing/first-message/shown` records it (audited). Reading is
+  side-effect free, so a reload before the client confirms still shows it.
+- **Telegram gets the new facts as text**: arrivals per source, new
+  contradictions and the rediscovered note. All new strings go through
+  `t()` in English and German.
+- Security test: imported note titles, provenance labels and relation
+  reasons cannot change the view types or add actions.
+
 ### Documentation archive from agentpark
 
 - **Original planning docs preserved.** The design specs, implementation
