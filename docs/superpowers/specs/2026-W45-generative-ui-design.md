@@ -110,8 +110,10 @@ no Tailwind, no CDN). Later slices rely on this contract:
   - `mycelos-view-ref` `{path, title}`: a source chip was clicked. Cancelable; without
     `preventDefault` the note opens in `/pages/knowledge.html?note=…`.
   - `mycelos-view-switch` `{from, to, view}`: the user picked another view. `text` is handled by
-    the element. For any other target the host calls `preventDefault` and later sets `el.view`;
-    without a handler the element shows the text fallback. Slice 4 wires this to the builders.
+    the element. A host that calls `preventDefault` sets `el.view` itself. Otherwise the element
+    shows `view.variants[to]` when the view carries prebuilt variants (slice 4: answers carry
+    every valid alternative, so switching needs no round trip), and the text fallback when not.
+    A variant is used only when its own `type` equals its key and is a catalog type.
   - `mycelos-view-action` `{action, view}`: an approval card button. Cancelable; the card locks
     only when the host handled it (`preventDefault`). Slice 5 wires this to the resolve paths.
 - **Chat.** `chat.html` renders a message `{role: 'view', view}` with the element, and widget
@@ -136,13 +138,40 @@ def choose_view(intent: str, facts: dict, model_hint: str | None) -> str:
 
 - **Intent** comes from a small, cheap classification step added in this package, with the
   sub-intents `status`, `overview`, `relation`, `compare`, `process`, `count` and `verify`.
-  Whether it can reuse the existing chat routing is decided in the slice 4 plan.
+  Slice 4 decided: deterministic keyword rules with the model's guess as fallback (see below).
 - **Facts** are deterministic properties of the retrieved notes: share with dates, depth of the
   topic subtree, number of linked entities, presence of `contradicts`/`supports` relations.
 - The answering model may propose a view (`model_hint`). A hint outside `candidate_views` is
   ignored, and the rule result wins. This mirrors the source-attachment rule: an LLM told "only
   these" will sometimes answer otherwise, and that must be rejected deterministically.
 - Fallback when nothing fits: plain text with source chips. That is a valid outcome, not an error.
+
+As built in slice 4 (`knowledge/ask_views.py`, tool `knowledge_view` in `tools/knowledge_view.py`):
+
+- **Intent** is not a separate model call. Keyword rules over the user's question (English and
+  German, ordered compare, count, process, verify, relation, status, overview) decide first; the
+  intent the answering model passes is used only when no rule matches, and `overview` otherwise.
+  A view the user names in the question ("as a timeline", "als Netzwerk") counts as a hint that
+  beats the model's hint. Both are accepted only inside the candidates.
+- **Retrieval**: hybrid search over the model's search terms, optionally widened by a topic
+  subtree, at most 40 notes, archived notes and topic notes excluded. Only metadata is read
+  (title, type, status, due, created, topic), plus `knowledge_links` and the current
+  `knowledge_relations` among the retrieved notes. Note bodies never enter a view.
+- **Facts**: a note's date is its due date, else its creation date; a timeline needs at least two
+  distinct dates. `tree_depth` is 2 when the notes sit in two or more topics. Linked entities count
+  links, typed relations and a shared topic node (only when it joins two or more notes).
+  Quantities group by topic, else by note type, else by month, and need two groups.
+- **Builders**: timeline (due items open in the future are `due`, overdue are `warning`), counts,
+  graph slice (at most 40 nodes, by degree), mind map (topic tree, or the model's structure) and
+  evidence (`supports`/`contradicts` relations with their reason) are deterministic. Comparison
+  and flow exist only when the model passes a `structure`, which is validated against the view
+  schema; an invalid structure is dropped.
+- **Variants**: every candidate that builds is built. The answer view carries the others in
+  `variants`, and each one's `alternatives` are the other built views plus `text`.
+- **Delivery**: the tool returns a `__view__` payload; the chat service emits it as a widget
+  event and the model only sees the text fallback, the sources and a reminder to write a short
+  lead. Without notes the tool returns `no_notes`; when only text fits, it returns the note list.
+  Telegram and the CLI render the view's text fallback and ignore `variants`.
 
 The view data is built from retrieved notes by deterministic builders where possible (timeline
 from dates, tree from topic paths, counts from SQL). The LLM writes the short lead text and, for

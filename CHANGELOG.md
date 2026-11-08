@@ -2,6 +2,33 @@
 
 ## Week 45 (2026)
 
+### Questions answered with views (Package 8, slice 4)
+
+- **Knowledge questions get a view, not a wall of text.** A new chat tool,
+  `knowledge_view`, finds the notes for a question and answers with the
+  view that fits: a timeline for "what is open with Müller", connections for
+  "how does A relate to B", a mind map of topics for an overview, counts for
+  "how many", evidence when sources support or contradict each other. With
+  a structure from the model it also shows comparisons and flows, validated
+  against the view schema.
+- **The same question gets the same view.** Keyword rules in English and
+  German pick the question type; the model's guess counts only when no rule
+  matches. A view the user names ("als Zeitleiste") wins over the model's
+  preference, and both are accepted only when the view fits the data.
+- **The switcher works.** Every view that fits is built with the answer, so
+  "Show as" changes between timeline, connections, counts and text at once,
+  without asking the model again. `/demo view` uses the same mechanism.
+- **The model writes only the lead.** It gets the view's text version and
+  sources back, not the view itself, and is told not to repeat it as a list.
+  Telegram and the CLI show the text version.
+- **Note content stays data.** Titles and relation reasons are shown, never
+  followed; system views (approval card, filing change) can never be chosen
+  for an answer. Security tests cover injected note titles, smuggled fields
+  and system-view hints.
+- **Connections put the hub in the middle.** Graph nodes are ranked by
+  their links with topics first on ties, and the renderer keeps that order
+  for ties instead of sorting by path.
+
 ### Knowledge views in the web chat (Package 8, slice 2)
 
 - **Answers can now be shown as views, not just text.** A new

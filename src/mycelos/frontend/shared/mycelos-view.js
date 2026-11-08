@@ -10,8 +10,11 @@
  *                                             /pages/knowledge.html.
  *   mycelos-view-switch {from, to, view}      the user picked another view; cancelable.
  *                                             "text" is handled here (text fallback).
- *                                             Other targets need a host that calls
- *                                             preventDefault and later sets el.view.
+ *                                             A host that calls preventDefault sets
+ *                                             el.view itself. Otherwise the element
+ *                                             shows the prebuilt variant from
+ *                                             view.variants[to] (slice 4), or the
+ *                                             text fallback when there is none.
  *   mycelos-view-action {action, view}        an approval card button was pressed;
  *                                             cancelable. A host that handles it calls
  *                                             preventDefault, which locks the card.
@@ -136,7 +139,8 @@
   function graphLayout(nodes, edges) {
     const degree = new Map(nodes.map((n) => [n.id, 0]));
     edges.forEach((e) => { degree.set(e.source, (degree.get(e.source) || 0) + 1); degree.set(e.target, (degree.get(e.target) || 0) + 1); });
-    const order = [...nodes].sort((a, b) => (degree.get(b.id) - degree.get(a.id)) || String(a.id).localeCompare(String(b.id)));
+    // Most connected first; ties keep the order of the data (the builder ranks them).
+    const order = [...nodes].sort((a, b) => degree.get(b.id) - degree.get(a.id));
     const W = 640, H = nodes.length > 12 ? 520 : 400, cx = W / 2, cy = H / 2;
     const pos = new Map();
     if (order.length === 2) {
@@ -229,6 +233,7 @@
       super();
       this.attachShadow({ mode: 'open' });
       this._view = null;
+      this._variants = {};
       this._showText = false;
       this._sentAction = '';
       this._generation = 0;
@@ -237,7 +242,21 @@
 
     get view() { return this._view; }
     set view(value) {
-      this._view = value && typeof value === 'object' ? value : null;
+      const v = value && typeof value === 'object' ? value : null;
+      // Prebuilt alternatives for the same answer ({type: viewDict}). Only
+      // catalog views whose own type matches their key are kept.
+      this._variants = {};
+      if (v && v.variants && typeof v.variants === 'object') {
+        for (const [name, alt] of Object.entries(v.variants)) {
+          if (alt && typeof alt === 'object' && alt.type === name && TYPES.includes(name)) this._variants[name] = alt;
+        }
+      }
+      if (v && TYPES.includes(v.type)) this._variants[v.type] = v;
+      this._show(v);
+    }
+
+    _show(v) {
+      this._view = v;
       this._showText = false;
       this._sentAction = '';
       this.render();
@@ -271,7 +290,9 @@
         if (to === v.type) { this._showText = false; return this.render(); }
         if (to === 'text') { this._showText = true; return this.render(); }
         const e = this._emit('mycelos-view-switch', { from: v.type, to, view: v }, true);
-        if (!e.defaultPrevented) { this._showText = true; this.render(); }
+        if (e.defaultPrevented) return;
+        if (this._variants[to]) return this._show(this._variants[to]);
+        this._showText = true; this.render();
         return;
       }
       if (button.dataset.action !== undefined) {

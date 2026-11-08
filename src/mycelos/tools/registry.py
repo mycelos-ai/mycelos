@@ -217,6 +217,7 @@ class ToolRegistry:
         from mycelos.tools import doctor as _doctor
         from mycelos.tools import filesystem as _filesystem
         from mycelos.tools import knowledge as _knowledge
+        from mycelos.tools import knowledge_view as _knowledge_view
         from mycelos.tools import memory as _memory
         from mycelos.tools import system as _system
         from mycelos.tools import ui as _ui
@@ -229,6 +230,7 @@ class ToolRegistry:
         _memory.register(cls)
         _filesystem.register(cls)
         _knowledge.register(cls)
+        _knowledge_view.register(cls)
         _workflow.register(cls)
         _connector.register(cls)
         _system.register(cls)
