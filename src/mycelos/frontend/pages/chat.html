@@ -288,6 +288,7 @@
 <link rel="stylesheet" href="/shared/product-shell.css?v=1">
 <link rel="stylesheet" href="/shared/chat-surface.css?v=1">
 <script defer src="/shared/knowledge-card.js?v=1"></script>
+<script defer src="/shared/mycelos-view.js?v=1"></script>
 <script defer src="/shared/notifications.js?v=1"></script>
 </head>
 
@@ -379,6 +380,7 @@
         <!-- Messages loop -->
         <template x-for="(msg, index) in messages" :key="index">
           <div class="animate-fade-in">
+            <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view"></mycelos-view></div></template>
             <template x-if="msg.role === 'knowledge'"><div><mycelos-knowledge :view="msg.view || 'tree'"></mycelos-knowledge></div></template>
             <template x-if="msg.role === 'local-sources'">
               <div class="w-full mb-4"><mycelos-sources :view="msg.sourceView || 'list'" :source-id="msg.sourceId || ''"></mycelos-sources></div>
@@ -1028,7 +1030,7 @@
           { name: '/inbox', desc: 'File inbox', subs: ['clear'] },
           { name: '/reload', desc: 'Reload MCP connectors', subs: [] },
           { name: '/restart', desc: 'Restart system', subs: [] },
-          { name: '/demo', desc: 'Feature demonstrations', subs: ['widget'] },
+          { name: '/demo', desc: 'Feature demonstrations', subs: ['widget', 'view'] },
         ],
         connectorForm: {
           open: false, connectorId: '', title: '', icon: 'extension',
@@ -1521,6 +1523,12 @@
                   }
                   if (w.type === 'local_sources') {
                     this.openSources(w.view || 'list', w.source_id || '');
+                    break;
+                  }
+                  // Knowledge views (Package 8 catalog) render through <mycelos-view>.
+                  if (window.MycelosView && window.MycelosView.TYPES.includes(w.type)) {
+                    this.messages.push({ role: 'view', view: w });
+                    this.scrollToBottom();
                     break;
                   }
                   // Initialize reactive state flags so Alpine bindings start from a defined value

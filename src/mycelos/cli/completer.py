@@ -103,6 +103,7 @@ SLASH_COMMANDS: dict[str, dict] = {
         "description": "Feature demonstrations",
         "subs": {
             "widget": "Show all widget types",
+            "view": "Show all knowledge views",
         },
     },
     "/bg": {

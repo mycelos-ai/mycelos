@@ -99,6 +99,29 @@ deliberately small shape:
 Full A2UI compatibility is not a goal of this package. The format is kept close enough that an
 adapter can emit A2UI messages later.
 
+### Web renderer contract (as built in slice 2)
+
+`src/mycelos/frontend/shared/mycelos-view.js` defines `<mycelos-view>` (Shadow DOM, no build step,
+no Tailwind, no CDN). Later slices rely on this contract:
+
+- **Input.** `el.view = viewDict`, exactly the `view_to_dict` shape, or the `view-json` attribute
+  with the same object as JSON. Unknown types or missing data show `fallback_text`.
+- **Events** (all bubble and are composed):
+  - `mycelos-view-ref` `{path, title}`: a source chip was clicked. Cancelable; without
+    `preventDefault` the note opens in `/pages/knowledge.html?note=…`.
+  - `mycelos-view-switch` `{from, to, view}`: the user picked another view. `text` is handled by
+    the element. For any other target the host calls `preventDefault` and later sets `el.view`;
+    without a handler the element shows the text fallback. Slice 4 wires this to the builders.
+  - `mycelos-view-action` `{action, view}`: an approval card button. Cancelable; the card locks
+    only when the host handled it (`preventDefault`). Slice 5 wires this to the resolve paths.
+- **Chat.** `chat.html` renders a message `{role: 'view', view}` with the element, and widget
+  events whose `type` is a catalog type are turned into such messages.
+- **Mermaid.** `mind_map` and `flow` are drawn with `/shared/mermaid.min.js` (loaded on demand,
+  `securityLevel: strict`). Labels are entity-encoded, so note text cannot add Mermaid syntax,
+  directives or HTML. A failed render shows the text fallback.
+- **Labels** come from `web.views.*` via the page's `t()`, with English built in for hosts
+  without the i18n script (for example a future MCP App).
+
 ## Choosing the view
 
 `src/mycelos/knowledge/view_choice.py`, pure functions, no LLM:
