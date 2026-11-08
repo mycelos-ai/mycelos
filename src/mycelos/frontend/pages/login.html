@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -104,17 +104,17 @@
     <form class="login-card" id="login-form" autocomplete="on">
       <div class="login-mark"></div>
       <h1 class="login-title">Mycelos</h1>
-      <p class="login-sub" id="login-sub">Gib dein Passwort ein.</p>
+      <p class="login-sub" id="login-sub">Enter your password to continue</p>
       <!-- Hidden username keeps password managers happy; the gateway only
            checks the password. -->
       <input type="text" name="username" value="mycelos" autocomplete="username" style="display:none">
       <input class="login-input" id="password" name="password" type="password"
-             placeholder="Passwort" aria-label="Passwort" autocomplete="current-password" autofocus required>
+             placeholder="Password" aria-label="Password" autocomplete="current-password" autofocus required>
       <label class="login-remember">
         <input type="checkbox" id="remember" checked>
-        <span id="remember-label">Auf diesem Gerät angemeldet bleiben</span>
+        <span id="remember-label">Remember this device</span>
       </label>
-      <button class="login-btn" id="submit" type="submit">Anmelden</button>
+      <button class="login-btn" id="submit" type="submit">Sign in</button>
       <p class="login-error" id="error"></p>
     </form>
   </div>
@@ -129,6 +129,12 @@
       if (login.subtitle) document.getElementById('login-sub').textContent = login.subtitle;
       if (login.submit) document.getElementById('submit').textContent = login.submit;
       if (login.remember) document.getElementById('remember-label').textContent = login.remember;
+      if (login.password) {
+        var field = document.getElementById('password');
+        field.placeholder = login.password;
+        field.setAttribute('aria-label', login.password);
+      }
+      if (data.lang) document.documentElement.lang = data.lang;
       window._loginWrong = login.wrong_password || null;
     }).catch(function () {});
 

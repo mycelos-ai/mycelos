@@ -87,7 +87,7 @@ def test_failed_analysis_does_not_mark_content_processed(env):
     with pytest.raises(RuntimeError):
         svc.ingest(source["id"])
     assert svc.list()[0]["status"] == "error"
-    assert svc.list()[0]["error"] == "Import fehlgeschlagen. Quelle und Modell prüfen."
+    assert svc.list()[0]["error"] == "Import failed. Check the source and the model."
     assert app.storage.fetchone("SELECT count(*) AS n FROM local_source_items")["n"] == 0
     recovered = LocalSourceService(app, summarize=lambda unit, source: "Recovered")
     assert recovered.ingest(source["id"])["created"] == 1
@@ -193,7 +193,7 @@ def test_active_process_lock_cannot_be_stolen(env):
     svc = LocalSourceService(app)
     source = svc.add("Docs", "folder", str(root), mode="direct")
     with source_lock(app.data_dir, source["id"]):
-        with pytest.raises(ValueError, match="bereits"):
+        with pytest.raises(ValueError, match="already running"):
             svc.ingest(source["id"])
 
 

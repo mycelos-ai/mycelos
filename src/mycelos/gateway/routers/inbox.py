@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse
 
 from mycelos.gateway.routers._helpers import resolve_user_id
 from mycelos.knowledge.inbox_model import InboxModel, list_uncertain_placements
+from mycelos.i18n import t as _t
 
 logger = logging.getLogger("mycelos.gateway")
 
@@ -264,9 +265,9 @@ def inbox_retry_run(routine_key: str, request: Request) -> Any:
         try:
             return LocalSourceService(mycelos, user_id).enqueue(local_source['id'])
         except ValueError:
-            return JSONResponse({'error': 'Der Import kann derzeit nicht starten.'}, status_code=409)
+            return JSONResponse({'error': _t("sources.import_cannot_start")}, status_code=409)
         except RuntimeError:
-            return JSONResponse({'error': 'Die Hintergrundverarbeitung ist nicht verfügbar.'}, status_code=503)
+            return JSONResponse({'error': _t("sources.background_unavailable_dot")}, status_code=503)
 
     # For legacy connector sources, the allowlist runs before dispatch.
     # The allowlist runs first, before storage, dispatch, the recorder and
