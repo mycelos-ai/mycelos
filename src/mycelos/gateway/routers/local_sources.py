@@ -84,6 +84,12 @@ def get(source_id: str, request: Request):
     return invoke(lambda: service(request).get(source_id))
 
 
+@router.get("/{source_id}/filing")
+def filing(source_id: str, request: Request):
+    """Attachments and rule of this source in the shared source model."""
+    return invoke(lambda: service(request).filing(source_id))
+
+
 @router.put("/{source_id}")
 def update(source_id: str, body: SourceUpdate, request: Request):
     return invoke(lambda: service(request).update(source_id, **body.model_dump()))

@@ -71,6 +71,9 @@ class LocalSourceService:
         self.db.execute(
             "INSERT INTO local_sources(id,user_id,name,kind,root,purpose,mode,model,workflow) VALUES(?,?,?,?,?,?,?,?,?)",
             (source_id, self.user_id, name.strip(), kind, str(path), purpose, mode, model, json.dumps(workflow, ensure_ascii=False)))
+        # The root path stays out of the audit payload: it can name clients.
+        self._changed("local_source.added", source_id, {"kind": kind, "mode": mode},
+                      f"Local source {source_id} added", "local_source_add")
         return self.get(source_id)
 
     def update(self, source_id, name, purpose, mode, model=None, workflow=None):
@@ -85,6 +88,8 @@ class LocalSourceService:
                 (name.strip(), purpose, mode, model, json.dumps(workflow, ensure_ascii=False), source_id, self.user_id))
             if not result.rowcount:
                 raise ValueError("Bitte den laufenden Import abwarten")
+        self._changed("local_source.updated", source_id, {"mode": mode},
+                      f"Local source {source_id} updated", "local_source_update")
         return self.get(source_id)
 
     def inspect(self, kind, root, workflow=None):
@@ -120,7 +125,34 @@ class LocalSourceService:
                                  ("paused" if paused else "ready", source_id))
         if not cursor.rowcount:
             raise ValueError("Die Quelle läuft bereits")
+        self._changed("local_source.paused" if paused else "local_source.resumed", source_id, {},
+                      f"Local source {source_id} {'paused' if paused else 'resumed'}",
+                      "local_source_pause")
         return self.get(source_id)
+
+    def filing(self, source_id: str) -> dict:
+        """Where this source files and under which rule (shared source model).
+
+        Local sources use the same attachment and rule tables as connectors,
+        keyed ``local:<id>``; the knowledge organizer and the article import
+        both read them.
+        """
+        from mycelos.knowledge.source_attachment import SourceAttachmentService, local_source_key
+        self.get(source_id)
+        service = SourceAttachmentService(self.db)
+        key = local_source_key(source_id)
+        return {"source_key": key,
+                "attachments": service.list_attachments(key, self.user_id),
+                "rule_text": service.get_rule(key, self.user_id)}
+
+    def _changed(self, event, source_id, details, description, trigger):
+        """Audit every mutation and record a config generation (Rules 1 and 2)."""
+        audit = getattr(self.app, "audit", None)
+        if audit is not None:
+            audit.log(event, user_id=self.user_id, details={"source": source_id, **details})
+        notifier = getattr(self.app, "config_notifier", None)
+        if notifier is not None:
+            notifier.notify_change(description, trigger)
 
     def preview(self, source_id: str, limit: int = 3) -> dict:
         source = self.get(source_id)

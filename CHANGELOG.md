@@ -2,6 +2,24 @@
 
 ## Week 45 (2026)
 
+### Collector leftovers: local sources in the shared source model
+
+- **Local sources are part of the config history.** Adding, editing, pausing
+  and resuming a local source is audited (`local_source.*`, without the root
+  path) and creates a config generation. Config snapshots now also carry the
+  folder attachments and rules of every source (connectors, local sources,
+  chat), so a rollback restores where each source files. Older snapshots
+  leave these tables untouched.
+- **One API for every source.** `/api/sources/{key}` accepts `local:<id>`
+  (only for your own local source, refused otherwise) and `chat` next to
+  connector ids. `GET /api/local-sources/{id}/filing` shows a local source's
+  attached folders and rule.
+- **Articles in your language.** Source analysis and relation reasons follow
+  the language preference instead of always writing German; the relation
+  prompt is now English like every other prompt.
+- **Relations versus links documented.** The spec states the split between
+  structural `knowledge_links` and typed evidence `knowledge_relations`.
+
 ### Capture, attach and correct with approval cards (Package 8, slice 5)
 
 - **Saving something in the chat shows where it went.** When Mycelos saves a
