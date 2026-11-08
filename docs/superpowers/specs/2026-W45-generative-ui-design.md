@@ -167,10 +167,22 @@ reminders, notes from the last 24 hours with provenance) and adds one short LLM 
    (hybrid search over today's arrivals, excluding notes seen in the last 30 days), at most one
    per day.
 
+As built in slice 3 (`knowledge/briefing_views.py`): the briefing payload carries `lead`, `views`
+(`counts`, `evidence`, `graph_slice` for the rediscovered note, each only when it has data) and
+`needs_you` (inbox entries with their actions, read live on every request, never cached with the
+briefing). "Since the last briefing" is the previous build's `generated_at`, at most seven days
+back. `knowledge_relations` has no timestamp, so a contradiction counts as new when its from-note
+was created or updated in that window (relations are rebuilt when the from-note is analysed).
+Rediscovery probes the newest arrivals with the hybrid search (whole title, then its longest
+word for FTS-only setups) and skips notes touched in the last 30 days or resurfaced in that
+window.
+
 Delivery:
 
 - **Web**: when the user opens the conversation for the first time on a day, the briefing is the
-  first message (from `get_or_build_briefing`, cached per day). It is not re-sent on reload.
+  first message (from `get_or_build_briefing`, cached per day). It is not re-sent on reload:
+  `GET /api/briefing/first-message` returns `show`, and the client calls
+  `POST /api/briefing/first-message/shown` after rendering it.
 - **Telegram**: unchanged schedule; the same views render through `telegram_renderer.py` as text,
   with `Counts` as a short line per source.
 - The briefing remains opt-in for push delivery; the in-app first message is always on.

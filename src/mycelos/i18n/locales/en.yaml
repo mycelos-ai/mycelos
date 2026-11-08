@@ -365,6 +365,26 @@ interview:
   cap_calendar_read: "Read calendar"
   cap_sandbox_execute: "Execute code"
 
+# --- Daily briefing (Package 8) ---
+briefing:
+  lead_fallback: "Morning briefing for {date}"
+  rediscovered_line: '"{title}" (related to "{because}")'
+  section:
+    arrivals: "Arrived since the last briefing"
+    contradictions: "New contradictions"
+    rediscovered: "Rediscovered"
+  view:
+    arrivals_title: "What arrived"
+    arrivals_reason: "Counts per source since the last briefing"
+    notes_unit: "notes"
+    other_sources: "other sources"
+    contradictions_title: "Sources that disagree"
+    contradictions_reason: "New contradicting relations between notes since the last briefing"
+    no_reason: "No reason recorded"
+    rediscovered_title: 'Rediscovered: "{title}"'
+    rediscovered_reason: "An older note from {year} that relates to something that arrived today"
+    related: "related"
+
 widgets:
   confirm_yes_no: "[Y/n]"
   image_alt: "[Image: {alt}]"
@@ -467,6 +487,10 @@ telegram:
 
 # --- Web UI translations ---
 web:
+  briefing:
+    needs_you: "Needs you ({count})"
+    all_clear: "Nothing needs you right now."
+    open_inbox: "Open the full inbox"
   views:
     why: "Why this view"
     switch_to: "Show as"
