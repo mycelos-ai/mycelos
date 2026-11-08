@@ -2,6 +2,21 @@
 
 ## Week 45 (2026)
 
+### Views and approval cards survive a reload; Telegram gets buttons
+
+- **Reloading a conversation shows its views again.** Timelines,
+  connections, filing previews and approval cards are kept in the session
+  file next to the messages and come back in the same place. The model never
+  sees them when a conversation resumes.
+- **Cards show where they stand.** A reloaded approval card that was already
+  answered stays locked with its outcome ("Moved 1 note(s)."); an expired or
+  foreign card cannot be pressed; an open card still works.
+- **Approval cards on Telegram.** Saving, correcting and attaching show the
+  card with one button per action. A press resolves the same stored proposal
+  as the web chat, only for allowlisted users and only for their own cards,
+  and the message then shows the outcome without buttons. Saving a note on
+  Telegram now shows the "where it went" card too.
+
 ### Capture, attach and correct with approval cards (Package 8, slice 5)
 
 - **Saving something in the chat shows where it went.** When Mycelos saves a

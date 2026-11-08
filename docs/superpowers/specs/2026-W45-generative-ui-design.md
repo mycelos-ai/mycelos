@@ -216,6 +216,19 @@ Delivery:
   `POST /api/briefing/first-message/shown` after rendering it.
 - **Telegram**: unchanged schedule; the same views render through `telegram_renderer.py` as text,
   with `Counts` as a short line per source.
+
+Reload and Telegram (follow-up to slices 4 and 5):
+
+- Every view a tool hands to the chat (`__view__`) is appended to the session JSONL as a
+  `{"type": "view"}` record. `load_messages` (model resume) skips them; `load_transcript` returns
+  messages and views in order, and `GET /api/sessions/{id}/messages` returns views as
+  `role: "view"`. An approval card also carries `state` (`pending`, `resolved` with action and
+  result, `expired`, `unknown`), read from `view_proposals` for the requesting user, never the
+  payload. The client restores answered cards locked (`el.actionResult({ok, action, message})`)
+  and expired or unknown ones with `{ok: false, locked: true}`.
+- Telegram sends approval cards as their own message with one inline button per action
+  (`prop:<action>:<proposal id>`). The button resolves through `ProposalService` as
+  `telegram:<user id>`: only allowlisted users, only their own cards, only the card's actions.
 - The briefing remains opt-in for push delivery; the in-app first message is always on.
 
 ## Scenarios this package must carry
