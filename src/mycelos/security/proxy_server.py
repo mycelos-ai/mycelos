@@ -264,9 +264,43 @@ def create_proxy_app() -> FastAPI:
                     return None  # Caller will deny — SttError raised in _create_backend
 
             _state["_stt_service"] = SttService(
-                credential_lookup=_lookup, eu_mode_check=_eu_mode_enabled
+                credential_lookup=_lookup, eu_mode_check=_eu_mode_enabled,
+                settings_lookup=_stt_settings,
             )
         return _state["_stt_service"]
+
+    def _stt_settings(user_id: str = "default") -> dict:
+        """Read the STT choice saved in the web settings (read-only DB).
+
+        Same row layout as the EU-mode flag: system memory scope. Per-request
+        read, so a change applies without a proxy restart. Unknown or broken
+        values fall back to the environment default.
+        """
+        storage = _get_storage()
+        if storage is None:
+            return {}
+        try:
+            settings: dict = {}
+            for key, field in (("stt_provider", "provider"), ("stt_model", "model")):
+                row = storage.fetchone(
+                    "SELECT value FROM memory_entries "
+                    "WHERE user_id = ? AND scope = 'system' AND agent_id IS NULL "
+                    "AND key = ?",
+                    (user_id, key),
+                )
+                if row is None and user_id != "default":
+                    row = storage.fetchone(
+                        "SELECT value FROM memory_entries "
+                        "WHERE user_id = 'default' AND scope = 'system' AND agent_id IS NULL "
+                        "AND key = ?",
+                        (key,),
+                    )
+                if row and row["value"]:
+                    settings[field] = str(row["value"])
+            return settings
+        except Exception as exc:
+            logger.warning("STT settings lookup failed (using default): %s", exc)
+            return {}
 
     def _eu_mode_enabled(user_id: str = "default") -> bool:
         """Read the persisted EU-mode flag from the (read-only) DB.
@@ -1218,7 +1252,8 @@ def create_proxy_app() -> FastAPI:
             )
 
         stt_service = _get_stt_service()
-        resolved_provider = stt_service.resolve_provider(provider if provider else None)
+        resolved_provider = stt_service.resolve_provider(provider if provider else None,
+                                                         user_id=user_id)
         stt_request = SttRequest(
             audio=audio_bytes,
             filename=audio.filename or "audio",

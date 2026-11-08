@@ -495,6 +495,14 @@ def model_settings(request: Request) -> dict[str, Any]:
             saved_url = app.memory.get('default', 'system', provider.id + '_url')
             row['url'] = saved_url or provider.default_url
             row['configured'] = row['configured'] or bool(saved_url)
+        if provider.id == 'custom':
+            from mycelos.llm.custom import env_api_base, env_has_secret
+            # LITELLM_HOST / LITELLM_SECRET fill blanks; only flags leave here.
+            env_url = env_api_base()
+            row['env_url'] = bool(env_url)
+            row['env_secret'] = env_has_secret()
+            row['url'] = row['url'] or env_url
+            row['configured'] = row['configured'] or bool(env_url and row['env_secret'])
         providers.append(row)
     return {'providers': providers}
 
@@ -518,11 +526,17 @@ def save_model_provider(request: Request, provider_id: str, payload: dict[str, A
             raise HTTPException(400, 'Bitte eine gültige Server-Adresse mit http oder https eingeben.')
         credential = {'api_base': url}
         if provider_id == 'custom':
+            from mycelos.llm.custom import env_has_secret
             old = app.credentials.get_credential('custom') or {}
             key = str(payload.get('api_key') or '').strip() or old.get('api_key')
-            if not key or any(c in key for c in ('\r', '\n')):
+            if key and any(c in key for c in ('\r', '\n')):
                 raise HTTPException(400, 'Bitte ein gültiges Bearer-Token eingeben.')
-            credential['api_key'] = key
+            if not key and not env_has_secret():
+                raise HTTPException(400, 'Bitte ein gültiges Bearer-Token eingeben.')
+            if key:
+                # Without a stored token, LITELLM_SECRET is read at call time
+                # and never copied into the credential store.
+                credential['api_key'] = key
         app.credentials.store_credential(provider_id, credential)
         app.memory.set('default', 'system', provider_id + '_url', url)
     elif provider.credential_fields:
@@ -540,6 +554,39 @@ def save_model_provider(request: Request, provider_id: str, payload: dict[str, A
             app.credentials.store_credential(provider_id, {'api_key': key})
     app.audit.log('models.provider_saved', details={'provider': provider_id})
     return {'ok': True, 'provider': provider_id}
+
+
+_STT_CHOICES = ('', 'custom')
+
+
+@router.get('/api/models/stt')
+def stt_settings(request: Request) -> dict[str, Any]:
+    """Speech input choice. '' keeps the environment default (MYCELOS_STT_PROVIDER)."""
+    import os
+    from mycelos.speech.transcription import CUSTOM_STT_DEFAULT_MODEL
+    app = request.app.state.mycelos
+    provider = app.memory.get('default', 'system', 'stt_provider') or ''
+    model = app.memory.get('default', 'system', 'stt_model') or ''
+    return {'provider': provider if provider in _STT_CHOICES else '',
+            'model': model or CUSTOM_STT_DEFAULT_MODEL,
+            'env_default': os.environ.get('MYCELOS_STT_PROVIDER', 'openai').strip().lower() or 'openai'}
+
+
+@router.put('/api/models/stt')
+def save_stt_settings(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    from fastapi import HTTPException
+    from mycelos.speech.transcription import CUSTOM_STT_DEFAULT_MODEL
+    provider = str(payload.get('provider') or '').strip().lower()
+    model = str(payload.get('model') or '').strip() or CUSTOM_STT_DEFAULT_MODEL
+    if provider not in _STT_CHOICES:
+        raise HTTPException(400, 'Diese Spracherkennung ist nicht verfügbar.')
+    if len(model) > 256 or any(c.isspace() for c in model):
+        raise HTTPException(400, 'Bitte einen Modellnamen ohne Leerzeichen eingeben.')
+    app = request.app.state.mycelos
+    app.memory.set('default', 'system', 'stt_provider', provider)
+    app.memory.set('default', 'system', 'stt_model', model)
+    app.audit.log('models.stt_saved', details={'provider': provider or 'environment', 'model': model})
+    return {'ok': True, 'provider': provider, 'model': model}
 
 
 @router.get('/api/models/catalog/{provider_id}')
@@ -621,8 +668,18 @@ def discover_provider_models(request: Request, provider_id: str):
     with app.storage.transaction():
         for model in models:
             # Discovery adds missing aliases; existing choices remain untouched.
-            if not app.model_registry.get_model(model['id']):
-                app.model_registry.add_model(model['id'], 'custom', model['tier'])
+            existing = app.model_registry.get_model(model['id'])
+            if not existing:
+                app.model_registry.add_model(model['id'], 'custom', model['tier'],
+                                             max_context=model.get('max_context'))
+            elif model.get('max_context') and model['max_context'] != existing.get('max_context'):
+                # Only the proxy-reported context window is refreshed.
+                app.model_registry.add_model(model['id'], 'custom', existing['tier'],
+                    input_cost_per_1k=existing.get('input_cost_per_1k'),
+                    output_cost_per_1k=existing.get('output_cost_per_1k'),
+                    max_context=model['max_context'],
+                    status=existing.get('status') or 'available')
+    app.audit.log('models.custom_discovered', details={'count': len(models)})
     return {'models': models, 'count': len(models)}
 
 
