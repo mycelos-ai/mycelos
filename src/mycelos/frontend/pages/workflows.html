@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -273,7 +273,7 @@
                   <span class="material-symbols-outlined text-sm text-[var(--on-surface-variant)] transition-transform"
                         :class="expanded && 'rotate-180'">expand_more</span>
                   <span class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]"
-                        x-text="expanded ? 'Details schließen' : 'Details'"></span>
+                        x-text="expanded ? t('workflow_page.details_close') : t('workflow_page.details')"></span>
                 </button>
                 <button @click.stop="openRunDialog(wf)"
                    class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-label font-semibold uppercase tracking-wider
@@ -346,9 +346,9 @@
           <!-- Section header -->
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h2 class="font-headline text-xl font-bold tracking-tight">Zeitpläne</h2>
+              <h2 class="font-headline text-xl font-bold tracking-tight" x-text="t('workflow_page.schedules')"></h2>
               <p class="text-sm text-[var(--on-surface-variant)] mt-1">
-                <span x-text="schedules.length"></span> Zeitpläne
+                <span x-text="t('workflow_page.schedule_count', {count: schedules.length})"></span>
               </p>
             </div>
           </div>
@@ -359,9 +359,9 @@
           <!-- Empty state: no schedules -->
           <div x-show="schedules.length === 0 && !loading" class="card text-center py-12">
             <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-5xl mb-4 block opacity-30">schedule</span>
-            <h3 class="font-headline text-lg font-bold mb-2">No Zeitpläne</h3>
+            <h3 class="font-headline text-lg font-bold mb-2" x-text="t('workflow_page.no_schedules')"></h3>
             <p class="text-sm text-[var(--on-surface-variant)] max-w-sm mx-auto">
-              No Zeitpläne. Create a workflow and schedule it.
+              <span x-text="t('workflow_page.no_schedules_hint')"></span>
             </p>
           </div>
 
@@ -437,7 +437,7 @@
             <div>
               <h2 class="font-headline text-xl font-bold tracking-tight flex items-center gap-2">
                 <span class="material-symbols-outlined text-[var(--on-surface-variant)]">history</span>
-                Letzte Ausführungen
+                <span x-text="t('workflow_page.recent_runs')"></span>
               </h2>
               <p class="text-sm text-[var(--on-surface-variant)] mt-1">
                 <span x-text="runs.length"></span> recent runs
@@ -782,7 +782,7 @@
         _runDetail: null,
         _runDetailLoading: false,
 
-        // Status filter for Letzte Ausführungen. Default surfaces actionable runs.
+        // Status filter for recent runs. Default surfaces actionable runs.
         runFilter: 'attention',
         runFilterChips: [
           { id: 'attention', label: 'Failed + Waiting' },

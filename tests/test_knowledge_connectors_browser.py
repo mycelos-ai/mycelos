@@ -1,4 +1,5 @@
 """MCP settings use the HTTP contract without remote tool calls."""
+from tests.browser_i18n import install_t
 import json
 from pathlib import Path
 
@@ -37,6 +38,7 @@ def test_connections_add_and_lazy_tool_list(page):
     page.route("https://example.test/api/**", route)
     page.route("https://example.test/", lambda r: r.fulfill(content_type="text/html", body='<html lang="de"><mycelos-connectors></mycelos-connectors></html>'))
     page.goto("https://example.test/")
+    install_t(page, "de")
     page.add_script_tag(path=str(SCRIPT))
     card = page.locator("mycelos-connectors")
     expect(card.get_by_text("Dokumente <script>", exact=True)).to_be_visible()
