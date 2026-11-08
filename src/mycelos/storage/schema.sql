@@ -625,3 +625,19 @@ CREATE TABLE IF NOT EXISTS local_source_metadata (
     item_id TEXT PRIMARY KEY REFERENCES local_source_items(id) ON DELETE CASCADE,
     metadata TEXT NOT NULL
 );
+
+-- Approval cards in the chat (Package 8, slice 5). The card carries only the
+-- id; what an action does is stored here, so a client cannot change targets.
+CREATE TABLE IF NOT EXISTS view_proposals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    kind TEXT NOT NULL CHECK(kind IN ('capture', 'attach_source', 'correct')),
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'resolved')),
+    action TEXT,
+    result TEXT,
+    session_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_view_proposals_status ON view_proposals(user_id, status);

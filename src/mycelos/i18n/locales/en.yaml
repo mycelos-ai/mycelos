@@ -425,6 +425,43 @@ ask:
       duplicate: "duplicate of"
       merged_from: "merged from"
 
+# --- Filing changes as approval cards (Package 8, slice 5) ---
+filing:
+  inbox: "Inbox (sorted later)"
+  action:
+    accept: "Keep it"
+    elsewhere: "File elsewhere"
+    make_task: "Make it a task"
+    approve: "Attach and import"
+    cancel: "Cancel"
+    teach_rule: "Move and teach the rule"
+  capture:
+    title: "Filed"
+    reason: "You asked to remember this; this is where it went"
+    summary: 'Saved "{title}".'
+    inbox_effect: "The organizer will sort it into a folder; you can pick one now."
+  correct:
+    title: "Move to another folder"
+    reason: "You said this note is in the wrong folder"
+    summary: 'Move "{title}" to {after}?'
+    effect_accept: "Keep it moves only this note."
+    effect_teach: "Teaching the rule also moves {count} similar notes:"
+    also_moves: '"{title}"'
+    effect_rule: "The rule is remembered, so new notes like this land there too."
+  attach:
+    title: "Attach {name}"
+    reason: "A new source changes where knowledge is filed"
+    summary: "Attach {name} to {where} and import it?"
+    where: "Where: everything from this source stays inside {where}."
+    rule: "Rule: {rule}"
+    no_rule: "No extra rule: Mycelos sorts by content inside the folder."
+    import_after: "The import starts only after you approve."
+    preview_title: "{name}: what would be imported"
+    preview_reason: "Counted from the files, without reading them with a model"
+    estimated: "estimated"
+    files: "Files"
+    units: "Notes"
+
 widgets:
   confirm_yes_no: "[Y/n]"
   image_alt: "[Image: {alt}]"
@@ -543,6 +580,20 @@ web:
     diagram_failed: "The diagram could not be drawn. Showing the text version."
     loading_diagram: "Drawing diagram…"
     action_sent: "Sent"
+    result:
+      accepted: "Kept where it is."
+      task: "It is a task now."
+      ask_where: "Say where it should go."
+      moved: "Moved {count} note(s)."
+      moved_rule: "Moved {count} note(s) and remembered the rule."
+      attached: "Attached. The import is running."
+      attached_not_started: "Attached. The import did not start; start it from Sources."
+      cancelled: "Cancelled. Nothing changed."
+    error:
+      expired: "This card has expired. Ask again."
+      already_resolved: "This card was already answered."
+      failed: "That did not work. Nothing changed; try again."
+    prefill_elsewhere: '"{title}" belongs in '
     unknown: "This view cannot be shown here. Showing the text version."
     type:
       timeline: "Timeline"

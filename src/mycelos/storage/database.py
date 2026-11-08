@@ -241,6 +241,27 @@ class SQLiteStorage:
         )
         self._conn.commit()
 
+        # Approval cards (Package 8, slice 5); also for existing databases.
+        self._conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS view_proposals (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'default',
+                kind TEXT NOT NULL CHECK(kind IN ('capture', 'attach_source', 'correct')),
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'resolved')),
+                action TEXT,
+                result TEXT,
+                session_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                resolved_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_view_proposals_status
+                ON view_proposals(user_id, status);
+            """
+        )
+        self._conn.commit()
+
         # Graph node positions are user-owned. This script also runs for
         # existing databases because schema.sql is only reapplied when an
         # older check table is absent.

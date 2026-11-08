@@ -2,6 +2,37 @@
 
 ## Week 45 (2026)
 
+### Capture, attach and correct with approval cards (Package 8, slice 5)
+
+- **Saving something in the chat shows where it went.** When Mycelos saves a
+  note for you, a card shows the folder (or "Inbox" when the organizer sorts it
+  later) and its confidence, with "Keep it", "File elsewhere" and "Make it a
+  task". "File elsewhere" puts a sentence in the composer, so you just say
+  where.
+- **Corrections are a card, not a silent move.** Saying "that belongs to
+  Müller, not Projects" shows the move before and after. "Move and teach the
+  rule" lists the similar notes from the same folder and source that would
+  move too, moves them and remembers the rule, so the organizer files new
+  notes like it there.
+- **Attaching a local source asks first.** Attaching an Obsidian vault or a
+  folder to a folder shows what, where and the rule, plus an import preview
+  (files and notes, counted without a model). Nothing is attached or imported
+  before you approve; approving attaches it, saves the rule and starts the
+  import.
+- **One source model.** Local sources now use the same folder attachments and
+  rules as connectors (key `local:<id>`): the organizer keeps their notes
+  inside the attached folder, and the source's article root is created there.
+  Rules also apply to sources without attachments, including chat captures.
+- **The buttons work.** `<mycelos-view>` approval cards in the chat call
+  `POST /api/proposals/{id}/resolve`. The card carries only an id; what an
+  action does is stored on the server when the card is built, so a client
+  cannot change a target. Unknown, foreign, expired (7 days) and already
+  answered cards are refused; a failed action leaves the card pressable.
+  Every card and every answer is audited with ids and paths only.
+- **No tool can press a button.** The new tools `filing_correct` and
+  `source_attach` only build cards; security tests check that building cards
+  changes nothing and that note content cannot add actions.
+
 ### Questions answered with views (Package 8, slice 4)
 
 - **Knowledge questions get a view, not a wall of text.** A new chat tool,

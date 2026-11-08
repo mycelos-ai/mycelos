@@ -703,6 +703,7 @@ class KnowledgeBase:
         content: str | None = None,
         append: bool = False,
         priority: int | None = None,
+        note_type: str | None = None,
     ) -> bool:
         """Update an existing note. Returns False if not found."""
         file_path = self._safe_path(path)
@@ -720,6 +721,8 @@ class KnowledgeBase:
             note.due = due
         if priority is not None:
             note.priority = priority
+        if note_type is not None:
+            note.type = note_type
         if content is not None:
             if append:
                 note.content = note.content + "\n\n" + content

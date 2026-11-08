@@ -17,7 +17,12 @@
  *                                             text fallback when there is none.
  *   mycelos-view-action {action, view}        an approval card button was pressed;
  *                                             cancelable. A host that handles it calls
- *                                             preventDefault, which locks the card.
+ *                                             preventDefault, which locks the card, and
+ *                                             reports the outcome with
+ *                                             el.actionResult({ok, message}): ok keeps
+ *                                             the card locked with the message, not ok
+ *                                             unlocks it and shows the message as an
+ *                                             error (slice 5).
  *
  * Security: every text field is data. It is escaped and never interpreted as
  * markup; Mermaid sources are built from escaped labels and rendered with
@@ -223,6 +228,7 @@
     .actions{display:flex;flex-wrap:wrap;gap:8px}
     .actions button:first-child{background:#176366;border-color:#176366;color:#fff}
     .sent{font-size:13px;color:#536568;margin-top:8px}
+    .sent.error{color:#a3361f}
     @media (max-width:600px){.view{padding:14px}.bars{grid-template-columns:1fr auto}.bars .bar{grid-column:1 / -1;order:3}}
   `;
 
@@ -236,6 +242,7 @@
       this._variants = {};
       this._showText = false;
       this._sentAction = '';
+      this._actionNote = null;   // {ok, message} once the host reported back
       this._generation = 0;
       this.shadowRoot.addEventListener('click', (event) => this._click(event));
     }
@@ -259,6 +266,16 @@
       this._view = v;
       this._showText = false;
       this._sentAction = '';
+      this._actionNote = null;
+      this.render();
+    }
+
+    /** The host's answer to a handled mycelos-view-action. */
+    actionResult(result) {
+      const ok = !!(result && result.ok);
+      const message = result && typeof result.message === 'string' ? result.message : '';
+      if (!ok) this._sentAction = '';
+      this._actionNote = { ok, message };
       this.render();
     }
 
@@ -298,7 +315,7 @@
       if (button.dataset.action !== undefined) {
         const e = this._emit('mycelos-view-action', { action: button.dataset.action, view: v }, true);
         // Only a host that handles the action (preventDefault) locks the card.
-        if (e.defaultPrevented) { this._sentAction = button.dataset.action; this.render(); }
+        if (e.defaultPrevented) { this._sentAction = button.dataset.action; this._actionNote = null; this.render(); }
       }
     }
 
@@ -371,21 +388,30 @@
               <small>${esc(c.source)}${c.date ? ' · ' + esc(c.date) : ''}${rel !== 'neutral' ? ' · ' + esc(tr('views.' + rel)) : ''}</small></article>`;
           }).join('')}</div>`;
         case 'tree_change':
-          return `<ul class="tree">${(d.changes || []).map((c) => `<li><strong>${esc(c.title)}</strong><br>
-              ${c.before ? `<span class="path before">${esc(c.before)}</span> → ` : `<span class="tag due">${esc(tr('views.new'))}</span> `}<span class="path after">${esc(c.after)}</span>
-              ${typeof c.confidence === 'number' ? `<span class="conf">${esc(tr('views.confidence'))} ${Math.round(c.confidence * 100)}%</span>` : ''}
-            </li>`).join('')}</ul>`;
+          return this._tree(d.changes);
         case 'approval_card': {
           const sent = this._sentAction;
           const label = sent ? ((d.actions || []).find((a) => a.id === sent) || {}).label || sent : '';
+          const note = this._actionNote;
+          let status = '';
+          if (note && note.message) status = `<p class="sent ${note.ok ? '' : 'error'}" role="${note.ok ? 'status' : 'alert'}">${esc(note.message)}</p>`;
+          else if (sent) status = `<p class="sent" role="status">${esc(tr('views.action_sent'))}: ${esc(label)}</p>`;
           return `<p class="text">${esc(d.summary)}</p>
+            ${(d.changes || []).length ? this._tree(d.changes) : ''}
             ${(d.effects || []).length ? `<ul class="effects">${d.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
             <div class="actions">${(d.actions || []).map((a) => `<button type="button" data-action="${esc(a.id)}" ${sent ? 'disabled' : ''}>${esc(a.label)}</button>`).join('')}</div>
-            ${sent ? `<p class="sent" role="status">${esc(tr('views.action_sent'))}: ${esc(label)}</p>` : ''}`;
+            ${status}`;
         }
         default:
           return this._textBody(false);
       }
+    }
+
+    _tree(changes) {
+      return `<ul class="tree">${(changes || []).map((c) => `<li><strong>${esc(c.title)}</strong><br>
+              ${c.before ? `<span class="path before">${esc(c.before)}</span> → ` : `<span class="tag due">${esc(tr('views.new'))}</span> `}<span class="path after">${esc(c.after)}</span>
+              ${typeof c.confidence === 'number' ? `<span class="conf">${esc(tr('views.confidence'))} ${Math.round(c.confidence * 100)}%</span>` : ''}
+            </li>`).join('')}</ul>`;
     }
 
     _graph(d) {
