@@ -91,3 +91,35 @@ def _drop_gateway_log_handlers():
         if isinstance(handler, logging.FileHandler) and handler.baseFilename.endswith("gateway.log"):
             root.removeHandler(handler)
             handler.close()
+
+
+@pytest.fixture(autouse=True)
+def _stop_security_proxies():
+    """Stop every SecurityProxy child that a test started.
+
+    create_app() forks a SecurityProxy child whenever MYCELOS_MASTER_KEY is
+    set, which CI always does. Nothing in the tests stopped those children, so
+    a full run kept a few hundred forked copies of the test process alive until
+    the runner ran out of memory and the Tests workflow hung until GitHub
+    cancelled it after six hours. Each child is now stopped when the test that
+    started it ends.
+    """
+    from mycelos.security.proxy_launcher import ProxyLauncher
+
+    started: list[ProxyLauncher] = []
+    original_start = ProxyLauncher.start
+
+    def tracking_start(self, *args, **kwargs):
+        started.append(self)
+        return original_start(self, *args, **kwargs)
+
+    ProxyLauncher.start = tracking_start
+    try:
+        yield
+    finally:
+        ProxyLauncher.start = original_start
+        for launcher in started:
+            try:
+                launcher.stop()
+            except Exception:
+                pass
