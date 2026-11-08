@@ -29,6 +29,9 @@
   them alive until the runner ran out of memory, and the Tests workflow on
   `main` hung until GitHub cancelled it after six hours. A test fixture now
   stops every proxy a test started.
+- **Browser tests run last.** pytest grouped the Playwright tests near the
+  start of the run, and the event loop that Playwright keeps running made
+  every later async test fail. They now run after all other tests.
 
 ### Documentation archive from agentpark
 

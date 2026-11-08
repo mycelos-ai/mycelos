@@ -123,3 +123,20 @@ def _stop_security_proxies():
                 launcher.stop()
             except Exception:
                 pass
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(session, config, items):
+    """Run the Playwright browser tests last.
+
+    pytest groups tests that use the parametrized, session-scoped
+    ``browser_name`` fixture, which put the browser tests near the start of
+    the run. The sync Playwright API keeps an event loop running in the main
+    thread for the rest of the session, so every later async test failed
+    with "Runner.run() cannot be called from a running event loop".
+    """
+    browser = [item for item in items if "page" in getattr(item, "fixturenames", ())]
+    if not browser:
+        return
+    others = [item for item in items if "page" not in getattr(item, "fixturenames", ())]
+    items[:] = others + browser
