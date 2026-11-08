@@ -540,6 +540,17 @@ class ChatService:
             _log.debug("Failed to resolve model for agent %s", agent_id, exc_info=True)
         return None  # Use default
 
+    def _registered_context_window(self, model: str | None) -> int | None:
+        """Context window the model registry knows for ``model``, if any."""
+        if not model:
+            return None
+        try:
+            row = self._app.model_registry.get_model(model)
+        except Exception:
+            return None
+        value = (row or {}).get("max_context")
+        return value if isinstance(value, int) and value > 0 else None
+
     def _complete_for_agent(self, messages: list[dict], agent_id: str, tools=None):
         """Resolve the current agent chain for each round, including retries."""
         models = self._app.model_registry.resolve_models(agent_id, "execution")
@@ -1062,7 +1073,8 @@ class ChatService:
 
             # Auto-compact if conversation is getting too long
             from mycelos.chat.compaction import needs_compaction, compact_conversation
-            if needs_compaction(conversation, model=agent_model or ""):
+            if needs_compaction(conversation, model=agent_model or "",
+                                context_window=self._registered_context_window(agent_model)):
                 _perf.info("Auto-compacting conversation (%d messages)", len(conversation))
                 conversation = compact_conversation(
                     conversation,

@@ -13,6 +13,10 @@ from dataclasses import dataclass
 import httpx
 
 
+# STT alias a LiteLLM proxy serves when the settings name none.
+CUSTOM_STT_DEFAULT_MODEL = "stt"
+
+
 class SttError(RuntimeError):
     """Raised when transcription fails."""
 
@@ -178,23 +182,38 @@ def stt_backend_allowed_in_eu(provider: str) -> bool:
 class SttService:
     """Factory + router for multiple STT providers."""
 
-    def __init__(self, credential_lookup, eu_mode_check=None):
+    def __init__(self, credential_lookup, eu_mode_check=None, settings_lookup=None):
         self._credential_lookup = credential_lookup
         self._default_provider = os.environ.get("MYCELOS_STT_PROVIDER", "openai").strip().lower()
         # Optional callable returning True when EU mode is on. When True, only
         # EU-resident STT backends are permitted.
         self._eu_mode_check = eu_mode_check
+        # Optional callable(user_id) -> {"provider": ..., "model": ...} with the
+        # choice saved in the web settings. It wins over MYCELOS_STT_PROVIDER.
+        self._settings_lookup = settings_lookup
 
     @property
     def default_provider(self) -> str:
         return self._default_provider
 
-    def resolve_provider(self, requested: str | None) -> str:
-        return (requested or self._default_provider or "openai").strip().lower()
+    def _settings(self, user_id: str) -> dict:
+        if self._settings_lookup is None:
+            return {}
+        try:
+            return self._settings_lookup(user_id) or {}
+        except Exception:
+            return {}
+
+    def resolve_provider(self, requested: str | None, user_id: str = "default") -> str:
+        saved = str(self._settings(user_id).get("provider") or "")
+        return (requested or saved or self._default_provider or "openai").strip().lower()
 
     def transcribe(self, request: SttRequest, provider: str | None = None, user_id: str = "default") -> SttResult:
-        resolved = self.resolve_provider(provider)
+        resolved = self.resolve_provider(provider, user_id=user_id)
         backend = self._create_backend(resolved, user_id=user_id)
+        if resolved == "custom" and request.model in ("", "whisper-1"):
+            # Channels ask for "whisper-1"; a proxy serves its own STT alias.
+            request.model = str(self._settings(user_id).get("model") or "") or CUSTOM_STT_DEFAULT_MODEL
         return backend.transcribe(request)
 
     def _create_backend(self, provider: str, user_id: str = "default") -> BaseTranscriber:
@@ -222,6 +241,16 @@ class SttService:
                 api_key=api_key,
                 default_model=os.environ.get("MYCELOS_STT_GOOGLE_MODEL", "gemini-2.0-flash"),
             )
+
+        if provider == "custom":
+            # The same OpenAI-compatible server (usually a LiteLLM proxy) that
+            # serves the custom/* chat models, including the env fallback.
+            from mycelos.llm.custom import resolve_custom_credential
+            cred = resolve_custom_credential(self._credential_lookup("custom", user_id=user_id))
+            base_url = str(cred.get("api_base") or "")
+            if not base_url:
+                raise SttError("STT provider 'custom' not configured — set up the custom provider first")
+            return OpenAICompatibleTranscriber(base_url=base_url, api_key=cred.get("api_key") or None)
 
         if provider in {"local", "openai_compatible"}:
             base_url = os.environ.get("MYCELOS_STT_LOCAL_BASE_URL", "http://127.0.0.1:8000/v1")
