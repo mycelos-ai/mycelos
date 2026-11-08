@@ -68,7 +68,8 @@ def attach_source_import_runtime(api, app):
     def stop():
         consumer=getattr(api.state,'source_import_consumer',None)
         if consumer:
-            consumer.stop()
+            from mycelos.scheduler.huey_app import stop_consumer
+            stop_consumer(consumer, getattr(api.state,'source_import_thread',None))
         thread=getattr(api.state,'source_import_thread',None)
         if thread:
             thread.join(timeout=5)
