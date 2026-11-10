@@ -408,13 +408,32 @@ def create_proxy_app() -> FastAPI:
             if credential_proxy:
                 try:
                     cred = credential_proxy.get_credential(req.inject_credential, user_id=user_id)
-                    if cred and cred.get("api_key"):
-                        api_key = cred["api_key"]
                 except Exception:
                     return JSONResponse(
                         {"error": f"Credential injection failed for '{req.inject_credential}' — denied (fail-closed)"},
                         status_code=502,
                     )
+                # A stored credential only goes to its own service's hosts.
+                # Checked on the URL as sent (placeholder still in place), so
+                # a "{credential}" in the host part can never match.
+                from mycelos.security.credential_hosts import credential_allows_url
+                if not credential_allows_url(req.inject_credential, cred, req.url):
+                    if storage:
+                        try:
+                            from urllib.parse import urlsplit
+                            target_host = urlsplit(req.url).hostname or ""
+                        except ValueError:
+                            target_host = ""
+                        _write_audit(storage, "proxy.credential_host_denied", user_id, {
+                            "service": req.inject_credential,
+                            "host": target_host,
+                        })
+                    return JSONResponse(
+                        {"error": f"Credential '{req.inject_credential}' may not be sent to this host — denied"},
+                        status_code=403,
+                    )
+                if cred and cred.get("api_key"):
+                    api_key = cred["api_key"]
         elif req.inline_credential:
             api_key = req.inline_credential
 

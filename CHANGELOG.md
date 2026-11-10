@@ -32,6 +32,15 @@
   UTF-8 bytes). After 10 wrong attempts from one address within five
   minutes, the login page and Basic Auth answer `429` with `Retry-After`;
   failed attempts are audited as `auth.login_failed`.
+- **The SecurityProxy sends a credential only to its own service.**
+  `POST /http` with `inject_credential` used to inject any stored key into
+  a request to any public address, so a compromised gateway could have the
+  OpenAI key or the Telegram token sent to its own server. Each credential
+  is now bound to its service's hosts (fixed list for OpenAI, Telegram,
+  Anthropic, GitHub, … over HTTPS) or to the host of its own `api_base`
+  (Ollama, custom OpenAI-compatible servers). Everything else gets `403`
+  before any outbound request and is logged as
+  `proxy.credential_host_denied`.
 
 ## Week 45 (2026)
 
