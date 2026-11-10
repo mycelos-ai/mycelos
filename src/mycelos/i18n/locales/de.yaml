@@ -731,6 +731,7 @@ web:
     status_local: "Lokal"
     no_session: "Keine Sitzung"
     session_prefix: "Sitzung "
+    answer_sources: "Quellen dieser Antwort"
   knowledge:
     title: "Wissen"
     create: "Erstellen"

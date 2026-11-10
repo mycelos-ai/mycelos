@@ -25,6 +25,8 @@ from mycelos.chat.tool_result_guard import ToolResultGuard, validate_tool_calls
 from mycelos.chat.events import (
     ChatEvent,
     agent_event,
+    citations_event,
+    citations_from_notes,
     done_event,
     error_event,
     session_event,
@@ -833,6 +835,9 @@ class ChatService:
             _log.debug("Auto-title failed", exc_info=True)
 
         # Knowledge Base context enrichment (hard 5s timeout — must not hang chat)
+        # ``citations`` are exactly the notes injected below, sent to the
+        # client so the answer can name its real sources. Path and title only.
+        citations: list[dict[str, str]] = []
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
             kb = self._app.knowledge_base
@@ -855,7 +860,9 @@ class ChatService:
                     )
                 kb_context = "[Knowledge Context]\nRelevant notes from your knowledge base:\n\n" + "\n\n".join(context_parts)
                 conversation.append({"role": "system", "content": kb_context})
+                citations = citations_from_notes(relevant[:3])
         except Exception:
+            citations = []
             _log.debug("Failed to retrieve knowledge base context", exc_info=True)
 
         # Task reminders (overdue + due today) — inject into conversation context
@@ -1574,11 +1581,16 @@ class ChatService:
         assistant_content = ResponseSanitizer().sanitize_text(response.content or "")
         conversation.append({"role": "assistant", "content": assistant_content})
 
+        answer_meta: dict[str, Any] = {"tokens": total_tokens, "model": model_used}
+        if citations:
+            answer_meta["citations"] = citations
         self._app.session_store.append_message(
             session_id, role="assistant", content=assistant_content,
-            metadata={"tokens": total_tokens, "model": model_used},
+            metadata=answer_meta,
         )
 
+        if citations:
+            events.append(citations_event(citations))
         events.append(text_event(assistant_content))
 
         # Auto-detect commands in LLM response → suggested action buttons

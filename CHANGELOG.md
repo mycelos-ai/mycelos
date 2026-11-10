@@ -63,6 +63,21 @@
 
 ## Week 45 (2026)
 
+### Real sources under chat answers
+
+- **Chat answers name the notes they were built on.** The chat already gave
+  the model up to three notes from `kb.find_relevant` as knowledge context,
+  but never told the client which ones. The server now sends a `citations`
+  event with exactly those notes (path and title only, never content), and
+  the web chat shows them as "Sources of this answer" chips under the answer,
+  each linking to the note.
+- **Sources survive a reload.** The citations are stored in the assistant
+  message metadata, so reopening a session shows them again.
+- **No guesses.** When the search finds nothing or fails, the answer shows no
+  sources instead of made-up ones, and the chat still answers. This replaces
+  the idea of the old home omnibox, which used its own search results as
+  stand-in sources (`home.js` is no longer loaded by any page).
+
 ### Views and approval cards survive a reload; Telegram gets buttons
 
 - **Reloading a conversation shows its views again.** Timelines,
