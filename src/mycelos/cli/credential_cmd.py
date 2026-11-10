@@ -67,9 +67,14 @@ def _get_app(data_dir: Path) -> App:
     if not (data_dir / "mycelos.db").exists():
         console.print(f"[red]{t('credential.not_initialized')}[/red]")
         raise SystemExit(1)
+    from mycelos.security.master_key import key_held_by_external_proxy, master_key_path
+    if key_held_by_external_proxy():
+        # Gateway container of the two-container deployment: no key here,
+        # every operation goes through the SecurityProxy.
+        return App(data_dir)
     master_key = os.environ.get("MYCELOS_MASTER_KEY")
     if not master_key:
-        key_file = data_dir / ".master_key"
+        key_file = master_key_path(data_dir)
         if key_file.exists():
             os.environ["MYCELOS_MASTER_KEY"] = key_file.read_text().strip()
         else:
@@ -77,6 +82,12 @@ def _get_app(data_dir: Path) -> App:
             raise SystemExit(1)
     app = App(data_dir)
     return app
+
+
+def _plaintext_readable(app: App) -> bool:
+    """False when credentials are held by the external SecurityProxy."""
+    from mycelos.security.credentials import DelegatingCredentialProxy
+    return not isinstance(app.credentials, DelegatingCredentialProxy)
 
 
 @click.group()
@@ -106,6 +117,9 @@ def list_cmd(data_dir: Path) -> None:
         hint = _SERVICE_HINTS.get(service, {})
         name = hint.get("name", service)
         # Show first/last chars of key for identification
+        if not _plaintext_readable(app):
+            table.add_row(service, name, t("credential.preview_in_proxy"))
+            continue
         cred = app.credentials.get_credential(service)
         if cred and cred.get("api_key"):
             key = cred["api_key"]
@@ -132,7 +146,14 @@ def store_cmd(service: str, data_dir: Path) -> None:
         console.print(f"[dim]{hint['help']}[/dim]")
 
     # Check if already stored
-    existing = app.credentials.get_credential(service)
+    if not _plaintext_readable(app):
+        if service in app.credentials.list_services():
+            console.print(f"[yellow]{t('credential.already_stored', service=service)}[/yellow]")
+            if not click.confirm("Overwrite?"):
+                return
+        existing = None
+    else:
+        existing = app.credentials.get_credential(service)
     if existing and existing.get("api_key"):
         key = existing["api_key"]
         console.print(f"[yellow]Already stored:[/yellow] {key[:4]}...{key[-4:]}")
@@ -192,7 +213,10 @@ def delete_cmd(service: str, data_dir: Path) -> None:
     """Delete a stored credential."""
     app = _get_app(data_dir)
 
-    existing = app.credentials.get_credential(service)
+    if _plaintext_readable(app):
+        existing = app.credentials.get_credential(service)
+    else:
+        existing = service in app.credentials.list_services()
     if not existing:
         console.print(f"[yellow]No credential found for '{service}'.[/yellow]")
         return
@@ -217,6 +241,9 @@ def export_cmd(data_dir: Path, output: Path | None) -> None:
     import json
 
     app = _get_app(data_dir)
+    if not _plaintext_readable(app):
+        console.print(f"[yellow]{t('credential.export_in_proxy')}[/yellow]")
+        raise SystemExit(1)
     services = app.credentials.list_services()
 
     if not services:

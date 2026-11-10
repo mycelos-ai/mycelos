@@ -41,6 +41,23 @@
   (Ollama, custom OpenAI-compatible servers). Everything else gets `403`
   before any outbound request and is logged as
   `proxy.credential_host_denied`.
+- **The gateway container no longer sees the master key.**
+  `docker-compose.yml` mounted `./data` into both containers and the key
+  lived there, so the "isolated" gateway could read it (and
+  `mycelos credential export` in the gateway printed every key). The key
+  now lives in `./secrets` (`MYCELOS_SECRETS_DIR`), mounted into the proxy
+  container only (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`).
+  Existing installs are moved automatically: `mycelos update` /
+  `install.sh` / `install.ps1` and the proxy's own entrypoint move
+  `data/.master_key` to the secrets directory (copy, compare, delete) and
+  refuse to start if two different keys exist. The proxy entrypoint also
+  creates the key on first start and hands it to the container user,
+  which fixes the "`.master_key` not found" start failure on Docker
+  Desktop. The gateway never reads or creates a key when
+  `MYCELOS_PROXY_URL` is set: first-start init and the CLI inside the
+  gateway container store credentials through the proxy, `credential
+  list` shows no key preview there, and `credential export` points to the
+  proxy container.
 
 ## Week 45 (2026)
 

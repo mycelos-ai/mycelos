@@ -261,6 +261,9 @@ credential:
   stored: "Credential '{service}' gespeichert (verschluesselt)."
   test_error: "Test nicht moeglich: {error}"
   no_credentials: "Keine Credentials gespeichert. Nutze: mycelos credential store <service>"
+  preview_in_proxy: "(liegt beim Proxy)"
+  already_stored: "Für '{service}' ist schon ein Zugang gespeichert."
+  export_in_proxy: "Das Gateway kann keine Zugänge lesen. Exportiere im Proxy-Container: docker compose exec proxy mycelos credential export --data-dir /data"
 
 # --- Reset ---
 reset:

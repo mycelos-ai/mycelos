@@ -585,9 +585,18 @@ def create_app(
             pass
     set_language(lang or "en")
 
-    # Load master key
-    if not os.environ.get("MYCELOS_MASTER_KEY"):
-        key_file = data_dir / ".master_key"
+    # Load master key — never in the gateway of a two-container
+    # deployment: there the proxy container owns it (security/master_key.py).
+    from mycelos.security.master_key import key_held_by_external_proxy, master_key_path
+    if key_held_by_external_proxy():
+        if (data_dir / ".master_key").exists():
+            logger.warning(
+                "A .master_key file sits in the gateway's data directory although "
+                "the SecurityProxy runs in its own container. Move it to the proxy's "
+                "secrets directory (see docs/security/two-container-deployment.md)."
+            )
+    elif not os.environ.get("MYCELOS_MASTER_KEY"):
+        key_file = master_key_path(data_dir)
         if key_file.exists():
             os.environ["MYCELOS_MASTER_KEY"] = key_file.read_text().strip()
 
