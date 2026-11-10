@@ -1,5 +1,66 @@
 # Changelog
 
+## Week 46 (2026)
+
+### Security fixes from the November review
+
+- **Rendered Markdown can no longer run script (stored XSS).** Chat
+  replies, notes and workflow results go through DOMPurify after marked
+  (`shared/safe-html.js`). Mermaid source stays escaped instead of being
+  decoded into live HTML, slash-command buttons insert the escaped text,
+  and the "retry tool call" button no longer carries an inline `onclick`.
+  Connector help texts and setup steps are sanitized or escaped too. If
+  DOMPurify is missing the text is shown escaped (fail-closed).
+- **Scripts are served locally.** marked 18.2.0, DOMPurify 3.4.17 and
+  Alpine.js 3.17.5 live in `shared/vendor/` with pinned versions instead
+  of unpinned jsDelivr URLs. Only the Tailwind CDN is still external.
+- **Content-Security-Policy and other browser headers.** Every response
+  carries a CSP (scripts only from the gateway and the Tailwind CDN,
+  network requests only to the gateway and the MCP registry, no plugins,
+  no foreign framing), `X-Frame-Options`, `nosniff` and a same-origin
+  referrer policy.
+- **DNS-rebinding guard.** A gateway without a password now answers only
+  for known host names: loopback, the bind address, the LAN names it
+  detects for a `0.0.0.0` bind, the hosts in `MYCELOS_ALLOWED_ORIGINS`
+  and new `MYCELOS_ALLOWED_HOSTS` (comma-separated, `*` turns the check
+  off). Other `Host` headers get `421`. Before, a page on a foreign domain
+  that re-pointed its DNS to 127.0.0.1 could read and change everything.
+  With `MYCELOS_PASSWORD` set the check is skipped (the attacker never
+  holds the credentials). The Telegram webhook stays reachable.
+- **Login hardening.** A password with umlauts or other non-ASCII
+  characters no longer crashes the login with a 500 (it is compared as
+  UTF-8 bytes). After 10 wrong attempts from one address within five
+  minutes, the login page and Basic Auth answer `429` with `Retry-After`;
+  failed attempts are audited as `auth.login_failed`.
+- **The SecurityProxy sends a credential only to its own service.**
+  `POST /http` with `inject_credential` used to inject any stored key into
+  a request to any public address, so a compromised gateway could have the
+  OpenAI key or the Telegram token sent to its own server. Each credential
+  is now bound to its service's hosts (fixed list for OpenAI, Telegram,
+  Anthropic, GitHub, … over HTTPS) or to the host of its own `api_base`
+  (Ollama, custom OpenAI-compatible servers). Everything else gets `403`
+  before any outbound request and is logged as
+  `proxy.credential_host_denied`.
+- **The gateway container no longer sees the master key.**
+  `docker-compose.yml` mounted `./data` into both containers and the key
+  lived there, so the "isolated" gateway could read it (and
+  `mycelos credential export` in the gateway printed every key). The key
+  now lives in `./secrets` (`MYCELOS_SECRETS_DIR`), mounted into the proxy
+  container only (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`).
+  Existing installs: re-running `install.sh` / `install.ps1` fetches the
+  new compose file and moves `data/.master_key` to the secrets directory
+  (copy, compare, delete); with the new compose file the proxy entrypoint
+  does the same on start. Two different keys → nothing is touched and the
+  proxy refuses to start. `mycelos update` alone keeps the old compose
+  file, so the proxy only warns there. The proxy entrypoint also
+  creates the key on first start and hands it to the container user,
+  which fixes the "`.master_key` not found" start failure on Docker
+  Desktop. The gateway never reads or creates a key when
+  `MYCELOS_PROXY_URL` is set: first-start init and the CLI inside the
+  gateway container store credentials through the proxy, `credential
+  list` shows no key preview there, and `credential export` points to the
+  proxy container.
+
 ## Week 45 (2026)
 
 ### Views and approval cards survive a reload; Telegram gets buttons

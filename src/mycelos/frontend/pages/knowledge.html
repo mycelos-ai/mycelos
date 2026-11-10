@@ -13,10 +13,12 @@
   <script src="/shared/api.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
   <script src="/shared/mermaid.min.js"></script>
   <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Internal wikilinks [[Note Title]] */
@@ -1181,27 +1183,24 @@
 
     function renderMarkdown(text) {
       if (!text) return '';
-      let html;
-      if (typeof marked !== 'undefined') {
-        html = marked.parse(text);
-      } else {
-        html = text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
-      }
+      const Safe = window.MycelosSafeHtml;
+      // Notes hold imported text (mail, web pages, documents). The HTML is
+      // post-processed below and sanitized as the last step.
+      let html = Safe.markdownUnsafe(text);
       // Convert Obsidian-style wikilinks [[Note Title]] to clickable internal links
       // Check existence against loaded notes — unresolved links get different styling
       html = html.replace(
         /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
         (_, target, label) => {
+          // target/label are already HTML-escaped by marked; escape the
+          // decoded form again for the title attribute.
           const display = label || target;
-          const encoded = encodeURIComponent(target.trim());
-          const exists = window._knownNoteTitles.has(target.trim().toLowerCase());
+          const plainTarget = Safe.decodeEntities(target.trim());
+          const encoded = encodeURIComponent(plainTarget);
+          const exists = window._knownNoteTitles.has(plainTarget.toLowerCase());
           const cls = exists ? 'wikilink' : 'wikilink wikilink-unresolved';
-          const title = exists ? target.trim() : target.trim() + ' (not found — click to create)';
-          return `<a href="#" class="${cls}" data-note="${encoded}" title="${title}">${display}</a>`;
+          const title = exists ? plainTarget : plainTarget + ' (not found — click to create)';
+          return `<a href="#" class="${cls}" data-note="${encoded}" title="${Safe.escape(title)}">${display}</a>`;
         }
       );
 
@@ -1209,11 +1208,12 @@
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
         (_, code) => {
+          // Keep the diagram source escaped — mermaid reads it as text.
           const id = 'mermaid-' + (++_mermaidCounter);
-          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${code}</pre></div>`;
         }
       );
+      html = Safe.sanitize(html);
       // Trigger mermaid rendering after DOM update
       if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
         setTimeout(() => mermaid.run(), 50);

@@ -1,5 +1,12 @@
+import os
 from pathlib import Path
 from unittest.mock import patch
+
+# Starlette's TestClient sends ``Host: testserver``. The gateway's
+# DNS-rebinding guard only answers for known host names, so the test
+# host is allowed here (tests/security/test_host_guard.py covers the
+# guard itself with explicit settings).
+os.environ.setdefault("MYCELOS_ALLOWED_HOSTS", "testserver")
 
 import pytest
 

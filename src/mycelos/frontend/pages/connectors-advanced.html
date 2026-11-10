@@ -14,7 +14,8 @@
   <script src="/shared/oauth_setup.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Status dot animations */
@@ -1051,7 +1052,7 @@
                     <div class="flex-1">
                       <div class="font-medium text-sm" x-text="step.title"></div>
                       <div class="text-sm text-[var(--on-surface-variant)] mt-1"
-                           x-html="(step.body || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')"></div>
+                           x-html="MycelosSafeHtml.escape(step.body || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')"></div>
                       <a x-show="step.cta_url" :href="step.cta_url" target="_blank" rel="noopener"
                          class="inline-flex items-center gap-1 text-sm text-[var(--primary)] hover:underline mt-2">
                         <span x-text="step.cta_label || 'Open'"></span>

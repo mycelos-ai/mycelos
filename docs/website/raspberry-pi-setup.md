@@ -23,7 +23,7 @@ Nothing else needs to be on the Pi. Python, Node, and every runtime dependency s
 curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-That's the whole install. It creates `./data/`, generates the master key + proxy token, pulls the Mycelos image, and brings up the gateway + proxy containers. Expect 1-2 minutes on a Pi 5 (image pull dominates).
+That's the whole install. It creates `./data/` and `./secrets/`, generates the master key (in `./secrets/`, back it up) + proxy token, pulls the Mycelos image, and brings up the gateway + proxy containers. Expect 1-2 minutes on a Pi 5 (image pull dominates).
 
 ## Network access
 

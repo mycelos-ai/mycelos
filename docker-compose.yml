@@ -5,7 +5,11 @@
 #   # or:
 #   cp .env.example .env && edit .env && docker compose up -d
 #
-# The proxy container owns .master_key. The gateway never sees it.
+# The proxy container owns the master key: it lives in its own secrets
+# directory (${MYCELOS_SECRETS_DIR:-./secrets}) that only the proxy
+# mounts. The gateway mounts the data directory and never sees the key.
+# A key left in the data directory by an older install is moved over on
+# the proxy's first start.
 
 services:
   proxy:
@@ -16,7 +20,10 @@ services:
       - MYCELOS_DATA_DIR=/data
       - MYCELOS_PROXY_PORT=9110
       - MYCELOS_PROXY_TOKEN=${MYCELOS_PROXY_TOKEN:?set MYCELOS_PROXY_TOKEN in .env}
+      - MYCELOS_MASTER_KEY_FILE=/secrets/.master_key
     volumes:
+      # The master key — mounted into this container only.
+      - ${MYCELOS_SECRETS_DIR:-./secrets}:/secrets
       # Proxy needs the full data directory — SQLite's WAL file
       # (mycelos.db-wal) must sit next to the database file, and
       # file-level bind mounts don't expose sibling files that the
@@ -25,10 +32,8 @@ services:
       # recent writes lived in the WAL; `mycelos credential list`
       # disagreed with the Settings UI for exactly that reason.
       #
-      # .master_key is still only meaningful here: the gateway never
-      # decrypts credentials itself (DelegatingCredentialProxy routes
-      # every read/write through this container), and the Phase 1b
-      # isolation story is about the CODE path, not the filesystem.
+      # The data directory holds no key: the gateway sees the encrypted
+      # credentials table, but only this container can decrypt it.
       - ${MYCELOS_DATA_DIR:-./data}:/data
     networks:
       # mycelos-internal: gateway ↔ proxy only.
@@ -67,8 +72,8 @@ services:
       # set a strong MYCELOS_PASSWORD.
       - "${MYCELOS_BIND:-127.0.0.1}:${MYCELOS_PORT:-9100}:9100"
     volumes:
-      # Gateway owns the full data dir except the master key (separate
-      # bind-mount on the proxy, not visible here).
+      # Gateway owns the data dir. The master key is NOT in it (it lives
+      # in the proxy-only secrets mount above).
       - ${MYCELOS_DATA_DIR:-./data}:/data
     environment:
       - MYCELOS_ROLE=gateway

@@ -17,7 +17,9 @@
   <script defer src="/shared/knowledge-connectors.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
   <script src="/shared/mermaid.min.js"></script>
   <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
   <script>
@@ -167,7 +169,7 @@
       });
     });
   </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Markdown prose styling for agent responses */
@@ -573,7 +575,7 @@
               <!-- Help text -->
               <p x-show="connectorForm.fieldHelp[field.id]"
                  class="mt-1 text-xs text-on-surface-variant"
-                 x-html="connectorForm.fieldHelp[field.id]"></p>
+                 x-html="MycelosSafeHtml.sanitize(connectorForm.fieldHelp[field.id])"></p>
             </div>
           </template>
 
@@ -805,6 +807,7 @@
 
     function renderMarkdown(text) {
       if (!text) return '';
+      const Safe = window.MycelosSafeHtml;
 
       // Defensive: some LLMs emit "[action] type: functions.<name> args:
       // {...} [/action]" as plain text instead of using the native tool-
@@ -824,72 +827,58 @@
             .replace(/'/g, '"');
         } catch (e) { /* ignore — fall through with original */ }
         const actionLabel = fnName.replace(/_/g, ' ');
-        // Render the surrounding text plus a clickable button. The
-        // button calls window.__retryToolCall(fnName, argsJson) which
-        // posts a synthetic chat message asking the model to try
-        // again — same effect as the user re-asking.
+        // Render the surrounding text plus a button. A delegated click
+        // handler (see .mycelos-retry-action below) calls
+        // window.__retryToolCall, which posts a synthetic chat message
+        // asking the model to try again. The surrounding text goes
+        // through the same Markdown + sanitizer path as any reply.
         const before = text.slice(0, actionMatch.index).trim();
         const after = text.slice(actionMatch.index + actionMatch[0].length).trim();
-        const safeArgs = argsText.replace(/"/g, '&quot;');
-        return (
-          (before ? before + '<br><br>' : '') +
-          '<button class="mycelos-retry-action" ' +
-            'onclick="window.__retryToolCall(this)" ' +
-            `data-fn="${fnName}" data-args="${safeArgs}" ` +
+        return Safe.sanitize(
+          (before ? Safe.markdownUnsafe(before) : '') +
+          '<button class="mycelos-retry-action" type="button" ' +
+            `data-fn="${Safe.escape(fnName)}" data-args="${Safe.escape(argsText)}" ` +
             'style="background:var(--primary);color:white;padding:0.5rem 1rem;border-radius:0.5rem;border:none;cursor:pointer;font-size:0.875rem;">' +
-            '▶ ' + actionLabel +
+            '▶ ' + Safe.escape(actionLabel) +
           '</button>' +
-          (after ? '<br><br>' + after : '')
+          (after ? Safe.markdownUnsafe(after) : '')
         );
       }
 
-      let html;
-      if (typeof marked !== 'undefined') {
-        html = marked.parse(text);
-      } else {
-        html = text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
-      }
-      // Helper: decode HTML entities to plain text for data-cmd attribute
-      function _decodeHtml(html) {
-        const el = document.createElement('textarea');
-        el.innerHTML = html;
-        return el.value;
-      }
-      function _encodeAttr(text) {
-        return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-      }
+      let html = Safe.markdownUnsafe(text);
 
-      // Post-process: make slash commands clickable
+      // Post-process: make slash commands clickable. The captured command
+      // text is still HTML-escaped by marked; it is inserted escaped, and
+      // the click handler decodes it again.
       // 1. Commands in <pre><code> blocks (fenced code blocks) — replace entire <pre>
       html = html.replace(
         /<pre><code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)\n?<\/code><\/pre>/g,
         (_, rawCmd) => {
-          const cmd = _decodeHtml(rawCmd).replace(/\n$/, '').trim();
-          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+          const cmd = rawCmd.replace(/\n$/, '').trim();
+          return `<button class="cmd-link" data-cmd="${cmd}" title="Click to run"><code>${cmd}</code></button>`;
         }
       );
       // 2. Commands in inline <code> (backtick) — wrap with button
       html = html.replace(
         /<code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)<\/code>/g,
         (_, rawCmd) => {
-          const cmd = _decodeHtml(rawCmd).trim();
-          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+          const cmd = rawCmd.trim();
+          return `<button class="cmd-link" data-cmd="${cmd}" title="Click to run"><code>${cmd}</code></button>`;
         }
       );
 
-      // Convert mermaid code blocks to renderable containers
+      // Convert mermaid code blocks to renderable containers. The diagram
+      // source stays HTML-escaped: the browser turns it back into text and
+      // mermaid reads it from there. Decoding it here would turn the
+      // diagram source into live HTML.
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
         (_, code) => {
           const id = 'mermaid-' + (++_mermaidCounter);
-          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${code}</pre></div>`;
         }
       );
+      html = Safe.sanitize(html);
       if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
         setTimeout(() => mermaid.run(), 50);
       }
@@ -971,6 +960,16 @@
      * Delegated click handler for .cmd-link buttons in rendered markdown.
      * Dispatches a custom event that the Alpine component listens for.
      */
+    // Delegated handler for the retry button renderMarkdown() emits for a
+    // tool call written as text. Rendered HTML carries no inline event
+    // handlers (the sanitizer strips them), so the click is wired here.
+    document.addEventListener('click', function(e) {
+      const btn = e.target.closest('.mycelos-retry-action');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      window.__retryToolCall(btn);
+    });
+
     document.addEventListener('click', function(e) {
       const btn = e.target.closest('.cmd-link');
       if (!btn) return;

@@ -570,8 +570,12 @@ def _finalize(app: App, data_dir: Path, models: list[ModelInfo], connection_ok: 
 
 def _setup_master_key(data_dir: Path) -> None:
     """Generate or load master key."""
+    from mycelos.security.master_key import key_held_by_external_proxy, master_key_path
+    if key_held_by_external_proxy():
+        # Two-container gateway: the proxy container owns the key.
+        return
     master_key = os.environ.get("MYCELOS_MASTER_KEY")
-    key_file = data_dir / ".master_key"
+    key_file = master_key_path(data_dir)
     if not master_key:
         if key_file.exists():
             master_key = key_file.read_text().strip()

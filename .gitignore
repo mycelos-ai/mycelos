@@ -2,6 +2,7 @@
 .env
 !.env.example
 .master_key
+secrets/
 
 # Python
 __pycache__/

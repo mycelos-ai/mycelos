@@ -25,9 +25,28 @@ def test_gateway_does_not_mount_master_key(compose):
             "gateway must not mount the master key; proxy owns it"
 
 
+def test_gateway_does_not_mount_secrets_dir(compose):
+    """Review finding: both containers mounted ./data, where the key
+    lived. The key now sits in a secrets dir only the proxy mounts."""
+    gw = compose["services"]["gateway"]
+    for v in gw.get("volumes", []):
+        s = str(v)
+        assert "SECRETS_DIR" not in s and ":/secrets" not in s, \
+            "gateway must not mount the proxy's secrets directory"
+    env = " ".join(str(e) for e in gw.get("environment", []))
+    assert "MYCELOS_MASTER_KEY" not in env
+
+
+def test_proxy_reads_key_from_its_own_mount(compose):
+    px = compose["services"]["proxy"]
+    env = " ".join(str(e) for e in px.get("environment", []))
+    assert "MYCELOS_MASTER_KEY_FILE=/secrets/.master_key" in env
+    assert any(str(v).endswith(":/secrets") for v in px.get("volumes", []))
+
+
 def test_proxy_mounts_data_dir(compose):
     """Proxy needs the full /data directory — not just the .db file —
-    so SQLite WAL siblings stay visible and .master_key is reachable.
+    so SQLite WAL siblings stay visible.
     File-level bind mounts were dropped in 65ed1ff because the proxy
     could not see the gateway's fresh writes (they live in the WAL
     file, which a single-file bind does not expose).
