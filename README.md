@@ -93,9 +93,9 @@ A 60-second tour, then deep dives on the parts that matter.
 curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-This creates a working directory, generates the master key and the internal proxy token, fetches `docker-compose.yml`, starts two containers (`mycelos-gateway` and `mycelos-proxy`), and opens the web UI at <http://localhost:9100>.
+This creates a working directory, generates the master key (in `secrets/`) and the internal proxy token (in `.env`), fetches `docker-compose.yml`, starts two containers (`mycelos-gateway` and `mycelos-proxy`), and opens the web UI at <http://localhost:9100>.
 
-Idempotent — re-running keeps existing keys and tokens.
+Idempotent — re-running keeps existing keys and tokens. **Back up `secrets/.master_key`**: without it the stored credentials cannot be decrypted.
 
 **Windows:**
 
@@ -117,10 +117,12 @@ cp .env.example .env
 python -c "import secrets; print('MYCELOS_PROXY_TOKEN=' + secrets.token_urlsafe(32))" >> .env
 # Open .env and remove the empty MYCELOS_PROXY_TOKEN= line above it
 
-# 2. Create the data dir with a master key and an empty DB file
-mkdir -p data
-python -c "import secrets; print(secrets.token_urlsafe(32))" > data/.master_key
-chmod 600 data/.master_key
+# 2. Create the data dir (empty DB file) and the secrets dir with the
+#    master key. Only the proxy container mounts secrets/ — keep the key
+#    out of data/, which the gateway mounts too.
+mkdir -p data secrets && chmod 700 secrets
+python -c "import secrets; print(secrets.token_urlsafe(32))" > secrets/.master_key
+chmod 600 secrets/.master_key
 touch data/mycelos.db
 
 # 3. Launch the stack
@@ -131,7 +133,9 @@ docker compose up -d
 
 The **gateway** serves the web UI, chat, and REST API. The **proxy** holds the master key and brokers every outbound LLM, MCP, and HTTP call. They share an internal Docker network and a bearer token; the proxy's port is never published to the host.
 
-A prompt-injection or RCE inside the gateway cannot read `.master_key` or decrypt the credentials table — the key lives on a different filesystem namespace. See `docs/security/two-container-deployment.md` for the threat model.
+Both containers mount `data/` (the proxy needs the database), but the master key is **not** in it: it lives in `secrets/`, which only the proxy container mounts (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`). A prompt injection or code execution inside the gateway can see the encrypted credentials table but has no key to decrypt it. The proxy also sends each credential only to its own service's hosts, so the gateway cannot have a key delivered to a server of its choosing. The Telegram bot token is the one documented exception the gateway holds in memory. See `docs/security/two-container-deployment.md` for the threat model.
+
+> **Upgrading from an install before week 46 (2026):** older versions kept `.master_key` in `data/`, where the gateway could read it. Re-run the installer in your Mycelos directory: it fetches the new `docker-compose.yml` (with the proxy-only `secrets/` mount) and moves the key to `secrets/` — copied, compared, then deleted from `data/`. With a hand-edited compose file, add the `secrets` volume and `MYCELOS_MASTER_KEY_FILE` from the current `docker-compose.yml` to the proxy service; the proxy then moves the key itself on start. If both places hold *different* keys, nothing is touched and the proxy refuses to start. `mycelos update` alone keeps your old compose file, so it does not move the key.
 
 > **Network access and authentication:** Phase 1 binds the gateway to `localhost` only. Public exposure (Cloudflare Tunnel, Tailscale, or direct Let's Encrypt) is Phase 2 and ships together with passkey-based authentication. Do not expose this to a network you do not control until that ships.
 
@@ -140,10 +144,10 @@ A prompt-injection or RCE inside the gateway cannot read `.master_key` or decryp
 When a new Mycelos release is available:
 
 ```bash
-docker compose pull && docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-Your data stays untouched — only the container images are replaced.
+Re-running the installer pulls the new image and refreshes `docker-compose.yml` (the old one is backed up). `mycelos update` or `docker compose pull && docker compose up -d` only replace the images and keep your current compose file. Your data stays untouched.
 
 Mycelos automatically checks GitHub once per day for new updates. You'll see an "update available" banner on the Doctor page and in Settings. The check is an unauthenticated request to `api.github.com` — no telemetry, no user data leaves your machine. You can disable the check in Settings → Updates.
 
@@ -251,11 +255,15 @@ A full browser-based UI served by `mycelos serve`:
 
 ### Security
 - AES-256-GCM encrypted credentials — keys never appear in logs, prompts, or tracebacks
-- Credential Proxy: the LLM broker injects the needed key per-call, then clears it
+- Two containers: the master key lives only in the proxy container; the gateway has no internet route of its own
+- Credential Proxy: the LLM broker injects the needed key per-call, then clears it; each credential is bound to its service's hosts
 - Capability tokens with prefix scoping: `github.read` grants `github.read.*` but not `github.write`
 - Policy engine with property-based invariants
 - Response sanitizer strips credentials from LLM output
 - **Fail-closed** — unknown agent = denied, capability error = denied, no fallback to "allow"
+- Web UI hardening: every rendered note, reply and workflow result is sanitized (DOMPurify), pages carry a Content-Security-Policy, and scripts are served locally with pinned versions
+- DNS-rebinding guard: without a password the gateway answers only for known host names (`MYCELOS_ALLOWED_HOSTS` adds more); the password login is braked after repeated failures
+- **Known limits:** custom agent code runs in a separate Python subprocess (temporary working directory, scrubbed environment, timeout), not in a container or syscall sandbox; the Tailwind stylesheet still loads from its CDN
 
 ### Connectors (MCP)
 - Built on the **Model Context Protocol** — access to thousands of community connectors
@@ -365,6 +373,18 @@ mycelos config show              # Show current state
 mycelos config diff              # Compare two generations
 mycelos config rollback [N]      # Roll back to generation N
 ```
+
+### Docker settings (`.env`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MYCELOS_PROXY_TOKEN` | generated | Shared secret between gateway and proxy |
+| `MYCELOS_DATA_DIR` | `./data` | Database, notes, sessions — mounted into both containers |
+| `MYCELOS_SECRETS_DIR` | `./secrets` | Master key — mounted into the proxy container only |
+| `MYCELOS_BIND` | `127.0.0.1` | Host interface for port 9100. Anything else requires `MYCELOS_PASSWORD` |
+| `MYCELOS_PASSWORD` | — | Login password for the web UI and API (session cookie or Basic Auth) |
+| `MYCELOS_ALLOWED_HOSTS` | — | Extra host names a password-less gateway answers for, comma-separated (`*` turns the check off). Loopback names always work |
+| `MYCELOS_ALLOWED_ORIGINS` | — | Extra browser origins allowed to send requests that change data |
 
 ---
 

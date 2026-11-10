@@ -27,9 +27,9 @@ prepare_proxy_key() {
             chmod 600 "$legacy" 2>/dev/null || true
         fi
         echo "  ⚠ MYCELOS_MASTER_KEY_FILE not set — the master key is in the shared" >&2
-        echo "    data directory and the gateway container can read it. Update" >&2
-        echo "    docker-compose.yml (mycelos update) to give the proxy its own" >&2
-        echo "    secrets directory." >&2
+        echo "    data directory and the gateway container can read it. Re-run" >&2
+        echo "    scripts/install.sh to get the current docker-compose.yml, which" >&2
+        echo "    gives the proxy its own secrets directory." >&2
         return 0
     fi
     local key_dir

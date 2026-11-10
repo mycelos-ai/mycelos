@@ -47,10 +47,12 @@
   `mycelos credential export` in the gateway printed every key). The key
   now lives in `./secrets` (`MYCELOS_SECRETS_DIR`), mounted into the proxy
   container only (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`).
-  Existing installs are moved automatically: `mycelos update` /
-  `install.sh` / `install.ps1` and the proxy's own entrypoint move
-  `data/.master_key` to the secrets directory (copy, compare, delete) and
-  refuse to start if two different keys exist. The proxy entrypoint also
+  Existing installs: re-running `install.sh` / `install.ps1` fetches the
+  new compose file and moves `data/.master_key` to the secrets directory
+  (copy, compare, delete); with the new compose file the proxy entrypoint
+  does the same on start. Two different keys → nothing is touched and the
+  proxy refuses to start. `mycelos update` alone keeps the old compose
+  file, so the proxy only warns there. The proxy entrypoint also
   creates the key on first start and hands it to the container user,
   which fixes the "`.master_key` not found" start failure on Docker
   Desktop. The gateway never reads or creates a key when

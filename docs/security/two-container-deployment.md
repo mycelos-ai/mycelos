@@ -4,9 +4,21 @@ Phase 1 (1a + 1b) is complete. This doc describes the steady state.
 
 ## Architecture
 
-- **Gateway container** (`mycelos-gateway`) — FastAPI web UI, REST, chat service, scheduler, tools. Mounts `/data` read-write (knowledge notes, sessions, audit log, config generations). **Master key never loaded in this process** — in two-container mode `app.credentials` is a `DelegatingCredentialProxy` that forwards every write to the proxy via TCP+Bearer. Gateway container is on the `mycelos-internal` Docker network only; the `default` network (internet) is not attached, so every outbound HTTP call routes through the proxy or fails.
-- **Proxy container** (`mycelos-proxy`) — SecurityProxy FastAPI. Mounts the full `/data` directory (reads `.master_key` there, reads/writes the `credentials` table, sees the SQLite WAL sibling files the gateway creates). Hosts MCP subprocess children in its own PID namespace, so every MCP-tool credential is injected and used entirely inside the proxy container — the plaintext token never appears in the gateway. Exposes `/health`, `/http`, `/llm/complete`, `/mcp/{start,call,stop}`, `/credential/{bootstrap,store,delete,list,rotate}`, `/stt/transcribe` on TCP port 9110. Not reachable from the host.
+- **Gateway container** (`mycelos-gateway`) — FastAPI web UI, REST, chat service, scheduler, tools. Mounts `/data` read-write (knowledge notes, sessions, audit log, config generations, the *encrypted* credentials table). **The master key is neither mounted nor loaded here** — it lives in the proxy-only secrets mount (see below), and with `MYCELOS_PROXY_URL` set the gateway never reads or creates a key file; in two-container mode `app.credentials` is a `DelegatingCredentialProxy` that forwards every write to the proxy via TCP+Bearer. Gateway container is on the `mycelos-internal` Docker network only; the `default` network (internet) is not attached, so every outbound HTTP call routes through the proxy or fails.
+- **Proxy container** (`mycelos-proxy`) — SecurityProxy FastAPI. Mounts the full `/data` directory (reads/writes the `credentials` table, sees the SQLite WAL sibling files the gateway creates) **and** `/secrets`, the host's `MYCELOS_SECRETS_DIR` (default `./secrets`), which holds the master key (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`). No other container mounts `/secrets`. Hosts MCP subprocess children in its own PID namespace, so every MCP-tool credential is injected and used entirely inside the proxy container — the plaintext token never appears in the gateway. Exposes `/health`, `/http`, `/llm/complete`, `/mcp/{start,call,stop}`, `/credential/{bootstrap,store,delete,list,rotate}`, `/stt/transcribe` on TCP port 9110. Not reachable from the host.
 - **Shared secret** — `MYCELOS_PROXY_TOKEN` (Bearer). Generated at install time. Rotated by regenerating `.env` and restarting both containers.
+
+### Where the master key lives
+
+| Install | Key file | Who can read it |
+|---|---|---|
+| Docker, current `docker-compose.yml` | `secrets/.master_key` on the host → `/secrets/.master_key` in the proxy | proxy container only |
+| Docker, compose file from before week 46 (2026) | `data/.master_key` → `/data/.master_key` in **both** containers | proxy **and gateway** — update the compose file |
+| `pip install` / `mycelos serve` (single process) | `~/.mycelos/.master_key` | the one Mycelos process |
+
+**Migration.** Older installs kept the key in `data/`, which both containers mount — the gateway could read it, and `mycelos credential export` inside the gateway printed every credential. Re-running the installer fetches the current compose file. With it, the proxy entrypoint (`prepare_proxy_key` in `docker-entrypoint.sh`) moves a key it finds in `/data` into `/secrets` on start: copy, compare, delete the old copy. `scripts/install.sh` / `install.ps1` do the same on the host. If both places hold *different* keys, nothing is touched and the proxy refuses to start — keep the key your credentials were encrypted with (normally the older one in `data/`). The entrypoint also creates the key on first start and hands it to the container user (Docker Desktop shows bind mounts as `root:root`).
+
+**CLI.** `docker compose exec gateway mycelos credential …` talks to the proxy: `store`, `delete`, `import` and `list` (without key preview) work; `export` is refused. To export plaintext, run it in the proxy container: `docker compose exec proxy mycelos credential export`.
 
 ## Threats Phase 1 mitigates
 
@@ -15,6 +27,8 @@ Phase 1 (1a + 1b) is complete. This doc describes the steady state.
 | Prompt injection that asks the gateway to exfiltrate API keys | Master key is not in the gateway process. `DelegatingCredentialProxy.get_credential` raises `NotImplementedError`. |
 | LLM-call-time credential leak into agent subprocess env | Proxy resolves `credential:X` placeholders; gateway sees only placeholders. |
 | MCP subprocess leaks a bearer token to the gateway process tree | MCP subprocesses live in the proxy container's PID namespace, not the gateway's. |
+| Prompt injection / RCE in the gateway reads the key from disk | Key file sits in the proxy-only `/secrets` mount, not in the shared `/data`. |
+| Gateway asks the proxy to send a stored key to an attacker's server | `POST /http` with `inject_credential` only injects into requests to that credential's own hosts: a fixed HTTPS list for known services (OpenAI, Anthropic, Telegram, GitHub, …) or the host of the credential's own `api_base` (Ollama, custom servers). Anything else → `403`, audited as `proxy.credential_host_denied`. |
 | Gateway RCE reaching the internet with a stolen token | Gateway container has no `default` network. `curl https://example.com` fails at the network layer. Every outbound call routes through the proxy's SSRF-validated HTTP endpoint. |
 | Supply-chain CVE in a gateway-only dependency (chat libs, Alpine frontend, etc.) | Gateway-only deps cannot leak credentials — the key isn't there. |
 | Runtime `pip install` of attacker-named packages | Disabled in Docker mode. Audit event `package.install_blocked` fires, user is pointed at the custom-image doc. |
@@ -25,10 +39,11 @@ Phase 1 (1a + 1b) is complete. This doc describes the steady state.
 | Threat | Status |
 |---|---|
 | Compromised proxy container | Full credential access. The proxy is the crown jewel. |
-| Host filesystem compromise | Attacker reads `.master_key` directly. Phase 1 is not hardware-root-of-trust. |
+| Host filesystem compromise | Attacker reads `secrets/.master_key` directly. Phase 1 is not hardware-root-of-trust. |
+| Gateway sends requests *without* a credential to any public host | Allowed by design (web fetch, RSS). The SSRF check still blocks private ranges. |
 | Proxy's own outbound call leaking the credential | By design — the proxy uses the key. |
 | Docker-engine-level MITM between gateway and proxy | Bearer token prevents replay; a privileged attacker inside the Docker engine could still tap traffic. Mitigation: mTLS between containers (Phase 3). |
-| Unauthenticated web access | Phase 1 binds the gateway to `localhost` in the default installer output. Passkey auth ships in Phase 2. |
+| Unauthenticated web access | Phase 1 binds the gateway to `localhost` in the default installer output. Without a password the gateway answers only for known host names (DNS-rebinding guard, `MYCELOS_ALLOWED_HOSTS`). Passkey auth ships in Phase 2. |
 | Gateway holding the Telegram bot token in RAM | Deliberate. See "Materializable credentials" below. |
 
 ## Materializable credentials (deliberate compromise)
@@ -49,6 +64,7 @@ The cleaner alternative — writing a `ProxyAiohttpSession` that tunnels every a
 ## Operational notes
 
 - **Rotate the proxy token:** generate a new value, update `.env`, run `docker compose up -d`. In-flight LLM calls fail once and retry.
+- **Back up the master key:** `secrets/.master_key`. Without it the credentials table cannot be decrypted.
 - **Rotate the master key:** a data-migration event — credentials must be re-entered. Out of scope for Phase 1.
 - **Diagnostics:** `docker compose logs proxy` for credential-resolution errors. `mycelos db audit --suspicious --since 24h` surfaces both containers (audit writes still go through the gateway's storage).
 - **Extra Python packages:** build a custom image. See `docs/deployment/custom-image.md`.
