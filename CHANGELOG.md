@@ -27,6 +27,11 @@
   that re-pointed its DNS to 127.0.0.1 could read and change everything.
   With `MYCELOS_PASSWORD` set the check is skipped (the attacker never
   holds the credentials). The Telegram webhook stays reachable.
+- **Login hardening.** A password with umlauts or other non-ASCII
+  characters no longer crashes the login with a 500 (it is compared as
+  UTF-8 bytes). After 10 wrong attempts from one address within five
+  minutes, the login page and Basic Auth answer `429` with `Retry-After`;
+  failed attempts are audited as `auth.login_failed`.
 
 ## Week 45 (2026)
 

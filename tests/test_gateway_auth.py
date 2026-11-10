@@ -185,3 +185,45 @@ class TestRememberMe:
         client.app.state.session_store._tokens.clear()
         resp = client.get("/api/ui/theme", cookies={"mycelos_session": token})
         assert resp.status_code == 401
+
+
+class TestPasswordHardening:
+    """Review findings: non-ASCII passwords crashed the login (500) and
+    the password could be guessed without any brake."""
+
+    def test_non_ascii_password_attempt_is_a_plain_401(self, client):
+        resp = client.post("/api/auth/login", json={"password": "pässwört-ü"})
+        assert resp.status_code == 401
+
+    def test_non_ascii_basic_auth_attempt_is_a_plain_401(self, client):
+        resp = client.get("/api/ui/theme", headers=_basic("grüße"))
+        assert resp.status_code == 401
+
+    def test_non_ascii_configured_password_works(self):
+        c = _make_client(password="Grüße-aus-Köln")
+        assert c.post("/api/auth/login", json={"password": "Grüße-aus-Köln"}).status_code == 200
+        assert c.get("/api/ui/theme", headers=_basic("Grüße-aus-Köln")).status_code == 200
+
+    def test_repeated_wrong_passwords_are_throttled(self, client):
+        from mycelos.gateway.auth import MAX_FAILURES
+        for _ in range(MAX_FAILURES):
+            assert client.post("/api/auth/login", json={"password": "nope"}).status_code == 401
+        blocked = client.post("/api/auth/login", json={"password": PASSWORD})
+        assert blocked.status_code == 429
+        assert int(blocked.headers["Retry-After"]) > 0
+        # Basic Auth from the same address is braked too.
+        assert client.get("/api/ui/theme", headers=_basic(PASSWORD)).status_code == 429
+
+    def test_successful_login_resets_the_counter(self, client):
+        from mycelos.gateway.auth import MAX_FAILURES
+        for _ in range(MAX_FAILURES - 1):
+            client.post("/api/auth/login", json={"password": "nope"})
+        assert client.post("/api/auth/login", json={"password": PASSWORD}).status_code == 200
+        assert client.post("/api/auth/login", json={"password": "nope"}).status_code == 401
+
+    def test_failed_logins_are_audited(self, client):
+        client.post("/api/auth/login", json={"password": "nope"})
+        rows = client.app.state.mycelos.storage.fetchall(
+            "SELECT event_type FROM audit_events WHERE event_type = 'auth.login_failed'"
+        )
+        assert rows
