@@ -1,5 +1,33 @@
 # Changelog
 
+## Week 46 (2026)
+
+### Security fixes from the November review
+
+- **Rendered Markdown can no longer run script (stored XSS).** Chat
+  replies, notes and workflow results go through DOMPurify after marked
+  (`shared/safe-html.js`). Mermaid source stays escaped instead of being
+  decoded into live HTML, slash-command buttons insert the escaped text,
+  and the "retry tool call" button no longer carries an inline `onclick`.
+  Connector help texts and setup steps are sanitized or escaped too. If
+  DOMPurify is missing the text is shown escaped (fail-closed).
+- **Scripts are served locally.** marked 18.2.0, DOMPurify 3.4.17 and
+  Alpine.js 3.17.5 live in `shared/vendor/` with pinned versions instead
+  of unpinned jsDelivr URLs. Only the Tailwind CDN is still external.
+- **Content-Security-Policy and other browser headers.** Every response
+  carries a CSP (scripts only from the gateway and the Tailwind CDN,
+  network requests only to the gateway and the MCP registry, no plugins,
+  no foreign framing), `X-Frame-Options`, `nosniff` and a same-origin
+  referrer policy.
+- **DNS-rebinding guard.** A gateway without a password now answers only
+  for known host names: loopback, the bind address, the LAN names it
+  detects for a `0.0.0.0` bind, the hosts in `MYCELOS_ALLOWED_ORIGINS`
+  and new `MYCELOS_ALLOWED_HOSTS` (comma-separated, `*` turns the check
+  off). Other `Host` headers get `421`. Before, a page on a foreign domain
+  that re-pointed its DNS to 127.0.0.1 could read and change everything.
+  With `MYCELOS_PASSWORD` set the check is skipped (the attacker never
+  holds the credentials). The Telegram webhook stays reachable.
+
 ## Week 45 (2026)
 
 ### Views and approval cards survive a reload; Telegram gets buttons

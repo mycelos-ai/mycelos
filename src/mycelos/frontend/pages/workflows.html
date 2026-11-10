@@ -13,8 +13,10 @@
   <script src="/shared/api.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Workflow card hover glow */
@@ -892,13 +894,8 @@
          * Render markdown text to HTML using marked.js.
          */
         renderMarkdown(text) {
-          if (!text) return '';
-          if (typeof marked !== 'undefined') {
-            try {
-              return marked.parse(String(text));
-            } catch { return String(text); }
-          }
-          return String(text);
+          // Run results contain web/LLM text — always sanitize.
+          return window.MycelosSafeHtml.markdown(text);
         },
 
         /**
