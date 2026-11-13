@@ -94,7 +94,7 @@ def build_prompt_variables(app: "App") -> dict[str, str]:
     # --- system_info: date, time, OS, environment ---
     try:
         import datetime
-        from mycelos.chat.service import _build_system_info
+        from mycelos.chat.system_info import _build_system_info
         user_tz = None
         try:
             user_tz = app.memory.get("default", "system", "user.timezone")
