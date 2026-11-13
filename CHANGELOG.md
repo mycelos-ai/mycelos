@@ -2,6 +2,24 @@
 
 ## Week 46 (2026)
 
+### Housekeeping: ChatService split into modules
+
+- **`chat/service.py` shrank from 2,844 to about 600 lines.** No behavior
+  change. `ChatService` now inherits from focused mixins, one file each:
+  `context_injection` (background notices, conversation hydration,
+  knowledge/task/onboarding context), `attachments`, `routing` (active
+  agent, handoffs, per-agent tools and models), `tool_loop` (one tool call
+  of the loop, result widgets/views, permission prompt, routed-agent turn),
+  `tool_execution` (security gate), `confirmations` (request_action and
+  permission answers), `workflow_commands` (`/run`, paused runs),
+  `creator_interview` and `compat` (shims, setup hints). Module-level
+  helpers moved to `tool_selection`, `guards` and `system_info`.
+- **`handle_message` went from 930 to about 290 lines** and now reads as
+  the turn's sequence of steps; the inner tool-call body and the handoff
+  continuation are their own methods.
+- Old import paths (`from mycelos.chat.service import CHAT_AGENT_TOOLS,
+  _sanitize_dict, …`) keep working via re-exports. A structure test checks
+  every former method, the re-exports and a size limit for `service.py`.
 ### Web UI without CDN: Tailwind and icon font bundled
 
 - **No outside requests for the UI any more.** Tailwind was compiled in
