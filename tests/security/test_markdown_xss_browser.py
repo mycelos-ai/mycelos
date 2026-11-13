@@ -6,8 +6,8 @@ if any of it ever executes. The pages are served with the gateway's real
 security headers, so the test also proves the pages still work under the
 Content-Security-Policy.
 
-Real browser (Playwright), local static files, no network: the Tailwind
-CDN and Google Fonts are stubbed.
+Real browser (Playwright), local static files, no network: every
+stylesheet, script and font is bundled with the gateway.
 """
 
 from __future__ import annotations
@@ -72,15 +72,10 @@ def ui_server():
 
 
 def _open(page, url: str) -> list[str]:
-    """Open a page with external CDNs stubbed; return CSP violations."""
+    """Open a page and return CSP violations."""
     violations: list[str] = []
     page.on("console", lambda m: violations.append(m.text)
             if "Content Security Policy" in m.text else None)
-    page.route("https://cdn.tailwindcss.com/**",
-               lambda r: r.fulfill(status=200, content_type="application/javascript",
-                                   body="window.tailwind = window.tailwind || {config: {}};"))
-    page.route("https://fonts.googleapis.com/**",
-               lambda r: r.fulfill(status=200, content_type="text/css", body=""))
     page.goto(url)
     page.wait_for_function("typeof window.MycelosSafeHtml === 'object'")
     return violations
@@ -142,6 +137,9 @@ def test_chat_keeps_command_and_retry_buttons(page, ui_server):
         """() => {
             const box = document.createElement('div');
             box.id = 'ok-host';
+            // The page is full-height with its own scroll areas, so a box
+            // appended to <body> sits off-screen; pin it into view to click.
+            box.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;background:#fff';
             box.innerHTML = renderMarkdown("**bold** run `/connector setup gmail`")
               + renderMarkdown("Try: [action] type: functions.connector_setup args: {connector_id: 'gmail'} [/action]");
             document.body.appendChild(box);

@@ -6,9 +6,7 @@
   <title>Mycelos - Connectors</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
-  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/vendor/material-symbols/material-symbols.css">
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
   <script src="/shared/oauth_setup.js"></script>
@@ -107,6 +105,9 @@
     }
   </style>
 <link rel="stylesheet" href="/shared/product-shell.css?v=1"><script defer src="/shared/notifications.js?v=1"></script>
+  <!-- Tailwind last in <head>, where the old CDN script injected its styles,
+       so utilities keep winning over base.css and page styles. -->
+  <link rel="stylesheet" href="/shared/vendor/tailwind.css">
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
