@@ -20,6 +20,29 @@
 - Old import paths (`from mycelos.chat.service import CHAT_AGENT_TOOLS,
   _sanitize_dict, …`) keep working via re-exports. A structure test checks
   every former method, the re-exports and a size limit for `service.py`.
+### Web UI without CDN: Tailwind and icon font bundled
+
+- **No outside requests for the UI any more.** Tailwind was compiled in
+  the browser by the `cdn.tailwindcss.com` script, and the Material
+  Symbols icons came from Google Fonts. On a home network without
+  internet the pages lost their layout and icons. Tailwind 3.4.17 (with
+  `@tailwindcss/forms`, as before) is now compiled ahead of time into
+  `shared/vendor/tailwind.css` (37 KB, no compiler running in the
+  browser), and the icon font (Apache 2.0) is served from
+  `shared/vendor/material-symbols/`.
+- **Same look.** The theme from `shared/tailwind-config.js` moved into
+  `tools/tailwind/tailwind.config.js`; the browser config file is gone.
+  The stylesheet sits last in `<head>`, where the CDN injected its
+  styles, so utilities still win over `base.css`.
+- **Rebuild after class changes:** `scripts/build-tailwind.sh` (Node 18+,
+  versions pinned in `tools/tailwind/package-lock.json`). A new CI job
+  rebuilds the CSS and fails if the committed file is out of date.
+- **Stricter CSP.** `script-src`, `style-src` and `font-src` allow only
+  the gateway; the Tailwind CDN and Google Fonts hosts are removed.
+- **Tests:** `tests/security/test_no_external_assets.py` checks that no
+  page references a CDN, that the CSP lists no outside host, and in a
+  real browser with outside traffic blocked that every Tailwind page
+  makes no outside request and still gets its styles and icon font.
 
 ### Security fixes from the November review
 

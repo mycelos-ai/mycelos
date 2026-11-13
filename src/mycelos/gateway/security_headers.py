@@ -6,10 +6,11 @@ the primary defence against script injection; these headers are the
 second line:
 
 - ``Content-Security-Policy`` limits where scripts, styles, frames and
-  network requests may go. Script and connect sources are restricted to
-  the gateway itself plus the few hosts the UI really loads from, so an
-  injected script cannot pull code from, or send data to, an arbitrary
-  server with ``fetch``. The pages still use inline scripts and Alpine.js
+  network requests may go. Scripts, styles and fonts come from the
+  gateway only (Tailwind and the icon font are bundled in
+  ``frontend/shared/vendor/``), so the UI works without internet access
+  and an injected script cannot pull code from, or send data to, an
+  arbitrary server with ``fetch``. The pages still use inline scripts and Alpine.js
   (which evaluates expressions), so ``'unsafe-inline'`` and
   ``'unsafe-eval'`` stay until those are moved into files.
 - ``X-Frame-Options`` / ``frame-ancestors`` stop other sites from framing
@@ -23,10 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-# Hosts the bundled pages load from. Keep this list short and explicit.
-_SCRIPT_HOSTS = ("https://cdn.tailwindcss.com",)
-_STYLE_HOSTS = ("https://fonts.googleapis.com",)
-_FONT_HOSTS = ("https://fonts.gstatic.com",)
+# Scripts, styles and fonts are served by the gateway itself; no CDN.
 # MCP registry search runs in the browser on the connectors page.
 _CONNECT_HOSTS = ("https://registry.modelcontextprotocol.io",)
 
@@ -35,9 +33,9 @@ def build_csp() -> str:
     """Return the Content-Security-Policy header value."""
     directives = [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' " + " ".join(_SCRIPT_HOSTS),
-        "style-src 'self' 'unsafe-inline' " + " ".join(_STYLE_HOSTS),
-        "font-src 'self' data: " + " ".join(_FONT_HOSTS),
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self' data:",
         # Notes and replies may show remote images; they cannot run code.
         "img-src 'self' data: blob: https:",
         "media-src 'self' blob:",

@@ -261,9 +261,9 @@ A full browser-based UI served by `mycelos serve`:
 - Policy engine with property-based invariants
 - Response sanitizer strips credentials from LLM output
 - **Fail-closed** — unknown agent = denied, capability error = denied, no fallback to "allow"
-- Web UI hardening: every rendered note, reply and workflow result is sanitized (DOMPurify), pages carry a Content-Security-Policy, and scripts are served locally with pinned versions
+- Web UI hardening: every rendered note, reply and workflow result is sanitized (DOMPurify), pages carry a Content-Security-Policy, and scripts, styles and fonts are served locally with pinned versions (the UI makes no request to a CDN and works without internet access)
 - DNS-rebinding guard: without a password the gateway answers only for known host names (`MYCELOS_ALLOWED_HOSTS` adds more); the password login is braked after repeated failures
-- **Known limits:** custom agent code runs in a separate Python subprocess (temporary working directory, scrubbed environment, timeout), not in a container or syscall sandbox; the Tailwind stylesheet still loads from its CDN
+- **Known limits:** custom agent code runs in a separate Python subprocess (temporary working directory, scrubbed environment, timeout), not in a container or syscall sandbox
 
 ### Connectors (MCP)
 - Built on the **Model Context Protocol** — access to thousands of community connectors
