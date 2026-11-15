@@ -1,20 +1,20 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos - Workflows</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
-  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/vendor/material-symbols/material-symbols.css">
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Workflow card hover glow */
@@ -118,6 +118,9 @@
 <link rel="stylesheet" href="/shared/product-shell.css?v=1">
 <script defer src="/shared/notifications.js?v=1"></script>
 <style>.routine-list{max-width:960px;margin:auto}.routine-list .workflow-card{border:0;border-bottom:1px solid #dce6e1;border-radius:0;background:transparent;box-shadow:none;padding:22px 0}.routine-list .workflow-card .text-xs{font-size:14px}.routine-list .workflow-card .text-\[10px\]{font-size:12px}.routine-list .workflow-card .card-low{padding:12px 0;background:transparent}section>div.max-w-7xl{max-width:960px}</style>
+  <!-- Tailwind last in <head>, where the old CDN script injected its styles,
+       so utilities keep winning over base.css and page styles. -->
+  <link rel="stylesheet" href="/shared/vendor/tailwind.css">
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
@@ -273,7 +276,7 @@
                   <span class="material-symbols-outlined text-sm text-[var(--on-surface-variant)] transition-transform"
                         :class="expanded && 'rotate-180'">expand_more</span>
                   <span class="text-[10px] font-label uppercase tracking-widest text-[var(--on-surface-variant)]"
-                        x-text="expanded ? 'Details schließen' : 'Details'"></span>
+                        x-text="expanded ? t('workflow_page.details_close') : t('workflow_page.details')"></span>
                 </button>
                 <button @click.stop="openRunDialog(wf)"
                    class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-label font-semibold uppercase tracking-wider
@@ -346,9 +349,9 @@
           <!-- Section header -->
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h2 class="font-headline text-xl font-bold tracking-tight">Zeitpläne</h2>
+              <h2 class="font-headline text-xl font-bold tracking-tight" x-text="t('workflow_page.schedules')"></h2>
               <p class="text-sm text-[var(--on-surface-variant)] mt-1">
-                <span x-text="schedules.length"></span> Zeitpläne
+                <span x-text="t('workflow_page.schedule_count', {count: schedules.length})"></span>
               </p>
             </div>
           </div>
@@ -359,9 +362,9 @@
           <!-- Empty state: no schedules -->
           <div x-show="schedules.length === 0 && !loading" class="card text-center py-12">
             <span class="material-symbols-outlined text-[var(--on-surface-variant)] text-5xl mb-4 block opacity-30">schedule</span>
-            <h3 class="font-headline text-lg font-bold mb-2">No Zeitpläne</h3>
+            <h3 class="font-headline text-lg font-bold mb-2" x-text="t('workflow_page.no_schedules')"></h3>
             <p class="text-sm text-[var(--on-surface-variant)] max-w-sm mx-auto">
-              No Zeitpläne. Create a workflow and schedule it.
+              <span x-text="t('workflow_page.no_schedules_hint')"></span>
             </p>
           </div>
 
@@ -437,7 +440,7 @@
             <div>
               <h2 class="font-headline text-xl font-bold tracking-tight flex items-center gap-2">
                 <span class="material-symbols-outlined text-[var(--on-surface-variant)]">history</span>
-                Letzte Ausführungen
+                <span x-text="t('workflow_page.recent_runs')"></span>
               </h2>
               <p class="text-sm text-[var(--on-surface-variant)] mt-1">
                 <span x-text="runs.length"></span> recent runs
@@ -782,7 +785,7 @@
         _runDetail: null,
         _runDetailLoading: false,
 
-        // Status filter for Letzte Ausführungen. Default surfaces actionable runs.
+        // Status filter for recent runs. Default surfaces actionable runs.
         runFilter: 'attention',
         runFilterChips: [
           { id: 'attention', label: 'Failed + Waiting' },
@@ -892,13 +895,8 @@
          * Render markdown text to HTML using marked.js.
          */
         renderMarkdown(text) {
-          if (!text) return '';
-          if (typeof marked !== 'undefined') {
-            try {
-              return marked.parse(String(text));
-            } catch { return String(text); }
-          }
-          return String(text);
+          // Run results contain web/LLM text — always sanitize.
+          return window.MycelosSafeHtml.markdown(text);
         },
 
         /**

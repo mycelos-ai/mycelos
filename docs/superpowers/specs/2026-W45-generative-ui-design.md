@@ -1,6 +1,6 @@
 # Package 8: Generative UI in the conversation
 
-Week 45 (2026). Status: direction decided by Stefan on 2026-11-07, spec pending review.
+Week 45 (2026). Status: direction decided by Stefan on 2026-11-07; slices 1 to 5 built.
 Supersedes the "graph is the home" part of `2026-W33-brain-ui-concept.md` (see "Direction change"
 below). Builds on the conversation-first shell from the `codex/collector` work.
 
@@ -115,7 +115,9 @@ no Tailwind, no CDN). Later slices rely on this contract:
     every valid alternative, so switching needs no round trip), and the text fallback when not.
     A variant is used only when its own `type` equals its key and is a catalog type.
   - `mycelos-view-action` `{action, view}`: an approval card button. Cancelable; the card locks
-    only when the host handled it (`preventDefault`). Slice 5 wires this to the resolve paths.
+    only when the host handled it (`preventDefault`). The host reports the outcome with
+    `el.actionResult({ok, message})`: `ok` keeps the card locked with the message, otherwise the
+    card unlocks and shows the message as an error (slice 5).
 - **Chat.** `chat.html` renders a message `{role: 'view', view}` with the element, and widget
   events whose `type` is a catalog type are turned into such messages.
 - **Mermaid.** `mind_map` and `flow` are drawn with `/shared/mermaid.min.js` (loaded on demand,
@@ -214,6 +216,19 @@ Delivery:
   `POST /api/briefing/first-message/shown` after rendering it.
 - **Telegram**: unchanged schedule; the same views render through `telegram_renderer.py` as text,
   with `Counts` as a short line per source.
+
+Reload and Telegram (follow-up to slices 4 and 5):
+
+- Every view a tool hands to the chat (`__view__`) is appended to the session JSONL as a
+  `{"type": "view"}` record. `load_messages` (model resume) skips them; `load_transcript` returns
+  messages and views in order, and `GET /api/sessions/{id}/messages` returns views as
+  `role: "view"`. An approval card also carries `state` (`pending`, `resolved` with action and
+  result, `expired`, `unknown`), read from `view_proposals` for the requesting user, never the
+  payload. The client restores answered cards locked (`el.actionResult({ok, action, message})`)
+  and expired or unknown ones with `{ok: false, locked: true}`.
+- Telegram sends approval cards as their own message with one inline button per action
+  (`prop:<action>:<proposal id>`). The button resolves through `ProposalService` as
+  `telegram:<user id>`: only allowlisted users, only their own cards, only the card's actions.
 - The briefing remains opt-in for push delivery; the in-app first message is always on.
 
 ## Scenarios this package must carry
@@ -230,6 +245,36 @@ The same five scenarios as the click prototypes (artifact "Mycelos Richtungsverg
 5. **Correct a misfiling**: `TreeChange` before/after, with "teach the rule" showing which other
    notes the rule change would move.
 
+As built in slice 5 (`knowledge/proposals.py`, tools in `tools/filing.py`, endpoint
+`POST /api/proposals/{id}/resolve`):
+
+- **Proposals.** Every card stores a proposal (`view_proposals`: kind, server-side payload,
+  status). The `approval_card` data carries only its id (`proposal`, 32 hex characters) and the
+  filing change as `changes` (same items as `TreeChange`, drawn inside the card). The client
+  posts the id and one action; the body cannot name a note, folder or source. Actions per kind:
+  capture `accept`/`elsewhere`/`make_task`, attach_source `approve`/`cancel`, correct
+  `accept`/`teach_rule`/`cancel`. Refused without change: unknown id, another user's id, an
+  action outside the kind, a resolved card (409), a card older than seven days (410). A proposal
+  is claimed atomically; a failed action sets it back to pending.
+- **Capture.** `note_write` in the chat (a chat service in the context and no connector
+  `source`) returns the card as `__view__`. The note exists, because the user asked to remember
+  it; `accept` clears the placement marker, `make_task` turns it into an open task, `elsewhere`
+  changes nothing and the web chat puts "„title“ belongs in " into the composer.
+- **Correct.** `filing_correct(path, topic)` builds before/after. "Teach the rule" lists up to
+  five notes in the same folder with the same source key that share at least half of the title's
+  significant words (per-word search, deterministic). Approving moves them only if they are
+  still in that folder, and appends one English rule line to the source's rule
+  (`source_rules`, config generation). Notes without a source key get no rule line.
+- **Attach.** `source_attach(source_id, topic, rule)` builds the card and a `Counts` preview from
+  `local_sources` preview (files and notes, no model call); sample titles appear as new entries
+  in the card's tree. Approving attaches `local:<id>` to the folder, saves the rule, moves an
+  existing article root into the folder and enqueues the import.
+- **One source model.** `source_key()` maps provenance to the attachment/rule key: connector
+  id, `local:<source_id>` for local sources, `chat` for chat captures. The organizer scopes by
+  that key and applies a rule with or without attachments; `source_articles.source_root` creates
+  a local source's root inside its first attachment.
+- **Delivery.** A tool's `__view__` may be a list; each view is one widget event.
+
 ## Prerequisites
 
 - **Merge the conversation-first work.** The `codex/collector` branch carries the chat home, the
@@ -237,10 +282,24 @@ The same five scenarios as the click prototypes (artifact "Mycelos Richtungsverg
   must be green and merged in reviewable parts first. Open items: the collector desktop app
   directory is not committed (26 browser tests depend on it), and the new pages hardcode German
   strings instead of using `t()` with keys in `en.yaml` and `de.yaml`.
-- **One source model.** `local_sources` must attach through `source_attachments` and use
-  `source_rules`, so scenario 4 has the subtree guarantee. `knowledge_relations` and
-  `knowledge_links` need one documented split (typed evidence relations versus structural links)
-  or a merge.
+- **One source model** (done). Local sources attach through `source_attachments` and use
+  `source_rules` under the key `local:<id>`, so scenario 4 has the subtree guarantee:
+  - `GET /api/local-sources/{id}/filing` returns the source's attachments and rule; the
+    general `/api/sources/{key}` endpoints accept `local:<id>` (only for a source of the
+    requesting user, fail closed otherwise) and `chat` next to connector ids.
+  - Adding, editing, pausing and resuming a local source is audited (`local_source.*`, no root
+    path in the payload) and creates a config generation.
+  - Config snapshots carry `sources` (attachments and rules), so a rollback restores where each
+    source files. Snapshots from before carry no `sources` key and leave the tables untouched.
+  - Article extraction and relation reasons follow the user's language preference; the prompts
+    are English (Constitution Rule 6).
+- **Relations versus links** (documented split, no merge). `knowledge_links` holds structural
+  links between note paths (wikilinks, parent, related, merged_from); the graph and the tree use
+  them. `knowledge_relations` holds typed evidence relations between note ids (supports,
+  contradicts, extends, duplicate, related, source_member) with a reason and the content hashes
+  they were judged on; the source analysis and the Obsidian import write them, the indexer and
+  the briefing read them. The indexer hides a relation once either note's content hash no longer
+  matches; a link has no such check.
 
 ## Implementation slices
 

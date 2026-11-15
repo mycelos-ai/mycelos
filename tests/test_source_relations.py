@@ -108,7 +108,7 @@ def test_hash_change_during_model_call_preserves_existing_links(app, changed_id)
     note(app, 2)
     old_link(app)
     app.during_call = lambda: app.storage.execute('UPDATE knowledge_notes SET content_hash=? WHERE id=?', ('new', changed_id))
-    with pytest.raises(ValueError, match='geändert'):
+    with pytest.raises(ValueError, match='changed'):
         run(app)
     assert app.storage.fetchone('SELECT reason FROM knowledge_relations')['reason'] == 'old'
 
@@ -128,7 +128,7 @@ def test_unindexed_content_change_preserves_existing_links(app):
     note(app, 2)
     old_link(app)
     app.during_call = lambda: app.contents.update({'notes/2.md': 'Changed evidence'})
-    with pytest.raises(ValueError, match='geändert'):
+    with pytest.raises(ValueError, match='changed'):
         run(app)
     assert app.storage.fetchone('SELECT reason FROM knowledge_relations')['reason'] == 'old'
 
@@ -157,7 +157,7 @@ def test_model_required_before_any_model_request(app):
     from mycelos.knowledge.source_relations import relate_article
     note(app, 1)
     note(app, 2)
-    with pytest.raises(ValueError, match='Analysemodell'):
+    with pytest.raises(ValueError, match='analysis model'):
         relate_article(app, 1, '')
     assert not app.calls
 

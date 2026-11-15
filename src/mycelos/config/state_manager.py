@@ -38,6 +38,7 @@ class StateManager:
             "mounts": self._snapshot_mounts(),
             "channels": self._snapshot_channels(),
             "scheduled_tasks": self._snapshot_scheduled_tasks(),
+            "sources": self._snapshot_sources(),
         }
 
     def restore(self, snapshot: dict[str, Any]) -> None:
@@ -163,6 +164,12 @@ class StateManager:
                    VALUES (?, ?, ?, ?, ?)""",
                 (policy_id, user_id, agent_id, resource, decision),
             )
+
+        # Restore source attachments and rules (connectors, local sources
+        # and chat captures share them). Snapshots from before these tables
+        # were part of the state carry no "sources" key and leave them alone.
+        if "sources" in snapshot:
+            self._restore_sources(snapshot["sources"] or {})
 
         # Restore mounts
         for mid, info in snapshot.get("mounts", {}).items():
@@ -427,6 +434,42 @@ class StateManager:
                 "allowed_users": allowed,
             }
         return result
+
+    def _snapshot_sources(self) -> dict[str, Any]:
+        """Where each source may file and under which rule (one source model)."""
+        attachments = [
+            {"source_id": row["source_id"], "user_id": row["user_id"],
+             "topic_path": row["topic_path"]}
+            for row in self._storage.fetchall(
+                "SELECT source_id, user_id, topic_path FROM source_attachments "
+                "ORDER BY id"
+            )
+        ]
+        rules = [
+            {"source_id": row["source_id"], "user_id": row["user_id"],
+             "rule_text": row["rule_text"]}
+            for row in self._storage.fetchall(
+                "SELECT source_id, user_id, rule_text FROM source_rules "
+                "ORDER BY source_id, user_id"
+            )
+        ]
+        return {"attachments": attachments, "rules": rules}
+
+    def _restore_sources(self, sources: dict[str, Any]) -> None:
+        self._storage.execute("DELETE FROM source_attachments")
+        self._storage.execute("DELETE FROM source_rules")
+        for item in sources.get("attachments", []):
+            self._storage.execute(
+                "INSERT OR IGNORE INTO source_attachments (source_id, user_id, topic_path) "
+                "VALUES (?, ?, ?)",
+                (item["source_id"], item.get("user_id", "default"), item["topic_path"]),
+            )
+        for item in sources.get("rules", []):
+            self._storage.execute(
+                "INSERT OR REPLACE INTO source_rules (source_id, user_id, rule_text) "
+                "VALUES (?, ?, ?)",
+                (item["source_id"], item.get("user_id", "default"), item.get("rule_text", "")),
+            )
 
     def _snapshot_mounts(self) -> dict[str, Any]:
         result = {}

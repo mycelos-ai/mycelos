@@ -7,6 +7,7 @@ import yaml
 
 from .local_readers import SourceUnit, _document, MAX_UNIT_CHARS
 from .source_workflows import selected_paths, _match
+from mycelos.i18n import t as _t
 
 
 def properties(text):
@@ -14,14 +15,14 @@ def properties(text):
     if not match:
         return {}, text
     if len(match[1]) > 64000:
-        raise ValueError('Obsidian-Eigenschaften sind zu groß')
+        raise ValueError(_t("sources.obsidian_props_too_large"))
     try:
         data = yaml.safe_load(match[1]) or {}
         if not isinstance(data, dict):
-            raise ValueError('Obsidian-Eigenschaften benötigen Schlüssel und Werte')
+            raise ValueError(_t("sources.obsidian_props_shape"))
         data = json.loads(json.dumps(data, default=str, ensure_ascii=False))
     except (yaml.YAMLError, TypeError, RecursionError, ValueError) as error:
-        raise ValueError('Ungültige Obsidian-Eigenschaften') from error
+        raise ValueError(_t("sources.obsidian_props_invalid")) from error
     return data, text[match.end():]
 
 
@@ -95,7 +96,7 @@ def read_vault(root, workflow):
         if not text.strip():
             continue
         if len(text) > MAX_UNIT_CHARS:
-            raise ValueError(f'Dokument zu groß: {path.name}')
+            raise ValueError(_t("sources.document_too_large", name=path.name))
         relative = path.relative_to(root).as_posix()
         props, _ = properties(text) if path.suffix.lower() == '.md' else ({}, text)
         title = props.get('title') if isinstance(props.get('title'), str) else path.stem

@@ -41,7 +41,7 @@ Storage Layer       SQLite WAL | Filesystem | Object store
 ```
 
 - **`mycelos-gateway`** serves the web UI, chat, and REST API. It has **no direct internet route** (Phase 1b removed the default bridge network). It cannot decrypt the credentials table.
-- **`mycelos-proxy`** holds `.master_key` (read-only bind-mount), encrypts / decrypts credentials, brokers every outbound request, and runs MCP subprocesses in its own PID namespace.
+- **`mycelos-proxy`** holds the master key (in `secrets/`, a directory only this container mounts), encrypts / decrypts credentials, sends each credential only to its own service's hosts, brokers every outbound request, and runs MCP subprocesses in its own PID namespace.
 - The gateway talks to the proxy over HTTP on the internal network, authenticated with a shared bearer token written to `.env` at install time.
 
 This is the model documented in [`docs/security/two-container-deployment.md`](https://github.com/mycelos-ai/mycelos/blob/main/docs/security/two-container-deployment.md). It is what `scripts/install.sh` sets up and what the default `docker-compose.yml` describes.

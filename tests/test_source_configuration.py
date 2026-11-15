@@ -33,7 +33,7 @@ def test_inspect_before_save_leaves_no_source_or_knowledge(source_env):
 def test_inspect_requires_explicit_nonempty_folder(source_env):
     _, _, client = source_env
     for root in ("", "   "):
-        with pytest.raises(ValueError, match="Quellenordner"):
+        with pytest.raises(ValueError, match="source folder"):
             LocalSourceService._validate_root("folder", root)
         assert client.post("/api/local-sources/inspect", json={"kind": "folder", "root": root}).status_code == 422
 
@@ -57,7 +57,7 @@ def test_edit_source_persists_and_cannot_change_active_import(source_env):
 def test_edit_checks_owner_and_required_model(source_env):
     app, root, client = source_env
     source = LocalSourceService(app).add("Docs", "folder", str(root), mode="direct")
-    with pytest.raises(ValueError, match="nicht gefunden"):
+    with pytest.raises(ValueError, match="not found"):
         LocalSourceService(app, "other").update(source["id"], name="Other", purpose="", mode="direct")
     response = client.put("/api/local-sources/" + source["id"], json={
         "name": "Docs", "purpose": "", "mode": "analyze", "model": None})

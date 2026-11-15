@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from mycelos.chat.events import ChatEvent
-from mycelos.chat.service import CHAT_AGENT_TOOLS  # noqa: F401 — CHAT_AGENT_TOOLS is a lazy proxy
+from mycelos.chat.tool_selection import CHAT_AGENT_TOOLS  # noqa: F401 — CHAT_AGENT_TOOLS is a lazy proxy
 from mycelos.prompts import PromptLoader
 from mycelos.tools.registry import ToolRegistry
 
@@ -353,7 +353,7 @@ class MycelosHandler:
         Code agents are exposed as direct tools (run_agent_<id>).
         Persona agents are added to the handoff enum.
         """
-        from mycelos.chat.service import _get_chat_agent_tools
+        from mycelos.chat.tool_selection import _get_chat_agent_tools
 
         target_agents = _get_user_facing_agents(self._app)
 

@@ -207,6 +207,11 @@ class ApprovalCardData(_Strict):
     summary: str = Field(min_length=1, max_length=_LONG)
     effects: list[_ShortStr] = Field(default_factory=list, max_length=20)
     actions: list[ApprovalAction] = Field(min_length=1, max_length=4)
+    # Slice 5: the filing change the card is about, shown as a tree inside
+    # the card, and the server-side proposal its buttons resolve. The card
+    # carries only the id; what an action does is stored on the server.
+    changes: list[TreeChangeItem] = Field(default_factory=list, max_length=_MAX_ITEMS)
+    proposal: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
 
 VIEW_SCHEMAS: dict[str, type[_Strict]] = {
@@ -431,6 +436,8 @@ def _fb_tree_change(d: TreeChangeData) -> str:
 
 def _fb_approval_card(d: ApprovalCardData) -> str:
     lines = [d.summary]
+    if d.changes:
+        lines.append(_fb_tree_change(TreeChangeData(changes=d.changes)))
     lines += [f"• {e}" for e in d.effects]
     lines.append("")
     lines += [f"{i}. {a.label}" for i, a in enumerate(d.actions, 1)]

@@ -13,6 +13,7 @@ from huey import SqliteHuey, crontab
 from huey.consumer import Consumer
 
 from mycelos.knowledge.source_checks import SourceCheckService
+from mycelos.i18n import t as _t
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,14 @@ def enqueue_source_check(app, source_id, user_id='default', *, due_only=False):
     service.status(source_id)  # Resolve ownership even when no worker is available.
     task = getattr(app, 'source_check_task', None)
     if task is None:
-        raise RuntimeError('Die Quellenprüfung ist nicht verfügbar')
+        raise RuntimeError(_t("sources.check_unavailable"))
     if not service.claim(source_id, due_only=due_only):
         return service.status(source_id)
     try:
         task(source_id, user_id, service.status(source_id)["request_id"])
     except Exception as error:
         service.fail_enqueue(source_id)
-        raise RuntimeError('Die Quellenprüfung konnte nicht starten') from error
+        raise RuntimeError(_t("sources.check_start_failed")) from error
     return service.status(source_id)
 
 

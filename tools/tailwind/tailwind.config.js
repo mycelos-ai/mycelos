@@ -1,15 +1,29 @@
 /**
- * Shared Tailwind CSS configuration for all Mycelos pages.
+ * Tailwind configuration for the Mycelos Web UI.
  *
- * This file is loaded AFTER the Tailwind CDN script and sets
- * the custom theme (colors, fonts, radii) once — no duplication
- * across HTML pages.
+ * The UI used to load Tailwind from cdn.tailwindcss.com and compile classes
+ * in the browser. Mycelos often runs on a home network without internet
+ * access, so the stylesheet is now compiled ahead of time into
+ * src/mycelos/frontend/shared/vendor/tailwind.css and committed.
  *
- * Usage in HTML <head>:
- *   <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
- *   <script src="/shared/tailwind-config.js"></script>
+ * Rebuild after adding or changing Tailwind classes:
+ *   scripts/build-tailwind.sh
+ * CI fails when the committed CSS is out of date.
  */
-tailwind.config = {
+const path = require("path");
+
+const frontend = path.join(__dirname, "../../src/mycelos/frontend");
+
+module.exports = {
+  content: [
+    path.join(frontend, "index.html"),
+    path.join(frontend, "pages/**/*.html"),
+    path.join(frontend, "shared/**/*.{html,js}"),
+    // Third-party bundles are not ours; scanning them only adds noise.
+    "!" + path.join(frontend, "shared/vendor/**"),
+    "!" + path.join(frontend, "shared/mermaid.min.js"),
+  ],
+  plugins: [require("@tailwindcss/forms")],
   darkMode: "class",
   theme: {
     extend: {

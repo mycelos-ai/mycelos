@@ -1,22 +1,22 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mycelos - Knowledge Base</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
-  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/vendor/material-symbols/material-symbols.css">
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
   <script src="/shared/mermaid.min.js"></script>
   <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Internal wikilinks [[Note Title]] */
@@ -133,6 +133,9 @@
 <link rel="stylesheet" href="/shared/product-shell.css?v=1">
 <script defer src="/shared/notifications.js?v=1"></script>
 <style>.knowledge-panels{padding-top:84px}.knowledge-actions{position:relative}.knowledge-actions>summary{cursor:pointer;padding:4px 12px;font-size:22px;list-style:none}.knowledge-action-menu{position:absolute;right:0;top:100%;display:flex;gap:8px;background:white;border:1px solid #dce6e1;border-radius:10px;padding:12px;z-index:40;min-width:240px}@media(max-width:680px){.knowledge-panels{padding-top:72px}}</style>
+  <!-- Tailwind last in <head>, where the old CDN script injected its styles,
+       so utilities keep winning over base.css and page styles. -->
+  <link rel="stylesheet" href="/shared/vendor/tailwind.css">
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
@@ -832,7 +835,7 @@
                             :class="(selectedNote.priority || 0) > 0
                               ? (selectedNote.priority >= 3 ? 'bg-error/10 text-error' : (selectedNote.priority >= 2 ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'))
                               : 'bg-surface-container text-on-surface-variant/50 hover:text-primary'"
-                            title="Priorität festlegen">
+                            :title="t('knowledge_page.set_priority')">
                       <span class="material-symbols-outlined" style="font-size: 12px;">flag</span>
                       <span x-text="['none','low','medium','high'][selectedNote.priority || 0]"></span>
                     </button>
@@ -857,7 +860,7 @@
                                  bg-primary/10 text-primary">
                       <span x-text="tag"></span>
                       <button @click="removeTag(idx)"
-                              class="ml-0.5 hover:text-error transition-colors" title="Schlagwort entfernen">
+                              class="ml-0.5 hover:text-error transition-colors" :title="t('knowledge_page.remove_tag')">
                         <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
                       </button>
                     </span>
@@ -866,7 +869,7 @@
                     <button x-show="!adding" @click="adding = true; $nextTick(() => $refs.tagInput.focus())"
                             class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-label
                                    bg-surface-container text-on-surface-variant/50 hover:text-primary transition-colors"
-                            title="Schlagwort hinzufügen">
+                            :title="t('knowledge_page.add_tag')">
                       <span class="material-symbols-outlined" style="font-size: 10px;">add</span> tag
                     </button>
                     <input x-show="adding" x-ref="tagInput"
@@ -931,7 +934,7 @@
               <button @click="reclassifyNote(selectedNote)"
                       class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs
                              bg-surface-container text-on-surface-variant hover:text-tertiary transition-colors"
-                      title="Mit Modell neu einordnen">
+                      :title="t('knowledge_page.reclassify')">
                 <span class="material-symbols-outlined text-sm">auto_fix_high</span>
               </button>
             </template>
@@ -941,7 +944,7 @@
               <button @click="splitNote()"
                       class="w-9 h-9 rounded-lg flex items-center justify-center
                              text-on-surface-variant/40 hover:text-tertiary hover:bg-tertiary/10 transition-colors"
-                      title="In Untereinträge teilen">
+                      :title="t('knowledge_page.split')">
                 <span class="material-symbols-outlined text-lg">call_split</span>
               </button>
             </template>
@@ -1181,27 +1184,24 @@
 
     function renderMarkdown(text) {
       if (!text) return '';
-      let html;
-      if (typeof marked !== 'undefined') {
-        html = marked.parse(text);
-      } else {
-        html = text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
-      }
+      const Safe = window.MycelosSafeHtml;
+      // Notes hold imported text (mail, web pages, documents). The HTML is
+      // post-processed below and sanitized as the last step.
+      let html = Safe.markdownUnsafe(text);
       // Convert Obsidian-style wikilinks [[Note Title]] to clickable internal links
       // Check existence against loaded notes — unresolved links get different styling
       html = html.replace(
         /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g,
         (_, target, label) => {
+          // target/label are already HTML-escaped by marked; escape the
+          // decoded form again for the title attribute.
           const display = label || target;
-          const encoded = encodeURIComponent(target.trim());
-          const exists = window._knownNoteTitles.has(target.trim().toLowerCase());
+          const plainTarget = Safe.decodeEntities(target.trim());
+          const encoded = encodeURIComponent(plainTarget);
+          const exists = window._knownNoteTitles.has(plainTarget.toLowerCase());
           const cls = exists ? 'wikilink' : 'wikilink wikilink-unresolved';
-          const title = exists ? target.trim() : target.trim() + ' (not found — click to create)';
-          return `<a href="#" class="${cls}" data-note="${encoded}" title="${title}">${display}</a>`;
+          const title = exists ? plainTarget : plainTarget + ' (not found — click to create)';
+          return `<a href="#" class="${cls}" data-note="${encoded}" title="${Safe.escape(title)}">${display}</a>`;
         }
       );
 
@@ -1209,11 +1209,12 @@
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
         (_, code) => {
+          // Keep the diagram source escaped — mermaid reads it as text.
           const id = 'mermaid-' + (++_mermaidCounter);
-          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${code}</pre></div>`;
         }
       );
+      html = Safe.sanitize(html);
       // Trigger mermaid rendering after DOM update
       if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
         setTimeout(() => mermaid.run(), 50);
@@ -2089,7 +2090,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Schlagwort entfernen failed:', e.message);
+            console.warn('Remove tag failed:', e.message);
           }
         },
 
@@ -2103,7 +2104,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.tags = tags;
           } catch (e) {
-            console.warn('Schlagwort hinzufügen failed:', e.message);
+            console.warn('Add tag failed:', e.message);
           }
         },
 
@@ -2116,7 +2117,7 @@
             const inList = this.notes.find(n => n.path === this.selectedNote.path);
             if (inList) inList.priority = level;
           } catch (e) {
-            console.warn('Priorität festlegen failed:', e.message);
+            console.warn('Set priority failed:', e.message);
           }
         },
       };

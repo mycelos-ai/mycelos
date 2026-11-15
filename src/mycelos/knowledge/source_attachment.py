@@ -10,7 +10,46 @@ root attachment and means "anywhere".
 """
 from __future__ import annotations
 
+import json
 from typing import Any
+
+# Local sources (Obsidian vaults, folders, repositories) share the
+# attachment and rule tables with connectors under this key prefix, so one
+# source model carries the subtree guarantee for both (Package 8, slice 5).
+LOCAL_SOURCE_PREFIX = "local:"
+
+# Notes captured in the chat have no source; their filing rule lives here.
+CHAT_SOURCE_KEY = "chat"
+
+
+def local_source_key(source_id: str) -> str:
+    return LOCAL_SOURCE_PREFIX + source_id
+
+
+def source_key(raw_source: Any) -> str | None:
+    """The attachment/rule key for a note's ``source`` provenance.
+
+    Connector notes use their connector id, local-source notes
+    ``local:<id>``, chat captures ``chat``. Anything else has no key, so it
+    is unscoped and has no rule. Unparseable provenance has no key either.
+    """
+    if not raw_source:
+        return None
+    try:
+        data = json.loads(raw_source) if isinstance(raw_source, str) else raw_source
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    connector = data.get("connector")
+    if isinstance(connector, str) and connector:
+        return connector
+    source_id = data.get("source_id")
+    if isinstance(source_id, str) and source_id:
+        return local_source_key(source_id)
+    if data.get("kind") == "chat":
+        return CHAT_SOURCE_KEY
+    return None
 
 
 def _covers(attachment: str, path: str) -> bool:

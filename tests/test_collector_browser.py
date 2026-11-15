@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from tests.browser_i18n import add_i18n_route
 import uvicorn
 
 from mycelos.app import App
@@ -25,6 +26,7 @@ def collector_web(tmp_path):
     api=FastAPI();api.state.mycelos=app
     server=CollectorServer(app);api.state.collector_server=server;api.include_router(router)
     project=Path(__file__).resolve().parents[1]
+    add_i18n_route(api,'de')
     api.mount('/desktop',StaticFiles(directory=project/'collector-desktop/ui',html=True))
     api.mount('/',StaticFiles(directory=project/'src/mycelos/frontend',html=True))
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]

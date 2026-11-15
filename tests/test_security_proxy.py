@@ -89,7 +89,13 @@ class TestHttpProxy:
                 assert resp.json()["status"] == 200
 
     def test_inject_as_custom_header(self, client):
-        """Credential injection with header:{name} mode."""
+        """Credential injection with header:{name} mode (credential bound
+        to api.example.com through its own api_base)."""
+        from mycelos.security.credentials import EncryptedCredentialProxy
+        from mycelos.storage.database import SQLiteStorage
+        EncryptedCredentialProxy(
+            SQLiteStorage(Path(os.environ["MYCELOS_DB_PATH"])), "test-master-key",
+        ).store_credential("test-service", {"api_key": "k-123", "api_base": "https://api.example.com"})
         fake_addrinfo = [(2, 1, 6, "", ("93.184.216.34", 0))]
         with patch("mycelos.security.ssrf.socket.getaddrinfo", return_value=fake_addrinfo):
             with patch("mycelos.security.proxy_server.httpx") as mock_httpx:
@@ -112,6 +118,8 @@ class TestHttpProxy:
                     "X-User-Id": "default",
                 })
                 assert resp.status_code == 200
+                sent_headers = mock_httpx.request.call_args.kwargs["headers"]
+                assert sent_headers["X-Api-Key"] == "k-123"
 
     def test_ssrf_blocked_returns_error(self, client):
         """SSRF block returns error in response body."""

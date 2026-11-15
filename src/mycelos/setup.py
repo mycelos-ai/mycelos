@@ -46,9 +46,17 @@ class SetupError(Exception):
 
 
 def ensure_master_key(data_dir: Path) -> None:
-    """Create ~/.mycelos/.master_key if missing and export it into the env."""
+    """Create ~/.mycelos/.master_key if missing and export it into the env.
+
+    No-op in the gateway of a two-container deployment: the SecurityProxy
+    owns the key there and credentials are stored through it.
+    """
+    from mycelos.security.master_key import key_held_by_external_proxy, master_key_path
+    if key_held_by_external_proxy():
+        return
     data_dir.mkdir(parents=True, exist_ok=True)
-    key_file = data_dir / ".master_key"
+    key_file = master_key_path(data_dir)
+    key_file.parent.mkdir(parents=True, exist_ok=True)
     if not key_file.exists():
         key_file.write_text(secrets.token_urlsafe(32))
         try:
