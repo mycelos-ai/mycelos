@@ -18,7 +18,11 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
+    # pi5.local stands for the LAN name an operator listed in
+    # MYCELOS_ALLOWED_HOSTS (the DNS-rebinding guard answers only for
+    # known host names on a password-less gateway).
+    monkeypatch.setenv("MYCELOS_ALLOWED_HOSTS", "testserver,pi5.local")
     with tempfile.TemporaryDirectory() as tmp:
         data_dir = Path(tmp)
         os.environ["MYCELOS_MASTER_KEY"] = "csrf-test-key"

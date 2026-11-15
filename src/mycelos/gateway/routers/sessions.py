@@ -39,8 +39,35 @@ async def session_messages(request: Request, session_id: str) -> dict[str, Any]:
     mycelos = request.app.state.mycelos
     if not mycelos.session_store.session_exists(session_id):
         return JSONResponse({"error": "Session not found"}, status_code=404)
-    messages = mycelos.session_store.load_messages(session_id)
+    messages = [
+        _client_record(mycelos, user_id=resolve_user_id(request), record=r)
+        for r in mycelos.session_store.load_transcript(session_id)
+    ]
     return {"session_id": session_id, "messages": messages}
+
+
+def _client_record(mycelos: Any, *, user_id: str, record: dict) -> dict:
+    """A transcript record as the chat page reloads it.
+
+    Views come back as ``role: "view"``. An approval card also carries the
+    current state of its proposal, so a reload shows it answered, expired or
+    still open instead of offering buttons that no longer work.
+    """
+    if record.get("type") != "view":
+        return record
+    view = record["view"]
+    out: dict[str, Any] = {"type": "view", "role": "view", "view": view,
+                           "timestamp": record.get("timestamp")}
+    data = view.get("data") if isinstance(view.get("data"), dict) else {}
+    proposal = data.get("proposal") if view.get("type") == "approval_card" else None
+    if isinstance(proposal, str) and proposal:
+        from mycelos.knowledge.proposals import ProposalService
+        try:
+            out["state"] = ProposalService(mycelos, user_id).state(proposal)
+        except Exception:
+            # Fail closed: an unreadable state shows the card locked.
+            out["state"] = {"status": "unknown"}
+    return out
 
 
 @router.patch("/api/sessions/{session_id}")

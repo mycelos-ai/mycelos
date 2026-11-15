@@ -9,6 +9,7 @@ from huey.exceptions import RetryTask
 
 from mycelos.knowledge.local_sources import LocalSourceService
 from mycelos.knowledge.source_lock import source_lock
+from mycelos.i18n import t as _t
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def recover_imports(app, huey):
                     service._recover_locked(row['id'])
                 elif current['status']=='queued' and current.get('import_request_id') not in pending:
                     app.storage.execute("UPDATE local_sources SET status='error',import_request_id=NULL,error=? WHERE id=?",
-                                        ('Der vorherige Importauftrag ist nicht mehr verfügbar. Bitte erneut starten.',row['id']))
+                                        (_t("sources.import_job_lost"),row['id']))
         except ValueError:
             continue  # Another process still owns the import.
 

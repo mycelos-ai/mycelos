@@ -1,6 +1,7 @@
 """Process-owned source lock. The operating system releases it after a crash."""
 from contextlib import contextmanager
 import os
+from mycelos.i18n import t as _t
 
 
 @contextmanager
@@ -23,7 +24,7 @@ def source_lock(data_dir, source_id):
         try:
             acquire()
         except OSError as error:
-            raise ValueError("Die Quelle läuft bereits") from error
+            raise ValueError(_t("sources.already_running")) from error
         try:
             yield
         finally:

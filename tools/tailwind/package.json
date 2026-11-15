@@ -1,0 +1,12 @@
+{
+  "name": "mycelos-tailwind-build",
+  "private": true,
+  "description": "Builds src/mycelos/frontend/shared/vendor/tailwind.css so the Web UI needs no CDN.",
+  "scripts": {
+    "build": "tailwindcss --config tailwind.config.js --input input.css --output ../../src/mycelos/frontend/shared/vendor/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/forms": "0.5.11",
+    "tailwindcss": "3.4.17"
+  }
+}

@@ -9,7 +9,9 @@ The Gateway exposes a RESTful HTTP API on port `9100`. All endpoints return JSON
 
 ## Authentication
 
-When `MYCELOS_PASSWORD` is set in `.env`, every endpoint requires **HTTP Basic Auth**. Username is ignored; the password is checked against `MYCELOS_PASSWORD` in constant time. Set this as soon as you expose the gateway beyond `127.0.0.1` — there is no other authentication layer in v0.3 (passkey ships in Phase 2).
+When `MYCELOS_PASSWORD` is set in `.env`, every endpoint requires authentication: a session cookie from `POST /api/auth/login` (`{"password": "...", "remember": false}`) or **HTTP Basic Auth**. Username is ignored; the password is compared in constant time. After 10 wrong attempts from one address within five minutes, login and Basic Auth answer `429` with a `Retry-After` header. Set a password as soon as you expose the gateway beyond `127.0.0.1` — there is no other authentication layer in v0.3 (passkey ships in Phase 2).
+
+Without a password, the gateway only answers for known host names (loopback, the bind address, detected LAN names, `MYCELOS_ALLOWED_ORIGINS`, `MYCELOS_ALLOWED_HOSTS`). A request with any other `Host` header gets `421 Host not allowed` — this blocks DNS-rebinding attacks from web pages. Scripts that call `http://localhost:9100` are unaffected.
 
 `/api/health` and `/healthz` remain unauthenticated so Docker healthchecks and external probes can verify the service is up without a password.
 

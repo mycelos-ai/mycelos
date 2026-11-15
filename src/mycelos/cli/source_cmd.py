@@ -20,7 +20,7 @@ def _print(action):
 @click.option("--data-dir", type=click.Path(path_type=Path), default=default_data_dir)
 @click.pass_context
 def source_cmd(ctx, data_dir):
-    """Lokale Quellen hinzufügen, prüfen und erschließen."""
+    """Add, check and process local sources."""
     data_dir.mkdir(parents=True, exist_ok=True)
     app = App(data_dir)
     app.storage.initialize()
@@ -37,7 +37,7 @@ def source_cmd(ctx, data_dir):
 @click.option("--workflow-file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.pass_obj
 def add(service, **kwargs):
-    """Quelle speichern. Der Import beginnt erst mit dem Importauftrag."""
+    """Save a source. The import starts only with an import request."""
     def save():
         path = kwargs.pop("workflow_file", None)
         if path:
@@ -56,7 +56,7 @@ def list_sources(service):
 @click.argument("source_id")
 @click.pass_obj
 def preview(service, source_id):
-    """Bestand und Textbeispiele ohne Modellaufruf zeigen."""
+    """Show the inventory and text samples without a model call."""
     _print(lambda: service.preview(source_id))
 
 
@@ -64,7 +64,7 @@ def preview(service, source_id):
 @click.argument("source_id")
 @click.pass_obj
 def ingest(service, source_id):
-    """Quelle mit ihrem gespeicherten Verfahren verarbeiten."""
+    """Process a source with its saved procedure."""
     _print(lambda: service.ingest(source_id))
 
 
@@ -72,7 +72,7 @@ def ingest(service, source_id):
 @click.argument("source_id")
 @click.pass_obj
 def probe(service, source_id):
-    """Eine Textprobe mit dem gewählten Modell analysieren, ohne Wissen zu speichern."""
+    """Analyze a text sample with the chosen model without saving knowledge."""
     _print(lambda: service.probe(source_id))
 
 
@@ -88,7 +88,7 @@ def pause(service, source_id, resume):
 @click.argument("query")
 @click.pass_obj
 def search(service, query):
-    """Wissenseinträge aus lokalen Quellen mit Herkunft finden."""
+    """Find knowledge entries from local sources with their origin."""
     _print(lambda: service.search(query))
 
 
@@ -96,14 +96,14 @@ def search(service, query):
 @click.argument("item_id")
 @click.pass_obj
 def evidence(service, item_id):
-    """Den gespeicherten Originaltext eines Quellenobjekts lesen."""
+    """Read the stored original text of a source item."""
     _print(lambda: service.evidence(item_id))
 
 
 @source_cmd.command("templates")
 @click.pass_obj
 def reference_templates(service):
-    """Anpassbare Referenzworkflows als JSON ausgeben."""
+    """Print the adjustable reference workflows as JSON."""
     from mycelos.knowledge.source_workflows import templates
     _print(templates)
 
@@ -114,7 +114,7 @@ def reference_templates(service):
 @click.option("--workflow-file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.pass_obj
 def inspect_source(service, kind, root, workflow_file):
-    """Eine Quelle vor dem Speichern ohne Sprachmodell sichten."""
+    """Inspect a source before saving it, without a language model."""
     _print(lambda: service.inspect(kind, root, json.loads(workflow_file.read_text()) if workflow_file else None))
 
 
@@ -122,7 +122,7 @@ def inspect_source(service, kind, root, workflow_file):
 @click.argument("source_id")
 @click.pass_obj
 def check_source(service, source_id):
-    """Änderungen ohne Modellaufruf und ohne Embeddings vormerken."""
+    """Mark changes without a model call and without embeddings."""
     from mycelos.knowledge.source_checks import SourceCheckService
     _print(lambda: SourceCheckService(service.app, service.user_id).check(source_id))
 
@@ -140,7 +140,7 @@ def check_status(service, source_id):
 @click.option("--minutes", type=click.Choice(['0', '15', '60', '360', '1440']), required=True)
 @click.pass_obj
 def schedule_source(service, source_id, minutes):
-    """Zeitplan der Quellenprüfung speichern. 0 bedeutet nur auf Auftrag."""
+    """Save the source check schedule. 0 means on request only."""
     from mycelos.knowledge.source_checks import SourceCheckService
     _print(lambda: SourceCheckService(service.app, service.user_id).configure(source_id, int(minutes)))
 
@@ -149,6 +149,6 @@ def schedule_source(service, source_id, minutes):
 @click.argument("source_id")
 @click.pass_obj
 def pending_source(service, source_id):
-    """Vorgemerkte Änderungen ohne Inhaltsanalyse zeigen."""
+    """Show marked changes without content analysis."""
     from mycelos.knowledge.source_checks import SourceCheckService
     _print(lambda: SourceCheckService(service.app, service.user_id).pending(source_id))

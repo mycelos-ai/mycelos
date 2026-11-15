@@ -94,6 +94,8 @@ def test_app_credentials_without_wired_proxy_client_falls_back(tmp_path, monkeyp
     AttributeError."""
     monkeypatch.setenv("MYCELOS_MASTER_KEY", "key-" + "x" * 24)
     monkeypatch.setenv("MYCELOS_PROXY_URL", "http://proxy.internal:9110")
+    # Without a token no client can be built from the environment.
+    monkeypatch.delenv("MYCELOS_PROXY_TOKEN", raising=False)
 
     from mycelos.app import App
     from mycelos.security.credentials import EncryptedCredentialProxy
@@ -106,3 +108,20 @@ def test_app_credentials_without_wired_proxy_client_falls_back(tmp_path, monkeyp
     creds = app.credentials
     assert isinstance(creds, EncryptedCredentialProxy)
 
+
+
+def test_app_credentials_build_the_proxy_client_from_env(tmp_path, monkeypatch):
+    """CLI inside the gateway container: MYCELOS_PROXY_URL + TOKEN are in
+    the environment but nobody called set_proxy_client. The app talks to
+    the proxy container instead of looking for a local master key."""
+    monkeypatch.delenv("MYCELOS_MASTER_KEY", raising=False)
+    monkeypatch.setenv("MYCELOS_PROXY_URL", "http://proxy.internal:9110")
+    monkeypatch.setenv("MYCELOS_PROXY_TOKEN", "tok-" + "y" * 24)
+
+    from mycelos.app import App
+    from mycelos.security.credentials import DelegatingCredentialProxy
+
+    app = App(tmp_path)
+    app.initialize()
+    assert isinstance(app.credentials, DelegatingCredentialProxy)
+    assert app._proxy_client is not None

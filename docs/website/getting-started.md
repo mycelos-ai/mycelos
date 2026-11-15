@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/ins
 
 The installer:
 
-- creates `./data/` with a freshly generated `.master_key` (or keeps yours if one already exists)
+- creates `./data/` for the database and `./secrets/` with a freshly generated `.master_key` (or keeps yours if one already exists; a key left in `./data/` by an older install is moved to `./secrets/`). Back up `./secrets/.master_key` — without it your stored credentials cannot be decrypted
 - writes `.env` with a random `MYCELOS_PROXY_TOKEN`
 - fetches the latest `docker-compose.yml`
 - pulls `ghcr.io/mycelos-ai/mycelos:main`
@@ -58,7 +58,7 @@ Re-run the same install command any time you want to pull a new release:
 curl -fsSL https://raw.githubusercontent.com/mycelos-ai/mycelos/main/scripts/install.sh | bash
 ```
 
-It's idempotent: `.master_key` and `.env` are preserved, `docker-compose.yml` is refreshed (old version backed up if it changed), and the latest image is pulled.
+It's idempotent: `secrets/.master_key` and `.env` are preserved, `docker-compose.yml` is refreshed (old version backed up if it changed), and the latest image is pulled.
 
 ## Exposing Mycelos beyond localhost
 

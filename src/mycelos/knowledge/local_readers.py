@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from typing import Iterator
+from mycelos.i18n import t as _t
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ def _paths(root: Path, extensions: set[str], extra_excluded: set[str] | None = N
             path = Path(directory) / name
             if path.suffix.lower() in extensions and not path.is_symlink():
                 if path.stat().st_size > MAX_FILE_BYTES:
-                    raise ValueError(f"Datei zu groß: {path}")
+                    raise ValueError(_t("sources.file_too_large", path=path))
                 yield path
 
 
@@ -78,7 +79,7 @@ def _transcript(kind: str, path: Path) -> SourceUnit | None:
                 if not isinstance(record, dict):
                     raise ValueError("record is not an object")
             except (ValueError, TypeError) as error:
-                raise ValueError(f"Ungültiges Protokoll: {path.name}:{number}") from error
+                raise ValueError(_t("sources.invalid_log", name=path.name, line=number)) from error
             role, text = "", ""
             if kind == "codex":
                 payload = record.get("payload") or {}
@@ -137,8 +138,8 @@ def _transcript(kind: str, path: Path) -> SourceUnit | None:
         return None
     content = "\n\n".join(f"[Zeile {n}; {role}]\n{text}" for n, role, text in messages)
     if len(content) > MAX_UNIT_CHARS:
-        raise ValueError(f"Gespräch zu groß für diesen Import: {path.name}")
-    title = f"{project or kind} · Gespräch {session_id[:12]}"
+        raise ValueError(_t("sources.conversation_too_large", name=path.name))
+    title = _t("sources.conversation_title", project=project or kind, session=session_id[:12])
     return SourceUnit(session_id, title, content, (str(path),), project)
 
 
@@ -147,7 +148,7 @@ def _document(path: Path) -> str:
         try:
             import fitz
         except ImportError as error:
-            raise ValueError("PDF-Import benötigt die Dateierweiterung mycelos[files].") from error
+            raise ValueError(_t("sources.pdf_extra")) from error
         with fitz.open(path) as doc:
             return "\n\n".join(f"[Seite {i + 1}]\n{page.get_text()}" for i, page in enumerate(doc))
     return path.read_text(encoding="utf-8")
@@ -174,12 +175,12 @@ def read_units(kind: str, root: Path, workflow=None) -> Iterator[SourceUnit]:
             content = _document(path)
             if content.strip():
                 if len(content) > MAX_UNIT_CHARS:
-                    raise ValueError(f"Dokument zu groß: {path.name}")
+                    raise ValueError(_t("sources.document_too_large", name=path.name))
                 external_id = path.name if kind == "file" else str(path.relative_to(root))
                 yield SourceUnit(external_id, path.stem, content, (str(path),))
     for project, paths in projects.items():
         content = "\n\n".join(f"## {p.relative_to(project)}\n{_document(p)}" for p in paths)
         if len(content) > MAX_UNIT_CHARS:
-            raise ValueError(f"Projekt zu groß für diesen Import: {project.name}")
+            raise ValueError(_t("sources.project_too_large", name=project.name))
         yield SourceUnit("project:" + str(project.relative_to(root)), project.name,
                          content, tuple(str(p) for p in paths), project.name)

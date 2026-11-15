@@ -2,6 +2,7 @@
 import hashlib
 import json
 from mycelos.knowledge.file_journal import file_changes
+from mycelos.i18n import t as _t
 
 
 def _write(kb, *args, **kwargs):
@@ -26,7 +27,7 @@ def overview(summary):
     data=payload(summary)
     if not data:
         return summary
-    return '## Wissensartikel\n\n'+'\n'.join('- '+a['title'] for a in data['articles'])
+    return "## " + _t("sources.articles_heading") + "\n\n"+'\n'.join('- '+a['title'] for a in data['articles'])
 
 
 def source_root(app, source):
@@ -38,7 +39,7 @@ def source_root(app, source):
     attached=db.fetchone("SELECT topic_path FROM source_attachments WHERE source_id=? ORDER BY id LIMIT 1",
                          ('local:'+source['id'],))
     topic=(attached or {}).get('topic_path') or None
-    path=_write(app.knowledge_base,source['name'],'Wissen aus dieser Quelle.',type='topic',topic=topic,created_by='source-import',source={'source_id':source['id'],'kind':source['kind']})
+    path=_write(app.knowledge_base,source['name'],_t("sources.root_content"),type='topic',topic=topic,created_by='source-import',source={'source_id':source['id'],'kind':source['kind']})
     row=db.fetchone('SELECT * FROM knowledge_notes WHERE path=?',(path,))
     db.execute('INSERT INTO source_article_roots(source_id,note_id) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET note_id=excluded.note_id',(source['id'],row['id']))
     db.execute("UPDATE knowledge_notes SET organizer_state='done' WHERE id=?",(row['id'],))

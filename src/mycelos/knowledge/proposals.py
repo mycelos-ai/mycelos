@@ -226,6 +226,28 @@ class ProposalService:
             row["payload"] = {}
         return row
 
+    def state(self, proposal_id: str) -> dict[str, Any]:
+        """Where a card stands, for showing it again after a reload.
+
+        ``pending`` (buttons work), ``resolved`` (with the action and its
+        result), ``expired`` or ``unknown`` (another user's or a missing id).
+        Never returns the stored payload.
+        """
+        row = self.get(proposal_id)
+        if row is None:
+            return {"status": "unknown"}
+        if row["status"] == "resolved":
+            try:
+                result = json.loads(row.get("result") or "{}")
+            except (TypeError, ValueError):
+                result = {}
+            return {"status": "resolved", "action": row.get("action") or "",
+                    "result": result if isinstance(result, dict) else {}}
+        created = _parse(row.get("created_at"))
+        if created is None or _now() - created > PROPOSAL_TTL:
+            return {"status": "expired"}
+        return {"status": "pending"}
+
     def resolve(self, proposal_id: str, action: str) -> dict[str, Any]:
         row = self.get(proposal_id)
         if row is None:

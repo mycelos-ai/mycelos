@@ -1,5 +1,7 @@
 /* Shared MCP connections. Queries and imports require separate user actions. */
 (() => {
+  // Strings come from web.knowledge_connectors in the locale files (loaded by i18n.js).
+  const T = (key, vars) => (typeof globalThis.t === 'function' ? globalThis.t('knowledge_connectors.' + key, vars) : key);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const styles = `
     :host{display:block;min-width:0;color:var(--on-surface,#202c30);font:400 15px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -46,21 +48,21 @@
     async request(path, options = {}) {
       const response = await fetch(path, {credentials:'same-origin', ...options});
       const data = await response.json();
-      if (!response.ok || data?.error) throw new Error('Die Verbindung ist derzeit nicht verfügbar. Bitte erneut versuchen.');
+      if (!response.ok || data?.error) throw new Error(T('error_unavailable'));
       return data;
     }
 
     render() {
-      this.shadowRoot.innerHTML = `<style>${styles}</style><section aria-label="MCP-Verbindungen">
-        <header><h3>Verbindungen</h3><button type="button" id="add" aria-expanded="false">Verbindung hinzufügen</button></header>
-        <p class="hint">Frage Inhalte aus verbundenen Diensten im Chat ab. Ausgewählte Ergebnisse kannst du als Wissen speichern.</p>
+      this.shadowRoot.innerHTML = `<style>${styles}</style><section aria-label="${escape(T('label'))}">
+        <header><h3>${T('title')}</h3><button type="button" id="add" aria-expanded="false">${T('add')}</button></header>
+        <p class="hint">${T('intro')}</p>
         <div id="message" class="message hint" role="status" aria-live="polite"></div>
-        <div id="list" aria-busy="true"><p class="hint">Die Verbindungen laden …</p></div>
-        <form hidden><label>Dienst<select name="recipe" aria-label="Dienst" required><option value="">Dienst auswählen</option></select></label>
-          <div id="fields"></div><div class="actions"><button class="primary" type="submit">Verbindung speichern</button>
-          <button type="button" id="cancel">Abbrechen</button><a href="/pages/connectors-advanced.html">Weitere Optionen</a></div>
-          <p class="hint">Die Verbindung speichert keine Inhalte im Wissensspeicher.</p></form>
-        <p><a href="/pages/connectors-advanced.html">Verbindungen verwalten</a></p>
+        <div id="list" aria-busy="true"><p class="hint">${T('loading')}</p></div>
+        <form hidden><label>${T('service')}<select name="recipe" aria-label="${escape(T('service'))}" required><option value="">${T('choose_service')}</option></select></label>
+          <div id="fields"></div><div class="actions"><button class="primary" type="submit">${T('save')}</button>
+          <button type="button" id="cancel">${T('cancel')}</button><a href="/pages/connectors-advanced.html">${T('more_options')}</a></div>
+          <p class="hint">${T('no_content_saved')}</p></form>
+        <p><a href="/pages/connectors-advanced.html">${T('manage')}</a></p>
       </section>`;
       const root = this.shadowRoot;
       root.querySelector('#add').addEventListener('click', () => this.showForm(true));
@@ -86,19 +88,20 @@
         this.renderList();
         this.renderOptions();
       } catch (_) {
-        list.innerHTML = '<p class="error">Die Verbindungen konnten nicht laden.</p><button type="button">Erneut versuchen</button>';
+        list.innerHTML = `<p class="error">${T('error_list')}</p><button type="button">${T('retry')}</button>`;
         list.querySelector('button').addEventListener('click', () => this.refresh());
       } finally { list.setAttribute('aria-busy', 'false'); }
     }
 
     renderList() {
-      const states = {healthy:'Bereit', failing:'Verbindung gestört', unknown:'Noch nicht geprüft', ready:'Eingerichtet', setup_incomplete:'Einrichtung offen', inactive:'Nicht aktiv', disabled:'Nicht aktiv', pending:'Noch nicht bereit'};
+      const stateIds = ['healthy', 'failing', 'unknown', 'ready', 'setup_incomplete', 'inactive', 'disabled', 'pending'];
+      const stateLabel = id => T('state_' + (stateIds.includes(id) ? id : 'unknown'));
       const list = this.shadowRoot.querySelector('#list');
       list.innerHTML = this.connections.length ? this.connections.map(c => `<article class="connection">
-        <strong>${escape(c.name || c.id)}</strong><span class="state">${escape(states[c.operational_state] || 'Noch nicht geprüft')}</span>
-        ${['failing','setup_incomplete'].includes(c.operational_state)?'<a href="/pages/connectors-advanced.html">Einrichtung prüfen</a>':''}
-        <details data-id="${escape(c.id)}"><summary>Werkzeuge anzeigen</summary><div class="tools"></div></details>
-      </article>`).join('') : '<p class="hint">Es gibt noch keine MCP-Verbindung. Füge einen Dienst hinzu, um ihn im Chat abzufragen.</p>';
+        <strong>${escape(c.name || c.id)}</strong><span class="state">${escape(stateLabel(c.operational_state))}</span>
+        ${['failing','setup_incomplete'].includes(c.operational_state)?`<a href="/pages/connectors-advanced.html">${T('check_setup')}</a>`:''}
+        <details data-id="${escape(c.id)}"><summary>${T('show_tools')}</summary><div class="tools"></div></details>
+      </article>`).join('') : `<p class="hint">${T('empty')}</p>`;
       list.querySelectorAll('details').forEach(details => details.addEventListener('toggle', () => {
         if (details.open && !details.dataset.loaded) this.loadTools(details);
       }));
@@ -110,9 +113,9 @@
       target.innerHTML = '<p class="hint">Die Werkzeuge laden …</p>';
       try {
         const data = await this.request(`/api/connectors/${encodeURIComponent(details.dataset.id)}/tools`);
-        target.innerHTML = data.tools?.length ? `<ul>${data.tools.map(tool => `<li><strong>${escape(tool.name)}</strong>${tool.blocked ? ' · Gesperrt' : ''}<small>${escape(tool.description)}</small></li>`).join('')}</ul>` : '<p class="hint">Der Dienst meldet noch keine Werkzeuge. Prüfe die Einrichtung unter „Weitere Optionen“.</p>';
+        target.innerHTML = data.tools?.length ? `<ul>${data.tools.map(tool => `<li><strong>${escape(tool.name)}</strong>${tool.blocked ? ' · ' + escape(T('blocked')) : ''}<small>${escape(tool.description)}</small></li>`).join('')}</ul>` : `<p class="hint">${T('no_tools')}</p>`;
       } catch (_) {
-        target.innerHTML = '<p class="error">Die Werkzeuge konnten nicht laden.</p><button type="button">Erneut versuchen</button>';
+        target.innerHTML = `<p class="error">${T('error_tools')}</p><button type="button">${T('retry')}</button>`;
         target.querySelector('button').addEventListener('click', () => this.loadTools(details));
       }
     }
@@ -121,7 +124,7 @@
       const select = this.shadowRoot.querySelector('select');
       const selected = select.value;
       const installed = new Set(this.connections.map(c => c.id));
-      select.innerHTML = '<option value="">Dienst auswählen</option>' + this.recipes.filter(r => !installed.has(r.id)).map(r => `<option value="${escape(r.id)}">${escape(r.name)}</option>`).join('');
+      select.innerHTML = `<option value="">${T('choose_service')}</option>` + this.recipes.filter(r => !installed.has(r.id)).map(r => `<option value="${escape(r.id)}">${escape(r.name)}</option>`).join('');
       select.value = selected;
     }
 
@@ -142,7 +145,7 @@
       const recipe = this.recipes.find(r => r.id === root.querySelector('select').value);
       const advanced = recipe && (recipe.setup_flow === 'oauth_http' || ['filesystem','sqlite'].includes(recipe.id));
       root.querySelector('button[type="submit"]').hidden = !!advanced;
-      root.querySelector('#fields').innerHTML = advanced ? `<p>Dieser Dienst braucht weitere Angaben.</p><p><a href="/pages/connectors-advanced.html#recipe-${encodeURIComponent(recipe.id)}">${escape(recipe.name)} einrichten</a></p>` : (recipe?.credentials || []).map((c, i) => `<label>Zugangsschlüssel${recipe.credentials.length > 1 ? ' ' + (i + 1) : ''}<small>${escape(c.name || c.env_var)}</small><input name="credential-${i}" type="password" autocomplete="new-password" required></label>`).join('');
+      root.querySelector('#fields').innerHTML = advanced ? `<p>${T('needs_more')}</p><p><a href="/pages/connectors-advanced.html#recipe-${encodeURIComponent(recipe.id)}">${escape(T('setup_named', {name: recipe.name}))}</a></p>` : (recipe?.credentials || []).map((c, i) => `<label>${T('credential')}${recipe.credentials.length > 1 ? ' ' + (i + 1) : ''}<small>${escape(c.name || c.env_var)}</small><input name="credential-${i}" type="password" autocomplete="new-password" required></label>`).join('');
     }
 
     async save() {
@@ -151,17 +154,17 @@
       if (!recipe) return;
       const button = root.querySelector('button[type="submit"]');
       button.disabled = true;
-      button.textContent = 'Mycelos speichert …';
+      button.textContent = T('saving');
       this.message('');
       const body = {name:recipe.id};
       if (recipe.credentials?.length) body.env_vars = Object.fromEntries(recipe.credentials.map((c,i) => [c.env_var, root.querySelector(`[name="credential-${i}"]`).value]));
       try {
         await this.request('/api/connectors', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
         this.showForm(false);
-        this.message('Die Verbindung ist gespeichert. Der Dienst startet.');
+        this.message(T('saved'));
         window.dispatchEvent(new CustomEvent('mycelos-connectors-changed'));
-      } catch (_) { this.message('Mycelos konnte die Verbindung nicht speichern. Prüfe die Angaben unter „Weitere Optionen“.', true); }
-      finally { button.disabled = false; button.textContent = 'Verbindung speichern'; }
+      } catch (_) { this.message(T('error_save'), true); }
+      finally { button.disabled = false; button.textContent = T('save'); }
     }
   }
   if (!customElements.get('mycelos-connectors')) customElements.define('mycelos-connectors', MycelosConnectors);

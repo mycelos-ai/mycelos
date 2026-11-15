@@ -42,6 +42,7 @@ from mycelos.knowledge.inbox_policy import collapse_key, needs_human
 # a cause was reworded on one side only.
 from mycelos.scheduler.run_recorder import CAUSES, ORPHANED_RUN_CAUSE
 from mycelos.storage.database import SQLiteStorage
+from mycelos.i18n import t as _t
 
 logger = logging.getLogger("mycelos.inbox_model")
 
@@ -627,13 +628,13 @@ class InboxModel:
             local_source = self._storage.fetchone(
                 'SELECT name,status FROM local_sources WHERE id=?', (routine_key,))
             if local_source:
-                title = f"Import von „{local_source['name']}“ fehlgeschlagen"
-                why = 'Der Import konnte die Wissensaufbereitung nicht abschließen. Die Quellenansicht zeigt den aktuellen Fehler.'
+                title = _t("sources.inbox_import_failed", name=local_source['name'])
+                why = _t("sources.inbox_import_failed_why")
                 if local_source['status'] in ('running', 'queued'):
-                    why = 'Ein neuer Import ist vorgemerkt oder läuft bereits. Das Ergebnis steht noch aus.'
+                    why = _t("sources.inbox_import_pending_why")
                 elif outcome == _OUTCOME_UNKNOWN:
-                    title = f"Import von „{local_source['name']}“ nicht abgeschlossen"
-                    why = 'Der vorherige Import endete ohne bestätigtes Ergebnis. Du kannst ihn erneut starten.'
+                    title = _t("sources.inbox_import_unfinished", name=local_source['name'])
+                    why = _t("sources.inbox_import_unfinished_why")
             entries.append(self._entry(
                 entry_id=f"run:{routine_key}",
                 kind="failed_run",

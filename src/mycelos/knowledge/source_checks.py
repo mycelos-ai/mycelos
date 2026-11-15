@@ -12,6 +12,7 @@ from pathlib import Path
 from mycelos.knowledge.local_readers import read_units
 from mycelos.knowledge.local_sources import LocalSourceService, source_recipe
 from mycelos.knowledge.source_lock import source_lock
+from mycelos.i18n import t as _t
 
 
 INTERVALS = {0, 15, 60, 360, 1440}
@@ -83,7 +84,7 @@ class SourceCheckService:
     def configure(self, source_id, interval_minutes):
         self.sources.require_local(self._ensure(source_id))
         if type(interval_minutes) is not int or interval_minutes not in INTERVALS:
-            raise ValueError('Bitte ein gültiges Prüfintervall auswählen')
+            raise ValueError(_t("sources.invalid_interval"))
         self.db.execute('UPDATE local_source_checks SET interval_minutes=?,next_check=? WHERE source_id=?',
                         (interval_minutes, _utc(interval_minutes) if interval_minutes else None, source_id))
         return self.status(source_id)
@@ -114,7 +115,7 @@ class SourceCheckService:
 
     def fail_enqueue(self, source_id):
         self._ensure(source_id)
-        self._failure(source_id, 'Die Einreihung der Prüfung ist fehlgeschlagen')
+        self._failure(source_id, _t("sources.check_enqueue_failed"))
         return self.status(source_id)
 
     def due(self):
@@ -142,7 +143,7 @@ class SourceCheckService:
                     state = self._state(sid)
                     if state['status'] == 'running' or (state['status'] == 'queued' and state['lease_until'] and
                             datetime.fromisoformat(state['lease_until'].replace('Z', '+00:00')) <= datetime.now(timezone.utc)):
-                        self._failure(sid, 'Die vorige Prüfung wurde unterbrochen')
+                        self._failure(sid, _t("sources.check_interrupted"))
             except ValueError:
                 continue
 
@@ -154,12 +155,12 @@ class SourceCheckService:
                 return self.status(source_id)
             source = self.sources.get(source_id)
             if source['status'] in {'paused', 'running', 'queued'}:
-                raise ValueError('Die Quelle ist pausiert oder läuft bereits')
+                raise ValueError(_t("sources.paused_or_running"))
             self.db.execute("UPDATE local_source_checks SET status='running',error=NULL WHERE source_id=?", (source_id,))
             try:
                 self._scan(source)
             except Exception:
-                self._failure(source_id, 'Die Prüfung ist fehlgeschlagen. Bitte die Quelle und die Leseregeln prüfen.')
+                self._failure(source_id, _t("sources.check_failed"))
         return self.status(source_id)
 
     def _scan(self, source):
@@ -173,7 +174,7 @@ class SourceCheckService:
         root = Path(source['root'])
         missing_file = source['kind'] == 'file' and not root.exists() and root.parent.is_dir()
         if root.is_symlink() or (not root.exists() and not missing_file):
-            raise ValueError('Die Quelle ist nicht verfügbar')
+            raise ValueError(_t("sources.source_unavailable"))
         units = () if missing_file else read_units(source['kind'], root, source['workflow'])
         # A disk-backed stage bounds content memory to one reader unit. The live
         # inventory stays untouched until every source file has parsed.
@@ -196,7 +197,7 @@ class SourceCheckService:
                             (unit.external_id, unit.title, fingerprint, unit.content,
                              json.dumps(unit.files), unit.project, change))
                     except sqlite3.IntegrityError as error:
-                        raise ValueError('Mehrere Protokolle haben dieselbe Gesprächskennung') from error
+                        raise ValueError(_t("sources.duplicate_session")) from error
                     checked += 1
                 stage.commit()
                 self._publish(sid, stage, checked)

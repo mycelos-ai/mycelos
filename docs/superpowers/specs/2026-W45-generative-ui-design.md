@@ -216,6 +216,19 @@ Delivery:
   `POST /api/briefing/first-message/shown` after rendering it.
 - **Telegram**: unchanged schedule; the same views render through `telegram_renderer.py` as text,
   with `Counts` as a short line per source.
+
+Reload and Telegram (follow-up to slices 4 and 5):
+
+- Every view a tool hands to the chat (`__view__`) is appended to the session JSONL as a
+  `{"type": "view"}` record. `load_messages` (model resume) skips them; `load_transcript` returns
+  messages and views in order, and `GET /api/sessions/{id}/messages` returns views as
+  `role: "view"`. An approval card also carries `state` (`pending`, `resolved` with action and
+  result, `expired`, `unknown`), read from `view_proposals` for the requesting user, never the
+  payload. The client restores answered cards locked (`el.actionResult({ok, action, message})`)
+  and expired or unknown ones with `{ok: false, locked: true}`.
+- Telegram sends approval cards as their own message with one inline button per action
+  (`prop:<action>:<proposal id>`). The button resolves through `ProposalService` as
+  `telegram:<user id>`: only allowlisted users, only their own cards, only the card's actions.
 - The briefing remains opt-in for push delivery; the in-app first message is always on.
 
 ## Scenarios this package must carry
@@ -269,10 +282,24 @@ As built in slice 5 (`knowledge/proposals.py`, tools in `tools/filing.py`, endpo
   must be green and merged in reviewable parts first. Open items: the collector desktop app
   directory is not committed (26 browser tests depend on it), and the new pages hardcode German
   strings instead of using `t()` with keys in `en.yaml` and `de.yaml`.
-- **One source model.** `local_sources` must attach through `source_attachments` and use
-  `source_rules`, so scenario 4 has the subtree guarantee. `knowledge_relations` and
-  `knowledge_links` need one documented split (typed evidence relations versus structural links)
-  or a merge.
+- **One source model** (done). Local sources attach through `source_attachments` and use
+  `source_rules` under the key `local:<id>`, so scenario 4 has the subtree guarantee:
+  - `GET /api/local-sources/{id}/filing` returns the source's attachments and rule; the
+    general `/api/sources/{key}` endpoints accept `local:<id>` (only for a source of the
+    requesting user, fail closed otherwise) and `chat` next to connector ids.
+  - Adding, editing, pausing and resuming a local source is audited (`local_source.*`, no root
+    path in the payload) and creates a config generation.
+  - Config snapshots carry `sources` (attachments and rules), so a rollback restores where each
+    source files. Snapshots from before carry no `sources` key and leave the tables untouched.
+  - Article extraction and relation reasons follow the user's language preference; the prompts
+    are English (Constitution Rule 6).
+- **Relations versus links** (documented split, no merge). `knowledge_links` holds structural
+  links between note paths (wikilinks, parent, related, merged_from); the graph and the tree use
+  them. `knowledge_relations` holds typed evidence relations between note ids (supports,
+  contradicts, extends, duplicate, related, source_member) with a reason and the content hashes
+  they were judged on; the source analysis and the Obsidian import write them, the indexer and
+  the briefing read them. The indexer hides a relation once either note's content hash no longer
+  matches; a link has no such check.
 
 ## Implementation slices
 

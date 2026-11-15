@@ -6,9 +6,7 @@
   <title>Mycelos - Chat</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
-  <script src="/shared/tailwind-config.js"></script>
+  <link rel="stylesheet" href="/shared/vendor/material-symbols/material-symbols.css">
   <link rel="stylesheet" href="/shared/base.css">
   <script src="/shared/api.js"></script>
   <script defer src="/shared/local-sources.js?v=source-results-2"></script>
@@ -17,7 +15,9 @@
   <script defer src="/shared/knowledge-connectors.js"></script>
   <script src="/shared/i18n.js"></script>
   <script src="/shared/layout.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/shared/vendor/marked-18.2.0.umd.js"></script>
+  <script src="/shared/vendor/purify-3.4.17.min.js"></script>
+  <script src="/shared/safe-html.js"></script>
   <script src="/shared/mermaid.min.js"></script>
   <script>mermaid.initialize({ startOnLoad: false, theme: 'neutral' });</script>
   <script>
@@ -167,7 +167,7 @@
       });
     });
   </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="/shared/vendor/alpinejs-3.17.5.min.js"></script>
 
   <style>
     /* Markdown prose styling for agent responses */
@@ -291,6 +291,9 @@
 <script defer src="/shared/mycelos-view.js?v=3"></script>
 <script src="/shared/inbox.js"></script>
 <script defer src="/shared/notifications.js?v=1"></script>
+  <!-- Tailwind last in <head>, where the old CDN script injected its styles,
+       so utilities keep winning over base.css and page styles. -->
+  <link rel="stylesheet" href="/shared/vendor/tailwind.css">
 </head>
 
 <body x-data="mycelosApp()" class="bg-[var(--surface)] text-[var(--on-surface)] font-body overflow-hidden h-screen flex">
@@ -401,7 +404,7 @@
                 <a x-show="msg.count > msg.entries.length" href="/pages/inbox.html" class="text-xs underline mt-2 inline-block" x-text="t('briefing.open_inbox')"></a>
               </div>
             </template>
-            <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view" @mycelos-view-action="viewAction($event)"></mycelos-view></div></template>
+            <template x-if="msg.role === 'view'"><div class="w-full mb-4"><mycelos-view x-init="$el.view = msg.view; if (msg.state) restoreProposal($el, msg.state)" @mycelos-view-action="viewAction($event)"></mycelos-view></div></template>
             <template x-if="msg.role === 'knowledge'"><div><mycelos-knowledge :view="msg.view || 'tree'"></mycelos-knowledge></div></template>
             <template x-if="msg.role === 'local-sources'">
               <div class="w-full mb-4"><mycelos-sources :view="msg.sourceView || 'list'" :source-id="msg.sourceId || ''"></mycelos-sources></div>
@@ -484,6 +487,25 @@
                 <!-- Content rendered as Markdown -->
                 <div class="text-[15px] leading-relaxed text-on-surface font-light prose-agent"
                      x-html="renderMarkdown(msg.content)"></div>
+                <!-- Real sources: the notes the server gave the LLM as context -->
+                <template x-if="(msg.citations || []).length && msg.content">
+                  <div class="mt-4 pt-3 border-t border-primary/10" data-testid="answer-citations">
+                    <div class="text-[10px] font-label uppercase tracking-widest text-on-surface-variant mb-2"
+                         x-text="t('chat.answer_sources')"></div>
+                    <div class="flex flex-wrap gap-2">
+                      <template x-for="c in msg.citations" :key="c.path">
+                        <a :href="'/pages/knowledge.html?note=' + encodeURIComponent(c.path)"
+                           class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs
+                                  bg-primary/10 text-primary border border-primary/20
+                                  hover:bg-primary/20 hover:border-primary/40 transition-all"
+                           :title="c.path">
+                          <span class="material-symbols-outlined text-sm">description</span>
+                          <span x-text="c.title || c.path"></span>
+                        </a>
+                      </template>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
 
@@ -573,7 +595,7 @@
               <!-- Help text -->
               <p x-show="connectorForm.fieldHelp[field.id]"
                  class="mt-1 text-xs text-on-surface-variant"
-                 x-html="connectorForm.fieldHelp[field.id]"></p>
+                 x-html="MycelosSafeHtml.sanitize(connectorForm.fieldHelp[field.id])"></p>
             </div>
           </template>
 
@@ -805,6 +827,7 @@
 
     function renderMarkdown(text) {
       if (!text) return '';
+      const Safe = window.MycelosSafeHtml;
 
       // Defensive: some LLMs emit "[action] type: functions.<name> args:
       // {...} [/action]" as plain text instead of using the native tool-
@@ -824,72 +847,58 @@
             .replace(/'/g, '"');
         } catch (e) { /* ignore — fall through with original */ }
         const actionLabel = fnName.replace(/_/g, ' ');
-        // Render the surrounding text plus a clickable button. The
-        // button calls window.__retryToolCall(fnName, argsJson) which
-        // posts a synthetic chat message asking the model to try
-        // again — same effect as the user re-asking.
+        // Render the surrounding text plus a button. A delegated click
+        // handler (see .mycelos-retry-action below) calls
+        // window.__retryToolCall, which posts a synthetic chat message
+        // asking the model to try again. The surrounding text goes
+        // through the same Markdown + sanitizer path as any reply.
         const before = text.slice(0, actionMatch.index).trim();
         const after = text.slice(actionMatch.index + actionMatch[0].length).trim();
-        const safeArgs = argsText.replace(/"/g, '&quot;');
-        return (
-          (before ? before + '<br><br>' : '') +
-          '<button class="mycelos-retry-action" ' +
-            'onclick="window.__retryToolCall(this)" ' +
-            `data-fn="${fnName}" data-args="${safeArgs}" ` +
+        return Safe.sanitize(
+          (before ? Safe.markdownUnsafe(before) : '') +
+          '<button class="mycelos-retry-action" type="button" ' +
+            `data-fn="${Safe.escape(fnName)}" data-args="${Safe.escape(argsText)}" ` +
             'style="background:var(--primary);color:white;padding:0.5rem 1rem;border-radius:0.5rem;border:none;cursor:pointer;font-size:0.875rem;">' +
-            '▶ ' + actionLabel +
+            '▶ ' + Safe.escape(actionLabel) +
           '</button>' +
-          (after ? '<br><br>' + after : '')
+          (after ? Safe.markdownUnsafe(after) : '')
         );
       }
 
-      let html;
-      if (typeof marked !== 'undefined') {
-        html = marked.parse(text);
-      } else {
-        html = text
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/\n/g, '<br>');
-      }
-      // Helper: decode HTML entities to plain text for data-cmd attribute
-      function _decodeHtml(html) {
-        const el = document.createElement('textarea');
-        el.innerHTML = html;
-        return el.value;
-      }
-      function _encodeAttr(text) {
-        return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-      }
+      let html = Safe.markdownUnsafe(text);
 
-      // Post-process: make slash commands clickable
+      // Post-process: make slash commands clickable. The captured command
+      // text is still HTML-escaped by marked; it is inserted escaped, and
+      // the click handler decodes it again.
       // 1. Commands in <pre><code> blocks (fenced code blocks) — replace entire <pre>
       html = html.replace(
         /<pre><code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)\n?<\/code><\/pre>/g,
         (_, rawCmd) => {
-          const cmd = _decodeHtml(rawCmd).replace(/\n$/, '').trim();
-          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+          const cmd = rawCmd.replace(/\n$/, '').trim();
+          return `<button class="cmd-link" data-cmd="${cmd}" title="Click to run"><code>${cmd}</code></button>`;
         }
       );
       // 2. Commands in inline <code> (backtick) — wrap with button
       html = html.replace(
         /<code>(\/(?:connector|credential|agent|schedule|config|model|workflow|mount|restart)\s[^<]*?)<\/code>/g,
         (_, rawCmd) => {
-          const cmd = _decodeHtml(rawCmd).trim();
-          return `<button class="cmd-link" data-cmd="${_encodeAttr(cmd)}" title="Click to run"><code>${cmd}</code></button>`;
+          const cmd = rawCmd.trim();
+          return `<button class="cmd-link" data-cmd="${cmd}" title="Click to run"><code>${cmd}</code></button>`;
         }
       );
 
-      // Convert mermaid code blocks to renderable containers
+      // Convert mermaid code blocks to renderable containers. The diagram
+      // source stays HTML-escaped: the browser turns it back into text and
+      // mermaid reads it from there. Decoding it here would turn the
+      // diagram source into live HTML.
       html = html.replace(
         /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g,
         (_, code) => {
           const id = 'mermaid-' + (++_mermaidCounter);
-          const decoded = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${decoded}</pre></div>`;
+          return `<div class="mermaid-container my-4"><pre class="mermaid" id="${id}">${code}</pre></div>`;
         }
       );
+      html = Safe.sanitize(html);
       if (html.includes('class="mermaid"') && typeof mermaid !== 'undefined') {
         setTimeout(() => mermaid.run(), 50);
       }
@@ -971,6 +980,16 @@
      * Delegated click handler for .cmd-link buttons in rendered markdown.
      * Dispatches a custom event that the Alpine component listens for.
      */
+    // Delegated handler for the retry button renderMarkdown() emits for a
+    // tool call written as text. Rendered HTML carries no inline event
+    // handlers (the sanitizer strips them), so the click is wired here.
+    document.addEventListener('click', function(e) {
+      const btn = e.target.closest('.mycelos-retry-action');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      window.__retryToolCall(btn);
+    });
+
     document.addEventListener('click', function(e) {
       const btn = e.target.closest('.cmd-link');
       if (!btn) return;
@@ -1274,14 +1293,19 @@
           try {
             const data = await MycelosAPI.get('/api/sessions/' + this.activeSessionId + '/messages');
             const msgs = data.messages || [];
+            // Views and approval cards come back in place (role 'view').
             this.messages = msgs
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .map(m => ({
-                role: m.role,
-                content: m.content || '',
-                agent: m.metadata?.agent || 'Mycelos',
-                type: '',
-              }));
+              .filter(m => m.role === 'user' || m.role === 'assistant'
+                || (m.role === 'view' && m.view && window.MycelosView && window.MycelosView.TYPES.includes(m.view.type)))
+              .map(m => (m.role === 'view'
+                ? { role: 'view', view: m.view, state: m.state || null }
+                : {
+                  role: m.role,
+                  content: m.content || '',
+                  agent: m.metadata?.agent || 'Mycelos',
+                  citations: Array.isArray(m.metadata?.citations) ? m.metadata.citations : [],
+                  type: '',
+                }));
             this.$store.chat.messageCount = this.messages.length;
             this.scrollToBottom();
           } catch (e) {
@@ -1339,6 +1363,32 @@
           this.resolveProposal(event.target, proposal, detail.action);
         },
 
+        /** The outcome line of a resolved approval card. */
+        proposalMessage(data) {
+          const fill = (key, params) => Object.entries(params || {}).reduce(
+            (text, [k, v]) => text.split('{' + k + '}').join(String(v)), t(key));
+          const status = (data && data.status) || '';
+          if (status === 'moved') return fill(data.rule ? 'views.result.moved_rule' : 'views.result.moved', { count: data.moved || 1 });
+          if (status === 'attached') return t(data.import === 'not_started' ? 'views.result.attached_not_started' : 'views.result.attached');
+          return t('views.result.' + status);
+        },
+
+        /**
+         * A reloaded approval card shows where it stands: answered cards stay
+         * locked on their action, expired or unknown ones cannot be pressed.
+         */
+        restoreProposal(el, state) {
+          const apply = () => {
+            if (typeof el.actionResult !== 'function') return;
+            if (state.status === 'resolved') {
+              el.actionResult({ ok: true, action: state.action, message: this.proposalMessage(state.result || {}) });
+            } else if (state.status !== 'pending') {
+              el.actionResult({ ok: false, locked: true, message: t('views.error.expired') });
+            }
+          };
+          if (typeof el.actionResult === 'function') apply(); else customElements.whenDefined('mycelos-view').then(apply);
+        },
+
         async resolveProposal(el, proposal, action) {
           const fill = (key, params) => Object.entries(params || {}).reduce(
             (text, [k, v]) => text.split('{' + k + '}').join(String(v)), t(key));
@@ -1360,11 +1410,7 @@
             return;
           }
           const status = data.status;
-          let message;
-          if (status === 'moved') message = fill(data.rule ? 'views.result.moved_rule' : 'views.result.moved', { count: data.moved || 1 });
-          else if (status === 'attached') message = t(data.import === 'not_started' ? 'views.result.attached_not_started' : 'views.result.attached');
-          else message = t('views.result.' + status);
-          el.actionResult({ ok: true, message });
+          el.actionResult({ ok: true, message: this.proposalMessage(data) });
           if (status === 'ask_where') {
             this.input = fill('views.prefill_elsewhere', { title: data.title || '' });
             this.$nextTick(() => {
@@ -1572,6 +1618,10 @@
                   this.messages[assistantIdx] = { ...this.messages[assistantIdx], agent: data.agent };
                   this.activeAgent = data.agent;
                   this.$store.chat.activeAgent = data.agent;
+                  break;
+
+                case 'citations':
+                  this.messages[assistantIdx] = { ...this.messages[assistantIdx], citations: data.citations || [] };
                   break;
 
                 case 'text':

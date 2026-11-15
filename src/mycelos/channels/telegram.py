@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -97,6 +98,88 @@ def _parse_permission_callback(data: str) -> tuple[str, str] | None:
     if len(parts) != 3 or parts[0] != "perm":
         return None
     return parts[1], parts[2]
+
+
+# Approval cards (Package 8, slice 5) get inline buttons. The callback names
+# only the action and the proposal id; the server decides what it does.
+_PROPOSAL_PREFIX = "prop"
+
+
+def _approval_card_proposal(event: ChatEvent) -> str | None:
+    """The proposal id of an approval card widget event, else None."""
+    if event.type != "widget" or not isinstance(event.data, dict):
+        return None
+    view = event.data.get("widget")
+    if not isinstance(view, dict) or view.get("type") != "approval_card":
+        return None
+    data = view.get("data") if isinstance(view.get("data"), dict) else {}
+    proposal = data.get("proposal")
+    return proposal if isinstance(proposal, str) and proposal else None
+
+
+def _split_approval_cards(events: list[ChatEvent]) -> tuple[list[ChatEvent], list[dict]]:
+    """Separate approval cards (sent with buttons) from the rest of a turn."""
+    rest: list[ChatEvent] = []
+    cards: list[dict] = []
+    for event in events:
+        if _approval_card_proposal(event):
+            cards.append(event.data["widget"])
+        else:
+            rest.append(event)
+    return rest, cards
+
+
+def _approval_card_text(view: dict) -> str:
+    """Title and fallback text of a card, without the numbered action list."""
+    fallback = view.get("fallback_text") if isinstance(view.get("fallback_text"), str) else ""
+    # The fallback lists the actions as "1. Label"; the buttons replace them.
+    data = view.get("data") if isinstance(view.get("data"), dict) else {}
+    numbered = {f"{i}. {a.get('label')}" for i, a in enumerate(data.get("actions") or [], 1)
+                if isinstance(a, dict)}
+    body = "\n".join(line for line in fallback.split("\n") if line not in numbered)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    title = view.get("title") if isinstance(view.get("title"), str) else ""
+    return f"*{title}*\n{body}" if title else body
+
+
+def _build_proposal_keyboard(view: dict) -> InlineKeyboardMarkup:
+    proposal = view["data"]["proposal"]
+    rows = []
+    for action in view["data"].get("actions") or []:
+        if not isinstance(action, dict) or not isinstance(action.get("id"), str):
+            continue
+        rows.append([InlineKeyboardButton(
+            text=str(action.get("label") or action["id"]),
+            callback_data=f"{_PROPOSAL_PREFIX}:{action['id']}:{proposal}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _parse_proposal_callback(data: str | None) -> tuple[str, str] | None:
+    """Parse 'prop:{action}:{proposal_id}'. Returns (action, proposal_id) or None."""
+    parts = (data or "").split(":")
+    if len(parts) != 3 or parts[0] != _PROPOSAL_PREFIX or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def _proposal_result_text(result: dict) -> str:
+    """The outcome line after a card button, same wording as the web chat."""
+    status = result.get("status") or ""
+    if status == "moved":
+        key = "web.views.result.moved_rule" if result.get("rule") else "web.views.result.moved"
+        return t(key, count=result.get("moved") or 1)
+    if status == "attached":
+        return t("web.views.result.attached_not_started"
+                 if result.get("import") == "not_started" else "web.views.result.attached")
+    if status in ("accepted", "task", "ask_where", "cancelled"):
+        return t("web.views.result." + status)
+    return t("web.views.result.cancelled") if not status else status
+
+
+def _proposal_error_text(code: str) -> str:
+    key = code if code in ("expired", "already_resolved") else "failed"
+    return t("web.views.error." + key)
 
 
 def setup_telegram(
@@ -475,6 +558,74 @@ async def handle_permission_callback(callback: types.CallbackQuery) -> None:
         await _safe_answer(callback.message, response_text)
 
 
+@dp.callback_query(F.data.startswith(_PROPOSAL_PREFIX + ":"))
+async def handle_proposal_callback(callback: types.CallbackQuery) -> None:
+    """An approval card button. Fail-closed: only allowed users, and only
+    the user the card was made for (the proposal is looked up by their id)."""
+    user_id = callback.from_user.id if callback.from_user else 0
+    if not is_user_allowed(user_id):
+        await callback.answer(t("telegram.not_your_permission"))
+        return
+    if _app is None:
+        await callback.answer(t("telegram.service_not_ready"))
+        return
+    parsed = _parse_proposal_callback(callback.data)
+    if not parsed:
+        await callback.answer(t("telegram.invalid_callback"))
+        return
+    action, proposal_id = parsed
+
+    from mycelos.knowledge.proposals import ProposalError, ProposalService
+    service = ProposalService(_app, f"telegram:{user_id}")
+    try:
+        result = await asyncio.to_thread(service.resolve, proposal_id, action)
+    except ProposalError as exc:
+        note = _proposal_error_text(exc.code)
+        if exc.code in ("expired", "already_resolved", "not_found"):
+            # The card cannot be answered any more: drop its buttons.
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+        await callback.answer(note, show_alert=exc.code not in ("expired", "already_resolved"))
+        return
+    except Exception:
+        logger.warning("Telegram proposal callback failed", exc_info=True)
+        await callback.answer(_proposal_error_text("failed"), show_alert=True)
+        return
+
+    note = _proposal_result_text(result)
+    try:
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n✅ {note}", reply_markup=None, parse_mode=None,
+        )
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    await callback.answer(note)
+
+
+async def _send_events(message: types.Message, events: list[ChatEvent]) -> None:
+    """Send a chat turn: approval cards with buttons, then the text."""
+    rest, cards = _split_approval_cards(events)
+    for card in cards:
+        text = _approval_card_text(card)
+        keyboard = _build_proposal_keyboard(card)
+        try:
+            await message.answer(text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+        except Exception:
+            try:
+                await message.answer(_strip_markdown(text), parse_mode=None, reply_markup=keyboard)
+            except Exception:
+                logger.warning("Could not send approval card to Telegram", exc_info=True)
+    response_text = _render_events(rest)
+    if response_text:
+        for chunk in _split_message(response_text, 4000):
+            await _safe_answer(message, chunk)
+
+
 async def _process_telegram_chat(
     message: types.Message,
     text: str,
@@ -508,10 +659,7 @@ async def _process_telegram_chat(
         typing_active = False
         typing_task.cancel()
 
-    response_text = _render_events(events)
-    if response_text:
-        for chunk in _split_message(response_text, 4000):
-            await message.answer(chunk, parse_mode=ParseMode.MARKDOWN)
+    await _send_events(message, events)
 
 
 @dp.message(F.document)
@@ -790,9 +938,7 @@ async def handle_voice_message(message: types.Message) -> None:
         typing_active = False
         typing_task.cancel()
 
-        response_text = _render_events(events)
-        if response_text:
-            await _safe_answer(message, response_text)
+        await _send_events(message, events)
 
     except Exception as e:
         error_str = str(e).lower()
@@ -922,12 +1068,8 @@ async def handle_message(message: types.Message) -> None:
                     await message.answer(text, reply_markup=keyboard)
                 return  # Wait for button click, don't send normal response
 
-        # Render events as Telegram messages
-        response_text = _render_events(events)
-        if response_text:
-            # Split long messages (Telegram limit: 4096 chars)
-            for chunk in _split_message(response_text, 4000):
-                await _safe_answer(message, chunk)
+        # Render events as Telegram messages (approval cards get buttons)
+        await _send_events(message, events)
 
     except Exception as e:
         typing_active = False

@@ -317,3 +317,24 @@ def test_approval_card_shows_changes_and_the_host_result(page, view_server):
     expect(_shadow(page, 0, ".sent")).to_have_text("Moved 1 note(s).")
     for i in range(2):
         expect(buttons.nth(i)).to_be_disabled()
+
+
+def test_restored_approval_card_after_reload(page, view_server):
+    """A reloaded card: answered ones stay locked, expired ones cannot be pressed."""
+    from playwright.sync_api import expect
+
+    card = make_view("approval_card", title="Move", reason="Misfiled", data={
+        "summary": "Move it?",
+        "actions": [{"id": "accept", "label": "Keep it"}, {"id": "cancel", "label": "Cancel"}],
+        "proposal": "b" * 32,
+    })
+    _open(page, view_server, [card, card])
+    page.evaluate("document.getElementById('v0').actionResult({ok: true, action: 'accept', message: 'Moved 1 note(s).'})")
+    page.evaluate("document.getElementById('v1').actionResult({ok: false, locked: true, message: 'Expired'})")
+
+    expect(_shadow(page, 0, ".sent")).to_have_text("Moved 1 note(s).")
+    expect(_shadow(page, 1, ".sent.error")).to_have_text("Expired")
+    for index in range(2):
+        buttons = _shadow(page, index, ".actions button")
+        for i in range(2):
+            expect(buttons.nth(i)).to_be_disabled()

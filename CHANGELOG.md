@@ -1,5 +1,108 @@
 # Changelog
 
+## Week 46 (2026)
+
+### Housekeeping: ChatService split into modules
+
+- **`chat/service.py` shrank from 2,844 to about 600 lines.** No behavior
+  change. `ChatService` now inherits from focused mixins, one file each:
+  `context_injection` (background notices, conversation hydration,
+  knowledge/task/onboarding context), `attachments`, `routing` (active
+  agent, handoffs, per-agent tools and models), `tool_loop` (one tool call
+  of the loop, result widgets/views, permission prompt, routed-agent turn),
+  `tool_execution` (security gate), `confirmations` (request_action and
+  permission answers), `workflow_commands` (`/run`, paused runs),
+  `creator_interview` and `compat` (shims, setup hints). Module-level
+  helpers moved to `tool_selection`, `guards` and `system_info`.
+- **`handle_message` went from 930 to about 290 lines** and now reads as
+  the turn's sequence of steps; the inner tool-call body and the handoff
+  continuation are their own methods.
+- Old import paths (`from mycelos.chat.service import CHAT_AGENT_TOOLS,
+  _sanitize_dict, …`) keep working via re-exports. A structure test checks
+  every former method, the re-exports and a size limit for `service.py`.
+### Web UI without CDN: Tailwind and icon font bundled
+
+- **No outside requests for the UI any more.** Tailwind was compiled in
+  the browser by the `cdn.tailwindcss.com` script, and the Material
+  Symbols icons came from Google Fonts. On a home network without
+  internet the pages lost their layout and icons. Tailwind 3.4.17 (with
+  `@tailwindcss/forms`, as before) is now compiled ahead of time into
+  `shared/vendor/tailwind.css` (37 KB, no compiler running in the
+  browser), and the icon font (Apache 2.0) is served from
+  `shared/vendor/material-symbols/`.
+- **Same look.** The theme from `shared/tailwind-config.js` moved into
+  `tools/tailwind/tailwind.config.js`; the browser config file is gone.
+  The stylesheet sits last in `<head>`, where the CDN injected its
+  styles, so utilities still win over `base.css`.
+- **Rebuild after class changes:** `scripts/build-tailwind.sh` (Node 18+,
+  versions pinned in `tools/tailwind/package-lock.json`). A new CI job
+  rebuilds the CSS and fails if the committed file is out of date.
+- **Stricter CSP.** `script-src`, `style-src` and `font-src` allow only
+  the gateway; the Tailwind CDN and Google Fonts hosts are removed.
+- **Tests:** `tests/security/test_no_external_assets.py` checks that no
+  page references a CDN, that the CSP lists no outside host, and in a
+  real browser with outside traffic blocked that every Tailwind page
+  makes no outside request and still gets its styles and icon font.
+
+### Security fixes from the November review
+
+- **Rendered Markdown can no longer run script (stored XSS).** Chat
+  replies, notes and workflow results go through DOMPurify after marked
+  (`shared/safe-html.js`). Mermaid source stays escaped instead of being
+  decoded into live HTML, slash-command buttons insert the escaped text,
+  and the "retry tool call" button no longer carries an inline `onclick`.
+  Connector help texts and setup steps are sanitized or escaped too. If
+  DOMPurify is missing the text is shown escaped (fail-closed).
+- **Scripts are served locally.** marked 18.2.0, DOMPurify 3.4.17 and
+  Alpine.js 3.17.5 live in `shared/vendor/` with pinned versions instead
+  of unpinned jsDelivr URLs. Only the Tailwind CDN is still external.
+- **Content-Security-Policy and other browser headers.** Every response
+  carries a CSP (scripts only from the gateway and the Tailwind CDN,
+  network requests only to the gateway and the MCP registry, no plugins,
+  no foreign framing), `X-Frame-Options`, `nosniff` and a same-origin
+  referrer policy.
+- **DNS-rebinding guard.** A gateway without a password now answers only
+  for known host names: loopback, the bind address, the LAN names it
+  detects for a `0.0.0.0` bind, the hosts in `MYCELOS_ALLOWED_ORIGINS`
+  and new `MYCELOS_ALLOWED_HOSTS` (comma-separated, `*` turns the check
+  off). Other `Host` headers get `421`. Before, a page on a foreign domain
+  that re-pointed its DNS to 127.0.0.1 could read and change everything.
+  With `MYCELOS_PASSWORD` set the check is skipped (the attacker never
+  holds the credentials). The Telegram webhook stays reachable.
+- **Login hardening.** A password with umlauts or other non-ASCII
+  characters no longer crashes the login with a 500 (it is compared as
+  UTF-8 bytes). After 10 wrong attempts from one address within five
+  minutes, the login page and Basic Auth answer `429` with `Retry-After`;
+  failed attempts are audited as `auth.login_failed`.
+- **The SecurityProxy sends a credential only to its own service.**
+  `POST /http` with `inject_credential` used to inject any stored key into
+  a request to any public address, so a compromised gateway could have the
+  OpenAI key or the Telegram token sent to its own server. Each credential
+  is now bound to its service's hosts (fixed list for OpenAI, Telegram,
+  Anthropic, GitHub, … over HTTPS) or to the host of its own `api_base`
+  (Ollama, custom OpenAI-compatible servers). Everything else gets `403`
+  before any outbound request and is logged as
+  `proxy.credential_host_denied`.
+- **The gateway container no longer sees the master key.**
+  `docker-compose.yml` mounted `./data` into both containers and the key
+  lived there, so the "isolated" gateway could read it (and
+  `mycelos credential export` in the gateway printed every key). The key
+  now lives in `./secrets` (`MYCELOS_SECRETS_DIR`), mounted into the proxy
+  container only (`MYCELOS_MASTER_KEY_FILE=/secrets/.master_key`).
+  Existing installs: re-running `install.sh` / `install.ps1` fetches the
+  new compose file and moves `data/.master_key` to the secrets directory
+  (copy, compare, delete); with the new compose file the proxy entrypoint
+  does the same on start. Two different keys → nothing is touched and the
+  proxy refuses to start. `mycelos update` alone keeps the old compose
+  file, so the proxy only warns there. The proxy entrypoint also
+  creates the key on first start and hands it to the container user,
+  which fixes the "`.master_key` not found" start failure on Docker
+  Desktop. The gateway never reads or creates a key when
+  `MYCELOS_PROXY_URL` is set: first-start init and the CLI inside the
+  gateway container store credentials through the proxy, `credential
+  list` shows no key preview there, and `credential export` points to the
+  proxy container.
+
 ## Week 45 (2026)
 
 ### Your own LiteLLM proxy as the custom provider
@@ -19,6 +122,79 @@
   (`MYCELOS_STT_PROVIDER`) or use your own server with an alias (default
   `stt`). Audio goes to `<api base>/audio/transcriptions` through the
   SecurityProxy, which reads the choice per request. EU mode still blocks it.
+
+### Real sources under chat answers
+
+- **Chat answers name the notes they were built on.** The chat already gave
+  the model up to three notes from `kb.find_relevant` as knowledge context,
+  but never told the client which ones. The server now sends a `citations`
+  event with exactly those notes (path and title only, never content), and
+  the web chat shows them as "Sources of this answer" chips under the answer,
+  each linking to the note.
+- **Sources survive a reload.** The citations are stored in the assistant
+  message metadata, so reopening a session shows them again.
+- **No guesses.** When the search finds nothing or fails, the answer shows no
+  sources instead of made-up ones, and the chat still answers. This replaces
+  the idea of the old home omnibox, which used its own search results as
+  stand-in sources (`home.js` is no longer loaded by any page).
+
+### Views and approval cards survive a reload; Telegram gets buttons
+
+- **Reloading a conversation shows its views again.** Timelines,
+  connections, filing previews and approval cards are kept in the session
+  file next to the messages and come back in the same place. The model never
+  sees them when a conversation resumes.
+- **Cards show where they stand.** A reloaded approval card that was already
+  answered stays locked with its outcome ("Moved 1 note(s)."); an expired or
+  foreign card cannot be pressed; an open card still works.
+- **Approval cards on Telegram.** Saving, correcting and attaching show the
+  card with one button per action. A press resolves the same stored proposal
+  as the web chat, only for allowlisted users and only for their own cards,
+  and the message then shows the outcome without buttons. Saving a note on
+  Telegram now shows the "where it went" card too.
+### Collector leftovers: local sources in the shared source model
+
+- **Local sources are part of the config history.** Adding, editing, pausing
+  and resuming a local source is audited (`local_source.*`, without the root
+  path) and creates a config generation. Config snapshots now also carry the
+  folder attachments and rules of every source (connectors, local sources,
+  chat), so a rollback restores where each source files. Older snapshots
+  leave these tables untouched.
+- **One API for every source.** `/api/sources/{key}` accepts `local:<id>`
+  (only for your own local source, refused otherwise) and `chat` next to
+  connector ids. `GET /api/local-sources/{id}/filing` shows a local source's
+  attached folders and rule.
+- **Articles in your language.** Source analysis and relation reasons follow
+  the language preference instead of always writing German; the relation
+  prompt is now English like every other prompt.
+- **Relations versus links documented.** The spec states the split between
+  structural `knowledge_links` and typed evidence `knowledge_relations`.
+- **The source card shows where a source files.** Each local source card
+  lists its attached folders and its rule, so an attachment approved in the
+  chat is visible in the settings too.
+
+### Collector leftovers: German strings through the locale files
+
+- **The web UI speaks your language again.** The source card, Telegram
+  settings, MCP connections, collector page, knowledge map, notifications,
+  settings, help and about pages took hardcoded German from the collector
+  work. Their strings now live in `en.yaml` and `de.yaml` (about 390 keys
+  under `web.*`), and `i18n.js` sets the page language.
+- **`t()` in the browser takes placeholders.** `t('key', {count: 3})` fills
+  `{count}` like the Python `t()`. Static pages use `data-i18n`,
+  `data-i18n-aria` and `data-i18n-title`.
+- **Server messages of local sources are translated.** Errors and status
+  texts of local sources, source checks, readers, the Obsidian import and the
+  inbox entries for failed imports use `t("sources.*")`; validation messages
+  that go back to the model stay English. The `mycelos source` CLI help is
+  English.
+- **Tests.** A test fails on hardcoded German in the converted files and on
+  missing keys in either language; browser tests load the real German
+  translations.
+- **Not yet converted:** the chat page, `<mycelos-view>`, the model settings
+  and the provider endpoints (other changes are in flight there), and the
+  step descriptions of the source workflow templates, which are stored with
+  every source.
 
 ### Capture, attach and correct with approval cards (Package 8, slice 5)
 

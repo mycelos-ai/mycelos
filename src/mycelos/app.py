@@ -204,6 +204,13 @@ class App:
     def credentials(self):
         if self._credentials is None:
             proxy_url = os.environ.get("MYCELOS_PROXY_URL", "").strip()
+            proxy_token = os.environ.get("MYCELOS_PROXY_TOKEN", "").strip()
+            if proxy_url and self._proxy_client is None and proxy_token:
+                # CLI inside the gateway container (docker compose exec
+                # gateway mycelos …): the key lives in the proxy
+                # container, so talk to it like the server does.
+                from mycelos.security.proxy_client import SecurityProxyClient
+                self.set_proxy_client(SecurityProxyClient(url=proxy_url, token=proxy_token))
             if proxy_url and self._proxy_client is not None:
                 from mycelos.security.credentials import DelegatingCredentialProxy
                 self._credentials = DelegatingCredentialProxy(

@@ -23,6 +23,11 @@
  *                                             the card locked with the message, not ok
  *                                             unlocks it and shows the message as an
  *                                             error (slice 5).
+ *                                             A host restoring a card after a reload
+ *                                             passes {ok, message, action} for an
+ *                                             answered card (shown locked on that
+ *                                             action) or {ok:false, message, locked:true}
+ *                                             for one that can no longer be answered.
  *
  * Security: every text field is data. It is escaped and never interpreted as
  * markup; Mermaid sources are built from escaped labels and rendered with
@@ -243,6 +248,7 @@
       this._showText = false;
       this._sentAction = '';
       this._actionNote = null;   // {ok, message} once the host reported back
+      this._locked = false;      // a restored card that can no longer be answered
       this._generation = 0;
       this.shadowRoot.addEventListener('click', (event) => this._click(event));
     }
@@ -266,6 +272,7 @@
       this._view = v;
       this._showText = false;
       this._sentAction = '';
+      this._locked = false;
       this._actionNote = null;
       this.render();
     }
@@ -274,7 +281,9 @@
     actionResult(result) {
       const ok = !!(result && result.ok);
       const message = result && typeof result.message === 'string' ? result.message : '';
+      if (ok && result && typeof result.action === 'string' && result.action) this._sentAction = result.action;
       if (!ok) this._sentAction = '';
+      this._locked = !!(result && result.locked);
       this._actionNote = { ok, message };
       this.render();
     }
@@ -399,7 +408,7 @@
           return `<p class="text">${esc(d.summary)}</p>
             ${(d.changes || []).length ? this._tree(d.changes) : ''}
             ${(d.effects || []).length ? `<ul class="effects">${d.effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
-            <div class="actions">${(d.actions || []).map((a) => `<button type="button" data-action="${esc(a.id)}" ${sent ? 'disabled' : ''}>${esc(a.label)}</button>`).join('')}</div>
+            <div class="actions">${(d.actions || []).map((a) => `<button type="button" data-action="${esc(a.id)}" ${sent || this._locked ? 'disabled' : ''}>${esc(a.label)}</button>`).join('')}</div>
             ${status}`;
         }
         default:

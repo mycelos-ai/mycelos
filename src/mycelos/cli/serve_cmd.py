@@ -61,11 +61,12 @@ def serve_cmd(data_dir: Path, port: int, host: str, password: str | None, debug:
     if role == "proxy":
         import os as _os
         from pathlib import Path as _Path
-        key_path = _Path(data_dir) / ".master_key"
+        from mycelos.security.master_key import master_key_path
+        key_path = master_key_path(_Path(data_dir))
         if not key_path.exists():
             click.echo(
-                f"Error: .master_key not found in {data_dir}. "
-                "The gateway container or install script must create it first.",
+                f"Error: master key not found at {key_path}. "
+                "The proxy container entrypoint or the install script creates it.",
                 err=True,
             )
             raise click.exceptions.Exit(code=2)

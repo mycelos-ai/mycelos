@@ -78,7 +78,7 @@ def execute_memory_read(args: dict, context: dict) -> Any:
 
 def execute_memory_write(args: dict, context: dict) -> Any:
     """Execute memory_write tool with validation."""
-    from mycelos.chat.service import _validate_memory_write
+    from mycelos.chat.guards import _validate_memory_write
 
     app = context["app"]
     category = args.get("category", "fact")

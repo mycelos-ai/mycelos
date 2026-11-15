@@ -15,6 +15,7 @@ import uvicorn
 from mycelos.app import App
 from mycelos.gateway.routers.local_sources import router
 from mycelos.scheduler.local_source_task import register_local_source_task
+from tests.browser_i18n import add_i18n_route
 
 
 @pytest.fixture
@@ -30,6 +31,10 @@ def card_server(tmp_path):
     api = FastAPI()
     api.state.mycelos = app
     api.include_router(router)
+    add_i18n_route(api, "de")
+    # Server messages (errors from the source service) use the same language.
+    from mycelos.i18n import set_language
+    set_language("de")
 
     @api.get("/api/models")
     def models():
@@ -42,7 +47,7 @@ def card_server(tmp_path):
     @api.get("/")
     def host():
         return HTMLResponse('''<!doctype html><html lang="de"><meta name="viewport" content="width=device-width">
-        <script defer src="/shared/local-sources.js"></script>
+        <script src="/shared/i18n.js"></script><script defer src="/shared/local-sources.js"></script>
         <body style="margin:16px;font-family:system-ui"><main style="max-width:700px;margin:auto">
         <h1>Chat</h1><mycelos-sources view="add" id="chat"></mycelos-sources>
         <h2>Einstellungen</h2><mycelos-sources id="settings"></mycelos-sources></main></body></html>''')
@@ -64,6 +69,7 @@ def card_server(tmp_path):
     server.should_exit = True
     thread.join(timeout=5)
     sock.close()
+    set_language("en")
 
 
 def test_source_card_save_edit_and_background_import(page, card_server):
@@ -236,3 +242,24 @@ def test_source_rules_recheck_and_save_preserves_recipe(page, card_server):
     expect(chat.get_by_label("In Projekten nur README, Architektur und Dokumentation auswählen")).not_to_be_checked()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert queue.pending_count() == 0
+
+
+def test_source_card_shows_where_the_source_files(page, card_server):
+    """Shared source model: the card shows the attached folder and the rule."""
+    from playwright.sync_api import expect
+    from mycelos.knowledge.local_sources import LocalSourceService
+    from mycelos.knowledge.source_attachment import SourceAttachmentService, local_source_key
+    url, root, app, queue = card_server
+    source = LocalSourceService(app).add("Vault", "folder", str(root), mode="direct")
+    topic = app.knowledge_base.create_topic("Kunden")
+    shared = SourceAttachmentService(app.storage)
+    shared.attach(local_source_key(source["id"]), topic)
+    shared.set_rule(local_source_key(source["id"]), "Onboarding <b>nach</b> Kunden.")
+    page.goto(url)
+    page.set_default_timeout(8000)
+    card = page.locator("#settings")
+    card.get_by_role("button", name="Vault", exact=False).click()
+    expect(card.locator(".filing")).to_contain_text("Abgelegt in")
+    expect(card.locator(".filing")).to_contain_text(topic)
+    expect(card.get_by_text("Onboarding <b>nach</b> Kunden.", exact=True)).to_be_visible()
+    assert page.locator("#settings b").count() == 0

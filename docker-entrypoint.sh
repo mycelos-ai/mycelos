@@ -3,16 +3,84 @@ set -e
 
 DATA_DIR="${MYCELOS_DATA_DIR:-/data}"
 
+# ── Master key: owned by the proxy container ────────────────────────
+# Two-container mode keeps the master key OUT of the shared data
+# directory. Only the proxy container mounts the secrets directory
+# (MYCELOS_MASTER_KEY_FILE, e.g. /secrets/.master_key); the gateway
+# mounts /data and never sees the key.
+#
+# prepare_proxy_key (runs as root, proxy role only):
+#   - moves a key left in /data by older installs into the secrets dir
+#     (copy, verify, then delete the old copy),
+#   - refuses to start if both copies exist and differ,
+#   - generates a key on first start,
+#   - hands the file to the mycelos user (Docker Desktop shows bind
+#     mounts as root:root, and the proxy runs as mycelos).
+prepare_proxy_key() {
+    local key_file="${MYCELOS_MASTER_KEY_FILE:-}"
+    local legacy="$DATA_DIR/.master_key"
+    if [ -z "$key_file" ]; then
+        # Old docker-compose.yml without a secrets mount: key stays in
+        # /data, readable by the gateway too. Keep it working, but say so.
+        if [ -f "$legacy" ]; then
+            chown mycelos:mycelos "$legacy" 2>/dev/null || true
+            chmod 600 "$legacy" 2>/dev/null || true
+        fi
+        echo "  ⚠ MYCELOS_MASTER_KEY_FILE not set — the master key is in the shared" >&2
+        echo "    data directory and the gateway container can read it. Re-run" >&2
+        echo "    scripts/install.sh to get the current docker-compose.yml, which" >&2
+        echo "    gives the proxy its own secrets directory." >&2
+        return 0
+    fi
+    local key_dir
+    key_dir="$(dirname "$key_file")"
+    mkdir -p "$key_dir"
+    if [ -f "$legacy" ]; then
+        if [ -s "$key_file" ]; then
+            if cmp -s "$legacy" "$key_file"; then
+                rm -f "$legacy"
+                echo "  Removed the duplicate master key from $DATA_DIR."
+            else
+                echo "" >&2
+                echo "========================================================" >&2
+                echo "  REFUSING TO START: two different master keys found:" >&2
+                echo "    $legacy" >&2
+                echo "    $key_file" >&2
+                echo "  Keep the one your credentials were encrypted with" >&2
+                echo "  (normally the older one in the data directory), move" >&2
+                echo "  it to the secrets directory and delete the other." >&2
+                echo "========================================================" >&2
+                exit 1
+            fi
+        else
+            cp -p "$legacy" "$key_file.tmp"
+            if cmp -s "$legacy" "$key_file.tmp"; then
+                mv "$key_file.tmp" "$key_file"
+                rm -f "$legacy"
+                echo "  Master key moved from $DATA_DIR to $key_dir (gateway no longer sees it)."
+            else
+                rm -f "$key_file.tmp"
+                echo "  Could not copy the master key to $key_dir — keeping $legacy." >&2
+                exit 1
+            fi
+        fi
+    fi
+    if [ ! -s "$key_file" ]; then
+        python3 -c "import secrets; print(secrets.token_urlsafe(32))" > "$key_file"
+        echo "  Master key generated in $key_dir"
+    fi
+    chown mycelos:mycelos "$key_dir" "$key_file" 2>/dev/null || true
+    chmod 700 "$key_dir" 2>/dev/null || true
+    chmod 600 "$key_file" 2>/dev/null || true
+}
+
 # ── Fix volume permissions (Docker named volumes are owned by root) ──
 # Entrypoint runs as root, fixes ownership, then drops to mycelos user.
-#
-# In two-container mode with MYCELOS_ROLE=proxy, /data/.master_key and
-# /data/mycelos.db are bind-mounted read-only. A recursive chown fails
-# there. The proxy has no writable state of its own, so skip chown
-# entirely in that mode.
 if [ "$(id -u)" = "0" ]; then
     ROLE="${MYCELOS_ROLE:-gateway}"
-    if [ "$ROLE" != "proxy" ]; then
+    if [ "$ROLE" = "proxy" ]; then
+        prepare_proxy_key
+    else
         chown -R mycelos:mycelos "$DATA_DIR" 2>/dev/null || true
     fi
     # Re-exec this script as mycelos user (preserving all args + env)
@@ -24,11 +92,20 @@ fi
 # ── First start: auto-initialize (gateway role only) ────────────
 # Proxy role has /data/mycelos.db mounted read-only and performs no
 # init — the gateway container owns the init path.
+# Two-container gateway: never holds the key, warns if one is lying around.
+if [ "${MYCELOS_ROLE:-gateway}" != "proxy" ] && [ -n "${MYCELOS_PROXY_URL:-}" ] && [ -f "$DATA_DIR/.master_key" ]; then
+    echo "  ⚠ $DATA_DIR/.master_key is visible to the gateway. With the current" >&2
+    echo "    docker-compose.yml the proxy moves it to its secrets directory on start." >&2
+fi
+
 if [ "${MYCELOS_ROLE:-gateway}" != "proxy" ] && [ ! -s "$DATA_DIR/mycelos.db" ]; then
     echo "=== Mycelos: First start — auto-initializing ==="
 
-    # Generate master key if not provided
-    if [ -z "$MYCELOS_MASTER_KEY" ]; then
+    # Generate master key if not provided. Not in the two-container
+    # gateway: the proxy container owns the key and encrypts credentials.
+    if [ -n "${MYCELOS_PROXY_URL:-}" ]; then
+        :
+    elif [ -z "$MYCELOS_MASTER_KEY" ]; then
         export MYCELOS_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
         echo "$MYCELOS_MASTER_KEY" > "$DATA_DIR/.master_key"
         chmod 600 "$DATA_DIR/.master_key"
@@ -42,10 +119,13 @@ if [ "${MYCELOS_ROLE:-gateway}" != "proxy" ] && [ ! -s "$DATA_DIR/mycelos.db" ];
     python3 -c "
 import os, sys
 from pathlib import Path
-os.environ.setdefault('MYCELOS_MASTER_KEY', open('$DATA_DIR/.master_key').read().strip())
 from mycelos.app import App
+if not os.environ.get('MYCELOS_PROXY_URL'):
+    os.environ.setdefault('MYCELOS_MASTER_KEY', open('$DATA_DIR/.master_key').read().strip())
 app = App(Path('$DATA_DIR'))
 app.initialize()
+# Two-container mode: App.credentials talks to the proxy container
+# (MYCELOS_PROXY_URL + MYCELOS_PROXY_TOKEN), which encrypts the key.
 
 # Store LLM API key from env (generic — auto-detects provider)
 api_key = os.environ.get('LLM_API_KEY', '')

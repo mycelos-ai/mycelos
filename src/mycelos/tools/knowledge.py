@@ -261,9 +261,8 @@ def execute_note_write(args: dict, context: dict) -> Any:
     # Package 8, slice 5: a capture in the chat shows where the note went,
     # with accept / elsewhere / make a task. Imports and workflows (no chat
     # service in the context, or an explicit source) stay silent.
-    # Telegram has no buttons for the card, so it stays a plain confirmation.
-    if (context.get("chat_service") is not None and "source" not in args
-            and context.get("channel") != "telegram"):
+    # Telegram shows the card with inline buttons (channels/telegram.py).
+    if context.get("chat_service") is not None and "source" not in args:
         try:
             from mycelos.knowledge.proposals import capture_card
             card = capture_card(app, path, user_id=context.get("user_id") or "default",

@@ -101,6 +101,26 @@ def suggested_actions_event(actions: list[dict[str, str]]) -> ChatEvent:
     return ChatEvent(type="suggested-actions", data={"actions": actions})
 
 
+def citations_from_notes(notes: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Reduce knowledge notes to citations: path and title, never content.
+
+    Notes without a path cannot be opened, so they are left out.
+    """
+    citations: list[dict[str, str]] = []
+    for note in notes:
+        path = str(note.get("path") or "").strip()
+        if not path:
+            continue
+        title = str(note.get("title") or "").strip() or path
+        citations.append({"path": path, "title": title})
+    return citations
+
+
+def citations_event(citations: list[dict[str, str]]) -> ChatEvent:
+    """The knowledge notes this answer was given as context."""
+    return ChatEvent(type="citations", data={"citations": citations})
+
+
 def file_attached_event(
     *, filename: str, url: str, kind: str, size: int = 0,
 ) -> ChatEvent:

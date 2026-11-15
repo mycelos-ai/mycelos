@@ -1,8 +1,8 @@
 <header class="product-header">
  <a class="product-brand" href="/pages/chat.html"><img src="/assets/logo-transparent.svg" alt="">myCelos</a>
- <nav class="product-nav" aria-label="Hauptnavigation">
-  <a class="nav-chat" href="/pages/chat.html">Gespräch</a>
+ <nav class="product-nav" :aria-label="t('sidebar.main_navigation')">
+  <a class="nav-chat" href="/pages/chat.html" x-text="t('header.conversation')"></a>
   <mycelos-notifications></mycelos-notifications>
-  <a href="/pages/settings.html" aria-label="Einstellungen" title="Einstellungen"><span class="material-symbols-outlined" aria-hidden="true">settings</span></a>
+  <a href="/pages/settings.html" :aria-label="t('sidebar.settings')" :title="t('sidebar.settings')"><span class="material-symbols-outlined" aria-hidden="true">settings</span></a>
  </nav>
 </header>

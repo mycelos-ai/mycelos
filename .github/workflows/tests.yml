@@ -52,3 +52,25 @@ jobs:
           touch /tmp/fake-data/.master_key /tmp/fake-data/mycelos.db
           docker compose -f docker-compose.yml config > /dev/null
           echo "compose parse OK"
+
+  tailwind:
+    # The Web UI ships a precompiled Tailwind stylesheet (no CDN). Fail when
+    # someone adds classes without rebuilding it via scripts/build-tailwind.sh.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Rebuild Tailwind CSS
+        run: scripts/build-tailwind.sh
+
+      - name: Check the committed CSS is up to date
+        run: |
+          if ! git diff --exit-code -- src/mycelos/frontend/shared/vendor/tailwind.css; then
+            echo "::error::tailwind.css is out of date. Run scripts/build-tailwind.sh and commit the result."
+            exit 1
+          fi

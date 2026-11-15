@@ -1,6 +1,8 @@
 /* Telegram settings shared by the settings page and the chat. */
 (() => {
   if (customElements.get('mycelos-telegram')) return;
+  // Strings come from web.telegram_settings in the locale files (loaded by i18n.js).
+  const T = (key, vars) => (typeof globalThis.t === 'function' ? globalThis.t('telegram_settings.' + key, vars) : key);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   class TelegramSettings extends HTMLElement {
     constructor() {
@@ -49,9 +51,9 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || result.error) {
-        if (response.status === 401) throw new Error('Bitte melde dich erneut an.');
-        if (path === 'check') throw new Error('Die Prüfung ist fehlgeschlagen. Prüfe den Bot-Token und die Verbindung.');
-        throw new Error('Die Daten konnten nicht gespeichert oder geladen werden. Bitte erneut versuchen.');
+        if (response.status === 401) throw new Error(T('error_login'));
+        if (path === 'check') throw new Error(T('error_check'));
+        throw new Error(T('error_save'));
       }
       return result;
     }
@@ -68,19 +70,19 @@
     async check() {
       if (this.busy) return;
       if (!this.draft.token.trim() && !this.state?.token_configured) {
-        this.error = 'Trage zuerst den Bot-Token ein.'; this.render(); return;
+        this.error = T('token_first'); this.render(); return;
       }
-      this.busy = true; this.error = ''; this.notice = 'Die Verbindung wird geprüft.'; this.chats = []; this.render();
+      this.busy = true; this.error = ''; this.notice = T('checking'); this.chats = []; this.render();
       try {
         const result = await this.request('check','POST',{token:this.draft.token.trim()});
         this.chats = result.chats || [];
         if (result.chat_id && !this.draft.chat_id) { this.draft.chat_id = result.chat_id; this.dirty = true; }
         if (result.discovery_error) {
-          this.notice = 'Der Bot-Token ist gültig. Die Chat-Liste ist nicht verfügbar. Ein anderer Empfänger kann aktiv sein. Trage die private Chat-ID ein.';
+          this.notice = T('valid_no_list');
         } else if (!this.chats.length) {
-          this.notice = 'Der Bot-Token ist gültig. Kein privater Chat gefunden. Öffne den Bot in Telegram und sende /start. Prüfe danach erneut.';
+          this.notice = T('valid_no_chat');
         } else {
-          this.notice = `Der Bot-Token ist gültig. ${this.chats.length > 1 ? 'Wähle deinen privaten Chat aus.' : 'Prüfe die Chat-ID und speichere die Daten.'}`;
+          this.notice = this.chats.length > 1 ? T('valid_choose') : T('valid_confirm');
         }
       } catch (error) { this.error = error.message; this.notice = ''; }
       finally { this.busy = false; this.render(); }
@@ -88,23 +90,23 @@
     async save() {
       if (this.busy) return;
       if (this.draft.enabled && !/^[1-9][0-9]{0,15}$/.test(this.draft.chat_id.trim())) {
-        this.error = 'Trage eine gültige private Chat-ID ein. Sie enthält nur Ziffern.'; this.render(); return;
+        this.error = T('chat_id_invalid'); this.render(); return;
       }
       if (this.draft.enabled && !this.draft.token.trim() && !this.state?.token_configured) {
-        this.error = 'Trage den Bot-Token ein.'; this.render(); return;
+        this.error = T('token_missing'); this.render(); return;
       }
       this.busy = true; this.error = ''; this.notice = ''; this.render();
       try {
         this.state = await this.request('config','PUT', {...this.draft,token:this.draft.token.trim(),chat_id:this.draft.chat_id.trim()});
         this.draft.token = ''; this.dirty = false;
-        this.notice = this.state.runtime_error ? 'Die Daten sind gespeichert. Der Empfänger konnte seinen Zustand nicht ändern.' :
-          this.state.enabled && !this.state.running ? 'Die Daten sind gespeichert. Der Empfänger läuft derzeit nicht.' : 'Die Daten sind gespeichert.';
+        this.notice = this.state.runtime_error ? T('saved_runtime_error') :
+          this.state.enabled && !this.state.running ? T('saved_not_running') : T('saved');
         window.dispatchEvent(new CustomEvent('mycelos-telegram-changed',{detail:this}));
       } catch (error) { this.error = error.message; }
       finally { this.busy = false; this.render(); }
     }
     render() {
-      const status = !this.state ? 'Noch nicht geladen' : this.state.running ? 'Empfänger aktiv' : this.state.enabled ? 'Empfänger nicht aktiv' : 'Deaktiviert';
+      const status = esc(!this.state ? T('status_not_loaded') : this.state.running ? T('status_active') : this.state.enabled ? T('status_inactive') : T('status_disabled'));
       const webhook = this.state?.mode === 'webhook';
       this.shadowRoot.innerHTML = `<style>
         :host{display:block;min-width:0;color:#202c30;font:400 15px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -124,17 +126,17 @@
       :host([embedded]) section{padding:0;border:0;background:transparent}:host([embedded]) h3{font-size:23px}
       </style><section aria-busy="${this.busy}">
         <header><h3>Telegram</h3><span class="state"><span class="dot" aria-hidden="true"></span>${status}</span></header>
-        <p>Sprich mit Mycelos in deinem privaten Telegram-Chat.</p>
-        ${webhook ? '<p>Dieser Bot verwendet einen Webhook. Verwalte ihn über seine bestehende Kanaleinrichtung.</p>' : ''}
+        <p>${T('intro')}</p>
+        ${webhook ? `<p>${T('webhook')}</p>` : ''}
         <form><fieldset ${this.busy || !this.state || webhook ? 'disabled' : ''}>
-          <label>Bot-Token<input name="token" type="password" autocomplete="new-password" spellcheck="false" value="${esc(this.draft.token)}" placeholder="${this.state?.token_configured ? 'Gespeicherter Token bleibt erhalten' : 'Token von BotFather'}"><small>${this.state?.token_configured ? 'Lass dieses Feld leer, um den gespeicherten Token zu behalten.' : 'Erstelle den Bot bei <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">BotFather</a>. Trage seinen Token hier ein.'}</small></label>
-          ${this.chats.length > 1 ? `<label>Privaten Chat auswählen<select name="chat-choice"><option value="">Bitte auswählen</option>${this.chats.map(chat=>`<option value="${esc(chat.id)}" ${chat.id === this.draft.chat_id ? 'selected' : ''}>${esc(chat.title)} · ${esc(chat.id)}</option>`).join('')}</select></label>` : ''}
-          <label>Private Chat-ID<input name="chat_id" inputmode="numeric" autocomplete="off" value="${esc(this.draft.chat_id)}" placeholder="Zum Beispiel 123456789"><small>Verwende deine private Chat-ID. Gruppen unterstützt diese Einrichtung nicht.</small></label>
-          <label class="enable"><input type="checkbox" name="enabled" ${this.draft.enabled ? 'checked' : ''}><span>Telegram aktivieren<small>Mycelos darf Nachrichten aus diesem privaten Chat empfangen.</small></span></label>
-          <div class="actions"><button class="primary" type="submit">${this.busy ? 'Bitte warten …' : 'Speichern'}</button><button type="button" data-action="check">Verbindung prüfen</button></div>
-          <small style="margin-top:10px">Die Prüfung sendet keine Nachricht.</small>
+          <label>${T('token')}<input name="token" type="password" autocomplete="new-password" spellcheck="false" value="${esc(this.draft.token)}" placeholder="${esc(this.state?.token_configured ? T('token_kept') : T('token_placeholder'))}"><small>${this.state?.token_configured ? T('token_keep_hint') : T('token_create', {botfather: '<a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">BotFather</a>'})}</small></label>
+          ${this.chats.length > 1 ? `<label>${T('choose_chat')}<select name="chat-choice"><option value="">${T('please_choose')}</option>${this.chats.map(chat=>`<option value="${esc(chat.id)}" ${chat.id === this.draft.chat_id ? 'selected' : ''}>${esc(chat.title)} · ${esc(chat.id)}</option>`).join('')}</select></label>` : ''}
+          <label>${T('chat_id')}<input name="chat_id" inputmode="numeric" autocomplete="off" value="${esc(this.draft.chat_id)}" placeholder="${esc(T('chat_id_placeholder'))}"><small>${T('chat_id_hint')}</small></label>
+          <label class="enable"><input type="checkbox" name="enabled" ${this.draft.enabled ? 'checked' : ''}><span>${T('enable')}<small>${T('enable_hint')}</small></span></label>
+          <div class="actions"><button class="primary" type="submit">${this.busy ? T('please_wait') : T('save')}</button><button type="button" data-action="check">${T('check')}</button></div>
+          <small style="margin-top:10px">${T('check_hint')}</small>
         </fieldset></form>
-        ${!this.state && !this.busy ? '<button type="button" data-action="reload">Erneut laden</button>' : ''}
+        ${!this.state && !this.busy ? `<button type="button" data-action="reload">${T('reload')}</button>` : ''}
         <p class="message error" role="alert" ${this.error ? '' : 'hidden'}>${esc(this.error)}</p>
         <p class="message" role="status" ${this.notice ? '' : 'hidden'}>${esc(this.notice)}</p>
       </section>`;
