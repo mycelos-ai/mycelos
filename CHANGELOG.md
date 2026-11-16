@@ -105,6 +105,16 @@
 
 ## Week 45 (2026)
 
+### Source queues stop cleanly with the gateway
+
+- **No more "Directory not empty" in CI.** The source-check and
+  source-import queues stopped only huey's main loop on shutdown. A worker
+  still polling its SQLite queue could recreate `source-checks.db` after a
+  test had removed its data directory, and the Tests run after merging the
+  briefing failed in `test_upload_flow.py` with that error. The gateway now
+  waits for the worker and scheduler threads (`stop_consumer` in
+  `scheduler/huey_app.py`), and a test holds a worker mid-poll to prove it.
+
 ### Your own LiteLLM proxy as the custom provider
 
 - **`LITELLM_HOST` and `LITELLM_SECRET` work as in the other apps.** When the
