@@ -115,6 +115,24 @@
   waits for the worker and scheduler threads (`stop_consumer` in
   `scheduler/huey_app.py`), and a test holds a worker mid-poll to prove it.
 
+### Your own LiteLLM proxy as the custom provider
+
+- **`LITELLM_HOST` and `LITELLM_SECRET` work as in the other apps.** When the
+  custom (OpenAI-compatible) provider leaves the address or the token blank,
+  Mycelos reads them from the environment (the host with or without `/v1`).
+  Stored values still win. The secret is read at call time and is never
+  copied into the credential store or shown in the settings.
+- **Context windows come from the proxy.** "Modelle laden" also reads the
+  proxy's `/model/info` and stores each alias' context window (the smallest
+  one if an alias routes to several deployments). Chat compaction now uses the
+  registered window instead of assuming 200k. Plain OpenAI-compatible servers
+  without `/model/info` keep working as before.
+- **Speech input through the proxy, chosen in the settings.** Settings →
+  Models has a new "Spracheingabe" section: keep the default
+  (`MYCELOS_STT_PROVIDER`) or use your own server with an alias (default
+  `stt`). Audio goes to `<api base>/audio/transcriptions` through the
+  SecurityProxy, which reads the choice per request. EU mode still blocks it.
+
 ### Real sources under chat answers
 
 - **Chat answers name the notes they were built on.** The chat already gave

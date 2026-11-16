@@ -30,8 +30,8 @@ def test_discovery_registers_aliases_without_changing_assignments(env, monkeypat
     assert app.model_registry.get_model('custom/fast')['tier']=='haiku'
     assert app.model_registry.get_model('custom/Qwen/local')['tier']=='sonnet'
     assert app.model_registry.resolve_models(None,'execution')==['custom/fast']
-    assert get.call_args.args[0]=='http://demo.local/v1/models'
-    assert get.call_args.args[1]=={'Authorization':'Bearer test-secret'}
+    assert get.call_args_list[0].args[0]=='http://demo.local/v1/models'
+    assert get.call_args_list[0].args[1]=={'Authorization':'Bearer test-secret'}
     assert client.get('/api/models/catalog/custom').json()['models'][1]['id']=='custom/Qwen/local'
 
 
