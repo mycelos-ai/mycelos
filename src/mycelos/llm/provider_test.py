@@ -43,6 +43,9 @@ def check_provider(app, provider):
                 'generation_tested': False, **extra}
     try:
         credential = app.credentials.get_credential(provider) or {}
+        if provider == 'custom':
+            from mycelos.llm.custom import resolve_custom_credential
+            credential = resolve_custom_credential(credential)
         key = credential.get('api_key')
         if provider == 'vertex_ai':
             _vertex_login(credential)
@@ -97,6 +100,37 @@ def check_provider(app, provider):
         return result(False, 'Der Test ist fehlgeschlagen. Zugang und Anbieter-Konfiguration prüfen.')
 
 
+def _custom_context_windows(settings):
+    """Read each alias' context window from a LiteLLM proxy's /model/info.
+
+    Best effort: plain OpenAI-compatible servers have no such endpoint, and
+    aliases then keep whatever context window they already had. Errors are
+    swallowed without echoing the response, which may contain secrets.
+    """
+    try:
+        response = _get(settings['api_base'].rstrip('/') + '/model/info',
+                        {'Authorization': 'Bearer ' + settings['api_key']})
+        if response.status_code != 200:
+            return {}
+        data = response.json()
+    except Exception:
+        return {}
+    windows = {}
+    for entry in (data.get('data') if isinstance(data, dict) else None) or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get('model_name'), str):
+            continue
+        info = entry.get('model_info') if isinstance(entry.get('model_info'), dict) else {}
+        for field in ('max_input_tokens', 'max_tokens'):
+            value = info.get(field)
+            if type(value) is int and value > 0:
+                # A proxy alias can route to several deployments; the smallest
+                # window is the one every request is guaranteed to fit.
+                name = entry['model_name']
+                windows[name] = min(windows.get(name, value), value)
+                break
+    return windows
+
+
 def discover_custom_models(app):
     """Fetch the server's model aliases without any completion or assignment."""
     from mycelos.llm.custom import custom_completion_kwargs
@@ -123,7 +157,12 @@ def discover_custom_models(app):
             seen.add(name)
             identifier = 'custom/' + name
             existing = app.model_registry.get_model(identifier) or {}
-            models.append({'id': identifier, 'name': name, 'tier': existing.get('tier', 'sonnet')})
+            models.append({'id': identifier, 'name': name, 'tier': existing.get('tier', 'sonnet'),
+                           'max_context': existing.get('max_context')})
+        windows = _custom_context_windows(settings)
+        for model in models:
+            if windows.get(model['name']):
+                model['max_context'] = windows[model['name']]
         return models
     except httpx.TimeoutException:
         raise ValueError('Zeitüberschreitung beim Laden der Modellliste.') from None

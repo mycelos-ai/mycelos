@@ -62,9 +62,19 @@ def estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
-def needs_compaction(messages: list[dict], model: str = "") -> bool:
-    """Check if a conversation needs compaction based on token usage."""
-    window = MODEL_CONTEXT_WINDOWS.get(model.split("/")[-1] if "/" in model else model, DEFAULT_CONTEXT_WINDOW)
+def needs_compaction(
+    messages: list[dict], model: str = "", context_window: int | None = None
+) -> bool:
+    """Check if a conversation needs compaction based on token usage.
+
+    ``context_window`` comes from the model registry when known (for example
+    a LiteLLM proxy alias whose window was read from ``/model/info``) and
+    wins over the built-in table.
+    """
+    if context_window and context_window > 0:
+        window = context_window
+    else:
+        window = MODEL_CONTEXT_WINDOWS.get(model.split("/")[-1] if "/" in model else model, DEFAULT_CONTEXT_WINDOW)
     threshold = int(window * COMPACT_THRESHOLD) - RESPONSE_RESERVE
     current = estimate_tokens(messages)
     return current > threshold

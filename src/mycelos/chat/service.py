@@ -386,7 +386,8 @@ class ChatService(
 
             # Auto-compact if conversation is getting too long
             from mycelos.chat.compaction import compact_conversation, needs_compaction
-            if needs_compaction(conversation, model=agent_model or ""):
+            if needs_compaction(conversation, model=agent_model or "",
+                                context_window=self._registered_context_window(agent_model)):
                 _perf.info("Auto-compacting conversation (%d messages)", len(conversation))
                 conversation = compact_conversation(
                     conversation,
